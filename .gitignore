@@ -95,3 +95,6 @@ debug_navigation_failed_*.png
 *.png
 .env*.local
 .dmux/
+
+# Anotações locais (transcrições de aulas, backlog, etc.)
+contexto/
