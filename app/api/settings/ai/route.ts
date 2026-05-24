@@ -29,24 +29,16 @@ const UpdateOrgAISettingsSchema = z
  * @returns {Promise<Response>} Retorna um valor do tipo `Promise<Response>`.
  */
 export async function GET() {
-  console.log('[DEBUG] GET /api/settings/ai called');
-  try {
-  console.log('[DEBUG] creating supabase client');
   const supabase = await createClient();
-  console.log('[DEBUG] supabase client created');
 
-  console.log('[DEBUG] calling getUser');
   const {
     data: { user },
-    error: authError,
   } = await supabase.auth.getUser();
-  console.log('[DEBUG] getUser done, user:', user?.id ?? 'null', 'authError:', authError?.message ?? 'none');
 
   if (!user) {
     return json({ error: 'Unauthorized' }, 401);
   }
 
-  console.log('[DEBUG] querying profile');
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('organization_id, role')
@@ -90,11 +82,6 @@ export async function GET() {
   }
 
   return json({ ...baseResponse, aiGoogleKey: maskKey(orgSettings?.ai_google_key) });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[GET /api/settings/ai] unhandled error:', message);
-    return json({ error: message }, 500);
-  }
 }
 
 /**
