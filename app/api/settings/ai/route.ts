@@ -35,14 +35,18 @@ export async function GET() {
   const supabase = await createClient();
   console.log('[DEBUG] supabase client created');
 
+  console.log('[DEBUG] calling getUser');
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
+  console.log('[DEBUG] getUser done, user:', user?.id ?? 'null', 'authError:', authError?.message ?? 'none');
 
   if (!user) {
     return json({ error: 'Unauthorized' }, 401);
   }
 
+  console.log('[DEBUG] querying profile');
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('organization_id, role')
