@@ -29,8 +29,11 @@ const UpdateOrgAISettingsSchema = z
  * @returns {Promise<Response>} Retorna um valor do tipo `Promise<Response>`.
  */
 export async function GET() {
+  console.log('[DEBUG] GET /api/settings/ai called');
   try {
+  console.log('[DEBUG] creating supabase client');
   const supabase = await createClient();
+  console.log('[DEBUG] supabase client created');
 
   const {
     data: { user },
