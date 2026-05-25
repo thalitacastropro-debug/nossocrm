@@ -63,7 +63,8 @@ export async function POST(req: Request) {
       return json({ error: { code: 'INVALID_INPUT', message: 'Payload inválido.' } }, 400);
     }
 
-    console.error('[api/ai/tasks/boards/generate-structure] Error:', err);
-    return json({ error: { code: 'INTERNAL_ERROR', message: 'Erro ao gerar estrutura do board.' } }, 500);
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error('[api/ai/tasks/boards/generate-structure] Error:', errMsg);
+    return json({ error: { code: 'INTERNAL_ERROR', message: errMsg } }, 500);
   }
 }
