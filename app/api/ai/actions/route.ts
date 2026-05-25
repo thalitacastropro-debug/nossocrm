@@ -12,7 +12,7 @@
 // POST { action: string, data: object }
 // -> 200 { result?: any, error?: string, consentType?: string, retryAfter?: number }
 
-import { generateText, Output } from 'ai';
+import { generateText, generateObject, Output } from 'ai';
 import { getModel, type AIProvider } from '@/lib/ai/config';
 import { SECURITY_PREAMBLE } from '@/lib/ai/agent/agent.service';
 import { sanitizeIncomingMessage } from '@/lib/ai/agent/input-filter';
@@ -377,16 +377,15 @@ Responda em português do Brasil.`,
           description: safeDescription,
           lifecycleJson: JSON.stringify(lifecycleList),
         });
-        const result = await generateText({
+        const result = await generateObject({
           model,
-          system: SECURITY_PREAMBLE,
-          maxRetries: 3,
-          output: Output.object({ schema: BoardStructureSchema }),
+          schema: BoardStructureSchema,
           prompt,
+          maxRetries: 3,
         });
 
-        logAIAction(supabase, profile.organization_id, 'generateBoardStructure', modelId, result);
-        return json<AIActionResponse>({ result: result.output });
+        logAIAction(supabase, profile.organization_id, 'generateBoardStructure', modelId, { usage: result.usage });
+        return json<AIActionResponse>({ result: result.object });
       }
 
       case 'generateBoardStrategy': {
@@ -395,15 +394,14 @@ Responda em português do Brasil.`,
         const prompt = renderPromptTemplate(resolved?.content || '', {
           boardName: boardData?.boardName || '',
         });
-        const result = await generateText({
+        const result = await generateObject({
           model,
-          system: SECURITY_PREAMBLE,
-          maxRetries: 3,
-          output: Output.object({ schema: BoardStrategySchema }),
+          schema: BoardStrategySchema,
           prompt,
+          maxRetries: 3,
         });
-        logAIAction(supabase, profile.organization_id, 'generateBoardStrategy', modelId, result);
-        return json<AIActionResponse>({ result: result.output });
+        logAIAction(supabase, profile.organization_id, 'generateBoardStrategy', modelId, { usage: result.usage });
+        return json<AIActionResponse>({ result: result.object });
       }
 
       case 'refineBoardWithAI': {
@@ -419,15 +417,14 @@ Responda em português do Brasil.`,
           boardContext,
           historyContext,
         });
-        const result = await generateText({
+        const result = await generateObject({
           model,
-          system: SECURITY_PREAMBLE,
-          maxRetries: 3,
-          output: Output.object({ schema: RefineBoardSchema }),
+          schema: RefineBoardSchema,
           prompt,
+          maxRetries: 3,
         });
-        logAIAction(supabase, profile.organization_id, 'refineBoardWithAI', modelId, result);
-        return json<AIActionResponse>({ result: result.output });
+        logAIAction(supabase, profile.organization_id, 'refineBoardWithAI', modelId, { usage: result.usage });
+        return json<AIActionResponse>({ result: result.object });
       }
 
       case 'generateObjectionResponse': {
