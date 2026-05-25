@@ -176,7 +176,7 @@ function normalizePhone(remoteJid: string, senderPn?: string): string {
  */
 export class EvolutionWhatsAppProvider extends BaseChannelProvider {
   readonly channelType: ChannelType = 'whatsapp';
-  readonly providerName = 'evolution';
+  readonly providerName: string = 'evolution';
 
   private serverUrl: string = '';
   private instanceName: string = '';
