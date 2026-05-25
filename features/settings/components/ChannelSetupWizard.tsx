@@ -360,7 +360,7 @@ function SelectStep({ onSelect }: SelectStepProps) {
                     {info.label}
                   </h4>
                   <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {providers.length} opção{providers.length > 1 ? 'ões' : ''} de conexão
+                    {providers.length} opç{providers.length > 1 ? 'ões' : 'ão'} de conexão
                   </p>
                 </div>
               </div>

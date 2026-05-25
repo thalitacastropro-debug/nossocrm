@@ -35,6 +35,7 @@ export default function ResetPasswordPage() {
 
     setLoading(true)
     try {
+      if (!supabase) throw new Error('Supabase não configurado.')
       const { error } = await supabase.auth.updateUser({ password })
       if (error) throw error
       setDone(true)
