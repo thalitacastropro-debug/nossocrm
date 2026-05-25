@@ -14,3 +14,6 @@ export type { MetaCloudCredentials, MetaCloudWebhookPayload } from './meta-cloud
 
 export { EvolutionWhatsAppProvider } from './evolution.provider';
 export type { EvolutionCredentials, EvolutionWebhookPayload } from './evolution.provider';
+
+export { UazApiWhatsAppProvider } from './uazapi.provider';
+export type { UazApiCredentials, UazApiWebhookPayload } from './uazapi.provider';

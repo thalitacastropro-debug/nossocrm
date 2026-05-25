@@ -10,7 +10,7 @@
 export { BaseChannelProvider } from './base.provider';
 
 // WhatsApp providers
-export { ZApiWhatsAppProvider, MetaCloudWhatsAppProvider, EvolutionWhatsAppProvider } from './whatsapp';
+export { ZApiWhatsAppProvider, MetaCloudWhatsAppProvider, EvolutionWhatsAppProvider, UazApiWhatsAppProvider } from './whatsapp';
 export type {
   ZApiCredentials,
   ZApiWebhookPayload,
@@ -18,6 +18,8 @@ export type {
   MetaCloudWebhookPayload,
   EvolutionCredentials,
   EvolutionWebhookPayload,
+  UazApiCredentials,
+  UazApiWebhookPayload,
 } from './whatsapp';
 
 // Instagram providers
@@ -33,7 +35,7 @@ export type { ResendCredentials, ResendWebhookPayload } from './email';
 // =============================================================================
 
 import { registerProvider } from '../channel-factory';
-import { ZApiWhatsAppProvider, MetaCloudWhatsAppProvider, EvolutionWhatsAppProvider } from './whatsapp';
+import { ZApiWhatsAppProvider, MetaCloudWhatsAppProvider, EvolutionWhatsAppProvider, UazApiWhatsAppProvider } from './whatsapp';
 import { MetaInstagramProvider } from './instagram';
 import { ResendEmailProvider } from './email';
 
@@ -216,6 +218,50 @@ registerProvider({
     },
   ],
   features: ['read_receipts'],
+});
+
+// Register UazAPI provider
+registerProvider({
+  channelType: 'whatsapp',
+  providerName: 'uazapi',
+  constructor: UazApiWhatsAppProvider,
+  displayName: 'UazAPI',
+  description: 'WhatsApp via UazAPI (não oficial, baseado em QR code, hospedado)',
+  configFields: [
+    {
+      key: 'serverUrl',
+      label: 'URL do Servidor',
+      type: 'text',
+      required: true,
+      placeholder: 'https://suainstancia.uazapi.com',
+      helpText: 'Server URL exibido no painel uazapi.dev (sem barra no final)',
+    },
+    {
+      key: 'instanceName',
+      label: 'Nome da Instância',
+      type: 'text',
+      required: true,
+      placeholder: 'MinhaInstancia',
+      helpText: 'Nome da instância criada no painel UazAPI',
+    },
+    {
+      key: 'apiKey',
+      label: 'Admin Token',
+      type: 'password',
+      required: true,
+      placeholder: 'seu-admin-token',
+      helpText: 'Admin Token exibido no painel uazapi.dev',
+    },
+    {
+      key: 'webhookSecret',
+      label: 'Webhook Secret (opcional)',
+      type: 'password',
+      required: false,
+      placeholder: 'secret-para-validar-webhooks',
+      helpText: 'Se configurado, valida os webhooks recebidos.',
+    },
+  ],
+  features: ['media', 'read_receipts', 'qr_code'],
 });
 
 // Register Evolution API provider
