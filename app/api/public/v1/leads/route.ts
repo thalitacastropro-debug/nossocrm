@@ -35,12 +35,14 @@ export const runtime = 'nodejs';
 // Horário comercial (replica a regra do DataCrazy): seg–sex 08:00–17:30 (timezone da org).
 const BUSINESS_HOURS = { start: '08:00', end: '17:30', daysOfWeek: [1, 2, 3, 4, 5] };
 
-// Greetings padrão (PLACEHOLDERS). O ideal é o chamador (Make) enviar os templates
-// aprovados pela Niva em `greeting_in_hours` / `greeting_after_hours`. Suportam {nome}.
+// Greetings padrão (aprovados pela Niva). O chamador (Make) pode sobrescrever via
+// `greeting_in_hours` / `greeting_after_hours`. Suportam {nome} e {retorno}.
+// Regras de voz: sem diminutivo; sem pedir permissão (conduzir, não dar a bola pro cliente);
+// fora do horário a Ana retoma o contato no próximo dia útil (WhatsApp, sem prometer fim de semana).
 const DEFAULT_GREETING_IN_HOURS =
-  'Oi {nome}, tudo bem? Aqui é da Niva 👋 Recebi seus dados e já te ajudo por aqui.';
+  'Oi {nome}, tudo bem? 😊 Aqui é a Ana, da Niva. Recebi seus dados sobre o plano de saúde empresarial pra você e sua família. Pra eu já trazer as melhores opções, me diz: você é de qual cidade?';
 const DEFAULT_GREETING_AFTER_HOURS =
-  'Oi {nome}, tudo bem? Aqui é da Niva 👋 Recebi seus dados! Nosso atendimento já encerrou por hoje, mas amanhã cedo eu te retorno por aqui, combinado?';
+  'Oi {nome}, tudo bem? 😊 Aqui é a Ana, da Niva. Recebi seus dados sobre o plano de saúde empresarial. Hoje nosso atendimento já encerrou, mas {retorno} eu entro em contato com você pessoalmente pra cuidar do seu caso.';
 
 // Campos de controle/roteamento — NÃO fazem parte dos "campos do formulário".
 const CONTROL_KEYS = new Set([
@@ -100,11 +102,55 @@ function isWithinBusinessHours(timezone: string): boolean {
   }
 }
 
-/** Interpola {nome} (primeiro nome) e limpa pontuação órfã quando não há nome. */
-function renderGreeting(template: string, name: string | null): string {
-  const firstName = (name ?? '').trim().split(/\s+/)[0] ?? '';
+/**
+ * Frase do próximo contato útil, respeitando seg–sex (NUNCA promete fim de semana).
+ * - dia útil antes de abrir → "ainda hoje pela manhã"
+ * - próximo dia é útil → "amanhã pela manhã"
+ * - senão (sex à noite / sáb / dom) → "na <dia útil> pela manhã" (ex.: segunda-feira)
+ */
+function computeReturnPhrase(timezone: string): string {
+  try {
+    const now = new Date();
+    const dayStr = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short' }).format(now);
+    const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const day = dayMap[dayStr] ?? now.getUTCDay();
+
+    const [hStr, mStr] = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+      .format(now)
+      .split(':');
+    const minutes = parseInt(hStr) * 60 + parseInt(mStr);
+    const [sH, sM] = BUSINESS_HOURS.start.split(':').map(Number);
+    const startMinutes = sH * 60 + sM;
+
+    const isBizDay = (d: number) => BUSINESS_HOURS.daysOfWeek.includes(d);
+    const names: Record<number, string> = {
+      1: 'segunda-feira', 2: 'terça-feira', 3: 'quarta-feira', 4: 'quinta-feira', 5: 'sexta-feira',
+    };
+
+    // Dia útil, mas antes de abrir → atende ainda hoje
+    if (isBizDay(day) && minutes < startMinutes) return 'ainda hoje pela manhã';
+
+    // Próximo dia útil (pula sábado/domingo)
+    let add = 1;
+    while (!isBizDay((day + add) % 7)) add++;
+    if (add === 1) return 'amanhã pela manhã';
+    return `na ${names[(day + add) % 7]} pela manhã`;
+  } catch {
+    return 'no próximo dia útil pela manhã';
+  }
+}
+
+/** Interpola {nome} (primeiro nome) e {retorno}, limpando pontuação órfã quando não há nome. */
+function renderGreeting(template: string, vars: { nome: string | null; retorno: string }): string {
+  const firstName = (vars.nome ?? '').trim().split(/\s+/)[0] ?? '';
   return template
     .replaceAll('{nome}', firstName)
+    .replaceAll('{retorno}', vars.retorno)
     .replace(/\s{2,}/g, ' ')
     .replace(/\s+([,!?.])/g, '$1')
     .trim();
@@ -386,7 +432,7 @@ export async function POST(request: Request) {
   const template = withinHours
     ? body.greeting_in_hours || DEFAULT_GREETING_IN_HOURS
     : body.greeting_after_hours || DEFAULT_GREETING_AFTER_HOURS;
-  const greeting = renderGreeting(template, name);
+  const greeting = renderGreeting(template, { nome: name, retorno: computeReturnPhrase(timezone) });
   const touchStatus = withinHours ? 'greeted' : 'acked_after_hours';
 
   // 9. Enviar 1ª mensagem (mesmo padrão do agente: insert outbound → router → update)
