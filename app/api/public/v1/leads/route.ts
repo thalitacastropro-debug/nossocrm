@@ -8,6 +8,8 @@ import { sanitizeUUID } from '@/lib/supabase/utils';
 import { getChannelRouter } from '@/lib/messaging/channel-router.service';
 
 export const runtime = 'nodejs';
+// O envio em bolhas com pequeno stagger pode levar alguns segundos — dá folga ao limite serverless.
+export const maxDuration = 30;
 
 /**
  * @fileoverview Lead Intake (form-agnóstico) — entrada de leads de anúncio.
@@ -35,14 +37,23 @@ export const runtime = 'nodejs';
 // Horário comercial (replica a regra do DataCrazy): seg–sex 08:00–17:30 (timezone da org).
 const BUSINESS_HOURS = { start: '08:00', end: '17:30', daysOfWeek: [1, 2, 3, 4, 5] };
 
-// Greetings padrão (aprovados pela Niva). O chamador (Make) pode sobrescrever via
-// `greeting_in_hours` / `greeting_after_hours`. Suportam {nome} e {retorno}.
-// Regras de voz: sem diminutivo; sem pedir permissão (conduzir, não dar a bola pro cliente);
-// fora do horário a Ana retoma o contato no próximo dia útil (WhatsApp, sem prometer fim de semana).
-const DEFAULT_GREETING_IN_HOURS =
-  'Oi {nome}, tudo bem? 😊 Aqui é a Ana, da Niva. Recebi seus dados sobre o plano de saúde empresarial pra você e sua família. Pra eu já trazer as melhores opções, me diz: você é de qual cidade?';
-const DEFAULT_GREETING_AFTER_HOURS =
-  'Oi {nome}, tudo bem? 😊 Aqui é a Ana, da Niva. Recebi seus dados sobre o plano de saúde empresarial. Hoje nosso atendimento já encerrou, mas {retorno} eu entro em contato com você pessoalmente pra cuidar do seu caso.';
+// Saudação inicial (aprovada pela Niva) — enviada em BOLHAS curtas, estilo WhatsApp
+// (uma ideia por bolha; a última bolha é sempre a pergunta), NUNCA um bloco único.
+// O chamador (Make) pode sobrescrever via `greeting_in_hours` / `greeting_after_hours`
+// (string com UMA bolha por linha). Cada bolha suporta {nome} (primeiro nome) e {retorno}.
+// Regras de voz: SEM emojis; sem diminutivo; conduz (não pede permissão); reforça o
+// consultor; fora do horário a Ana retoma no próximo dia útil (sem prometer fim de semana).
+const DEFAULT_GREETING_IN_HOURS: string[] = [
+  'Oi {nome}, tudo bem? Aqui é a Ana, da Niva.',
+  'Vi que você se interessou por um plano de saúde empresarial pra você e sua família.',
+  'Quem vai cuidar disso com você é um dos nossos consultores — eu já vou adiantando por aqui pra ele chegar preparado.',
+  'Me conta: você já tem plano hoje ou seria o primeiro?',
+];
+const DEFAULT_GREETING_AFTER_HOURS: string[] = [
+  'Oi {nome}, tudo bem? Aqui é a Ana, da Niva.',
+  'Vi seu interesse num plano de saúde empresarial pra você e sua família.',
+  'Hoje já encerramos o atendimento, mas {retorno} eu te chamo aqui pra adiantar tudo e deixar nosso consultor pronto pra cuidar do seu caso.',
+];
 
 // Campos de controle/roteamento — NÃO fazem parte dos "campos do formulário".
 const CONTROL_KEYS = new Set([
@@ -154,6 +165,26 @@ function renderGreeting(template: string, vars: { nome: string | null; retorno: 
     .replace(/\s{2,}/g, ' ')
     .replace(/\s+([,!?.])/g, '$1')
     .trim();
+}
+
+/** Sleep simples (stagger entre bolhas). */
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Pausa antes da próxima bolha, proporcional ao tamanho dela (ritmo de digitação). */
+function bubbleGapMs(nextBubble: string): number {
+  return Math.min(Math.max(nextBubble.length * 35, 900), 2500);
+}
+
+/**
+ * Resolve a saudação em BOLHAS. Default = array aprovado; override do body (Make) =
+ * string com UMA bolha por linha. Vazio/whitespace → cai no fallback.
+ */
+function resolveGreetingBubbles(override: string | undefined, fallback: string[]): string[] {
+  if (override && override.trim()) {
+    const parts = override.split('\n').map((s) => s.trim()).filter(Boolean);
+    if (parts.length) return parts;
+  }
+  return fallback;
 }
 
 /** Upsert de contato por email/telefone (mesma estratégia da rota /deals). */
@@ -426,21 +457,24 @@ export async function POST(request: Request) {
     );
   }
 
-  // 8. Lógica de horário → escolhe a saudação e o status do toque
+  // 8. Lógica de horário → escolhe a saudação (em bolhas) e o status do toque
   const timezone = await getOrgTimezone(sb, auth.organizationId);
   const withinHours = isWithinBusinessHours(timezone);
-  const template = withinHours
-    ? body.greeting_in_hours || DEFAULT_GREETING_IN_HOURS
-    : body.greeting_after_hours || DEFAULT_GREETING_AFTER_HOURS;
-  const greeting = renderGreeting(template, { nome: name, retorno: computeReturnPhrase(timezone) });
+  const retorno = computeReturnPhrase(timezone);
+  const bubbles = resolveGreetingBubbles(
+    withinHours ? body.greeting_in_hours : body.greeting_after_hours,
+    withinHours ? DEFAULT_GREETING_IN_HOURS : DEFAULT_GREETING_AFTER_HOURS,
+  )
+    .map((t) => renderGreeting(t, { nome: name, retorno }))
+    .filter(Boolean);
   const touchStatus = withinHours ? 'greeted' : 'acked_after_hours';
 
-  // 9. Enviar 1ª mensagem (mesmo padrão do agente: insert outbound → router → update)
-  const send = await sendFirstMessage({
+  // 9. Enviar a saudação em BOLHAS (várias mensagens curtas, estilo WhatsApp)
+  const send = await sendGreetingBubbles({
     conversationId,
     channelId,
     to: phone,
-    text: greeting,
+    bubbles,
   });
 
   // 10. Registrar o resultado do toque no deal (para o cron de follow-up de manhã)
@@ -511,17 +545,52 @@ interface SendResult {
 }
 
 /**
- * Insere a mensagem outbound e a envia pelo ChannelRouter — mesmo fluxo de
+ * Envia a saudação em BOLHAS (várias mensagens curtas, estilo WhatsApp), com uma pausa
+ * entre elas proporcional ao tamanho da próxima (ritmo de digitação). Para no 1º erro
+ * pra não deixar a conversa pela metade. O `success` reflete a 1ª bolha (saudação crítica);
+ * o `messageId` retornado é o da 1ª bolha (referência do 1º toque).
+ */
+async function sendGreetingBubbles(params: {
+  conversationId: string;
+  channelId: string;
+  to: string;
+  bubbles: string[];
+}): Promise<SendResult & { sentCount: number }> {
+  const { conversationId, channelId, to, bubbles } = params;
+  let firstMessageId: string | undefined = undefined;
+  let firstError: SendResult['error'] = undefined;
+  let firstOk = false;
+  let sentCount = 0;
+
+  for (let i = 0; i < bubbles.length; i++) {
+    const res = await sendOneMessage({ conversationId, channelId, to, text: bubbles[i], index: i });
+    if (i === 0) {
+      firstOk = res.success;
+      firstMessageId = res.messageId;
+      firstError = res.error;
+    }
+    if (!res.success) break; // não envia as bolhas seguintes pra não deixar a conversa pela metade
+    sentCount++;
+    if (i < bubbles.length - 1) await sleep(bubbleGapMs(bubbles[i + 1]));
+  }
+
+  return { success: firstOk, messageId: firstMessageId, error: firstError, sentCount };
+}
+
+/**
+ * Insere UMA mensagem outbound e a envia pelo ChannelRouter — mesmo fluxo de
  * `sendAIResponse` (lib/ai/agent/agent.service.ts). sender_type 'ai' + sent_by_ai:true
  * faz a Ana enxergar a própria saudação (não re-cumprimenta) no histórico.
+ * `index` = posição da bolha (0 = 1ª, marca o first_touch).
  */
-async function sendFirstMessage(params: {
+async function sendOneMessage(params: {
   conversationId: string;
   channelId: string;
   to: string;
   text: string;
+  index: number;
 }): Promise<SendResult> {
-  const { conversationId, channelId, to, text } = params;
+  const { conversationId, channelId, to, text, index } = params;
   const sb = createStaticAdminClient();
 
   const { data: message, error: insertError } = await sb
@@ -533,7 +602,7 @@ async function sendFirstMessage(params: {
       content: { type: 'text', text },
       status: 'pending',
       sender_type: 'ai',
-      metadata: { sent_by_ai: true, source: 'lead_intake', first_touch: true },
+      metadata: { sent_by_ai: true, source: 'lead_intake', first_touch: index === 0, bubble_index: index },
     })
     .select('id')
     .single();
