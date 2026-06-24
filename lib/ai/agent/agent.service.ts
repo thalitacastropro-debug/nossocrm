@@ -881,6 +881,44 @@ interface SendResult {
   error?: { code: string; message: string };
 }
 
+// Bolhas (mensagens curtas estilo WhatsApp) — espelha o opener da intake route.
+const MAX_BUBBLES = 5;
+const MAX_BUBBLE_LEN = 350;
+
+/** Pausa entre bolhas, proporcional ao tamanho da próxima (ritmo de digitação). Mesma curva do opener. */
+function bubbleGapMs(nextBubble: string): number {
+  return Math.min(Math.max(nextBubble.length * 35, 900), 2500);
+}
+
+/**
+ * Quebra a resposta da IA em bolhas quando a persona separa ideias por LINHA EM BRANCO.
+ * Conservador e backward-compatible: se houver um único bloco — ou se algum bloco for longo
+ * (parágrafo, não bolha) — devolve a resposta inteira como UMA bolha. Personas que não usam
+ * linha em branco (outras orgs) seguem com 1 envio, comportamento idêntico ao anterior.
+ */
+export function splitIntoBubbles(text: string): string[] {
+  const trimmed = text.trim();
+  const segments = trimmed
+    .split(/\n\s*\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (segments.length <= 1) return [trimmed];
+  // Algum segmento longo => é prosa, não bolha: não fragmentar.
+  if (segments.some((s) => s.length > MAX_BUBBLE_LEN)) return [trimmed];
+  // Cap: junta o excedente na última bolha.
+  if (segments.length > MAX_BUBBLES) {
+    return [...segments.slice(0, MAX_BUBBLES - 1), segments.slice(MAX_BUBBLES - 1).join('\n\n')];
+  }
+  return segments;
+}
+
+/**
+ * Envia a resposta da IA. Se a persona quebrou em bolhas (linha em branco), envia uma a uma
+ * com um pequeno stagger (ritmo de digitação), parando no 1º erro pra não deixar a conversa
+ * pela metade. `success`/`messageId` refletem a 1ª bolha. Para 1 bolha, comportamento idêntico
+ * ao envio único anterior.
+ */
 async function sendAIResponse(params: {
   supabase: SupabaseClient;
   conversationId: string;
@@ -910,6 +948,50 @@ async function sendAIResponse(params: {
     };
   }
 
+  const bubbles = splitIntoBubbles(response);
+  let firstMessageId: string | undefined;
+  let firstOk = false;
+  let firstError: SendResult['error'];
+
+  for (let i = 0; i < bubbles.length; i++) {
+    const res = await sendOneBubble({
+      supabase,
+      conversationId,
+      channelId: conversation.channel_id,
+      to: conversation.external_contact_id,
+      text: bubbles[i],
+      simulationMode,
+    });
+
+    if (i === 0) {
+      firstOk = res.success;
+      firstMessageId = res.messageId;
+      firstError = res.error;
+    }
+
+    if (!res.success) break; // para no 1º erro, não deixa a conversa pela metade
+    if (i < bubbles.length - 1) {
+      await new Promise<void>((r) => setTimeout(r, bubbleGapMs(bubbles[i + 1])));
+    }
+  }
+
+  return { success: firstOk, messageId: firstMessageId, error: firstError };
+}
+
+/**
+ * Insere UMA mensagem outbound (sender_type 'ai', sent_by_ai:true) e a envia pelo ChannelRouter.
+ * Em simulationMode, marca como enviada sem entregar no canal.
+ */
+async function sendOneBubble(params: {
+  supabase: SupabaseClient;
+  conversationId: string;
+  channelId: string;
+  to: string;
+  text: string;
+  simulationMode?: boolean;
+}): Promise<SendResult> {
+  const { supabase, conversationId, channelId, to, text, simulationMode } = params;
+
   // Inserir mensagem no banco com status pending
   const { data: message, error: insertError } = await supabase
     .from('messaging_messages')
@@ -917,7 +999,7 @@ async function sendAIResponse(params: {
       conversation_id: conversationId,
       direction: 'outbound',
       content_type: 'text',
-      content: { type: 'text', text: response },
+      content: { type: 'text', text },
       status: 'pending',
       sender_type: 'ai',
       metadata: { sent_by_ai: true },
@@ -944,10 +1026,10 @@ async function sendAIResponse(params: {
   // Enviar via ChannelRouter
   try {
     const router = getChannelRouter();
-    const sendResult = await router.sendMessage(conversation.channel_id, {
+    const sendResult = await router.sendMessage(channelId, {
       conversationId,
-      to: conversation.external_contact_id,
-      content: { type: 'text', text: response },
+      to,
+      content: { type: 'text', text },
     });
 
     if (sendResult.success) {
