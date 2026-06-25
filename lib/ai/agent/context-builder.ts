@@ -89,6 +89,7 @@ export async function buildLeadContext(
             value,
             ai_summary,
             created_at,
+            custom_fields,
             stage:board_stages!inner(
               id,
               name
@@ -156,6 +157,26 @@ export async function buildLeadContext(
     };
   }
 
+  // 4b. Extrair o formulário de entrada (lead_form) do deal, se houver.
+  // A intake route grava o form em deals.custom_fields.lead_form (ver app/api/public/v1/leads/route.ts).
+  // Expomos só mapped + fields (o útil); raw e first_touch são ruído/controle interno.
+  let leadForm: LeadContext['lead_form'] = null;
+  if (dealResult.data) {
+    const customFields = (dealResult.data as { custom_fields?: Record<string, unknown> }).custom_fields;
+    const lf = customFields?.lead_form as Record<string, unknown> | undefined;
+    if (lf && typeof lf === 'object') {
+      const mapped = lf.mapped as { name?: string | null; email?: string | null; phone?: string | null } | undefined;
+      leadForm = {
+        source: typeof lf.source === 'string' ? lf.source : null,
+        received_at: typeof lf.received_at === 'string' ? lf.received_at : null,
+        mapped: mapped
+          ? { name: mapped.name ?? null, email: mapped.email ?? null, phone: mapped.phone ?? null }
+          : null,
+        fields: lf.fields && typeof lf.fields === 'object' ? (lf.fields as Record<string, unknown>) : null,
+      };
+    }
+  }
+
   // 5. Buscar stage config (depende do deal) — sequencial
   let stage: LeadContext['stage'];
   if (deal) {
@@ -202,6 +223,7 @@ export async function buildLeadContext(
   const context: LeadContext = {
     contact,
     deal,
+    lead_form: leadForm,
     stage,
     messages,
     organization: {
@@ -252,6 +274,18 @@ function extractTextContent(content: Record<string, unknown>): string {
   return '[Mensagem]';
 }
 
+/** Converte um valor de campo do formulário em texto legível para o prompt. */
+function formatFieldValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 /**
  * Formata o contexto como texto para o prompt.
  */
@@ -268,6 +302,29 @@ export function formatContextForPrompt(context: LeadContext): string {
     if (context.contact.position) lines.push(`Cargo: ${context.contact.position}`);
   }
   lines.push('');
+
+  // Dados já informados pelo lead (formulário de entrada) — Ana confirma, não re-pergunta
+  if (context.lead_form) {
+    const lf = context.lead_form;
+    const entries: string[] = [];
+    if (lf.mapped) {
+      if (lf.mapped.name) entries.push(`Nome: ${lf.mapped.name}`);
+      if (lf.mapped.email) entries.push(`Email: ${lf.mapped.email}`);
+      if (lf.mapped.phone) entries.push(`Telefone: ${lf.mapped.phone}`);
+    }
+    if (lf.fields) {
+      for (const [key, value] of Object.entries(lf.fields)) {
+        if (value === null || value === undefined || value === '') continue;
+        entries.push(`${key}: ${formatFieldValue(value)}`);
+      }
+    }
+    if (entries.length > 0) {
+      lines.push('## Dados já informados pelo lead (no formulário)');
+      lines.push('CONFIRME estes dados na conversa — NÃO pergunte de novo o que já está aqui. Complete só o que faltar.');
+      entries.forEach((e) => lines.push(`- ${e}`));
+      lines.push('');
+    }
+  }
 
   // Deal
   if (context.deal) {

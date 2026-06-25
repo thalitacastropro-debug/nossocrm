@@ -87,6 +87,14 @@ export interface LeadContext {
     created_at: string;
   } | null;
 
+  /** Formulário de entrada do lead (deals.custom_fields.lead_form), se houver */
+  lead_form?: {
+    source: string | null;
+    received_at: string | null;
+    mapped: { name: string | null; email: string | null; phone: string | null } | null;
+    fields: Record<string, unknown> | null;
+  } | null;
+
   /** Configuração do estágio */
   stage: {
     id: string;
