@@ -1,0 +1,153 @@
+/**
+ * @fileoverview Domain-specific extraction runner.
+ *
+ * Roda a extração de campos de qualificação + classificação de tier de um vertical
+ * (via registry, gated por board) e grava no deal: custom_fields.qualificacao, .tier,
+ * .objecoes, tags (tier:*), priority e (em perda) loss_reason.
+ *
+ * Roda em observe E respond — só ATUALIZA DADOS do card; NÃO move etapa nem envia
+ * mensagem. `is_lost` só é marcado fora do dry-run (mover card pra "perdido" é ação).
+ *
+ * @module lib/ai/extraction/domain-extraction.service
+ */
+
+import { generateText, Output } from 'ai';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getModel, type AIProvider } from '../config';
+import { getDomainExtractor } from './domain/registry';
+
+const MAX_MESSAGES_FOR_EXTRACTION = 30;
+
+export interface RunDomainExtractionParams {
+  supabase: SupabaseClient;
+  dealId: string;
+  conversationId: string;
+  organizationId: string;
+  boardId: string | null | undefined;
+  /** Config de IA da org (passada pelo agent.service para evitar import circular). */
+  aiConfig: { provider: AIProvider; apiKey: string; model: string };
+  /** observe mode: não marca is_lost (não move o card). */
+  dryRun: boolean;
+}
+
+export interface RunDomainExtractionResult {
+  success: boolean;
+  /** Indica se algum extractor se aplicou ao board. */
+  applied?: boolean;
+  tier?: string;
+  error?: string;
+}
+
+/**
+ * Extrai campos de domínio da conversa e atualiza o deal. No-op silencioso se nenhum
+ * extractor se aplica ao board (outras orgs/boards não são afetadas).
+ */
+export async function runDomainExtraction(
+  params: RunDomainExtractionParams,
+): Promise<RunDomainExtractionResult> {
+  const { supabase, dealId, conversationId, organizationId, boardId, aiConfig, dryRun } = params;
+
+  const extractor = getDomainExtractor(boardId);
+  if (!extractor) return { success: true, applied: false };
+
+  try {
+    // 1. Histórico da conversa
+    const { data: messages } = await supabase
+      .from('messaging_messages')
+      .select('direction, content, created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true })
+      .limit(MAX_MESSAGES_FOR_EXTRACTION);
+
+    if (!messages || messages.length < 1) return { success: true, applied: true };
+
+    const messagesText = messages
+      .map((m) => {
+        const role = m.direction === 'inbound' ? 'LEAD' : 'ATENDENTE';
+        return `[${role}]: ${extractTextContent(m.content as Record<string, unknown>)}`;
+      })
+      .join('\n');
+
+    // 2. Extração estruturada
+    const model = getModel(aiConfig.provider, aiConfig.apiKey, aiConfig.model);
+    const result = await generateText({
+      model,
+      output: Output.object({
+        schema: extractor.schema,
+        name: 'DomainExtraction',
+        description: 'Extração de campos de qualificação do vertical em português',
+      }),
+      system: extractor.systemPrompt,
+      prompt: `Analise esta conversa e extraia os campos:\n\n${messagesText}`,
+      maxRetries: 2,
+    });
+
+    // Log de tokens (fire-and-forget) para o budget contabilizar
+    const tokensUsed = result.usage?.totalTokens ?? 0;
+    if (tokensUsed > 0) {
+      supabase
+        .from('ai_conversation_log')
+        .insert({
+          organization_id: organizationId,
+          conversation_id: conversationId,
+          tokens_used: tokensUsed,
+          model_used: aiConfig.model,
+          action_taken: 'domain_extraction',
+          action_reason: `Domain extraction (${extractor.key}) for deal ${dealId}`,
+          ai_response: '',
+        })
+        .then(({ error }) => {
+          if (error) console.error('[DomainExtraction] Failed to log tokens (non-fatal):', error.message);
+        });
+    }
+
+    if (!result.output) return { success: false, applied: true, error: 'Sem output estruturado' };
+
+    // 3. Estado atual do deal
+    const { data: deal } = await supabase
+      .from('deals')
+      .select('custom_fields, tags')
+      .eq('id', dealId)
+      .single();
+
+    const applyResult = extractor.apply((deal?.custom_fields as Record<string, unknown>) || {}, result.output);
+
+    // 4. Tags: preserva as não-tier, garante a tag de tier atual
+    const prevTags = Array.isArray(deal?.tags) ? (deal!.tags as unknown[]).map(String) : [];
+    const tags = Array.from(new Set([...prevTags.filter((t) => !t.startsWith('tier:')), ...applyResult.tags]));
+
+    const update: Record<string, unknown> = {
+      custom_fields: applyResult.customFields,
+      tags,
+      updated_at: new Date().toISOString(),
+    };
+    if (applyResult.priority) update.priority = applyResult.priority;
+    if (applyResult.lossReason) {
+      update.loss_reason = applyResult.lossReason;
+      // Mover o card pra "perdido" é ação — só fora do dry-run (observe não move card).
+      if (!dryRun) update.is_lost = true;
+    }
+
+    const { error: updateError } = await supabase.from('deals').update(update).eq('id', dealId);
+    if (updateError) {
+      console.error('[DomainExtraction] Failed to update deal:', updateError);
+      return { success: false, applied: true, error: updateError.message };
+    }
+
+    console.log('[DomainExtraction] %s → tier=%s deal=%s', extractor.key, applyResult.tier, dealId);
+    return { success: true, applied: true, tier: applyResult.tier };
+  } catch (error) {
+    console.error('[DomainExtraction] Error:', error);
+    return { success: false, applied: true, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+function extractTextContent(content: Record<string, unknown>): string {
+  if (typeof content === 'string') return content;
+  if (content?.text && typeof content.text === 'string') return content.text;
+  if (content?.type === 'image') return '[Imagem]';
+  if (content?.type === 'audio') return '[Áudio]';
+  if (content?.type === 'video') return '[Vídeo]';
+  if (content?.type === 'document') return '[Documento]';
+  return '[Mensagem]';
+}

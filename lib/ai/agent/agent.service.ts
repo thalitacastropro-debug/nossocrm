@@ -16,6 +16,7 @@ import { checkTokenBudget } from './token-budget';
 import { buildLeadContext, formatContextForPrompt } from './context-builder';
 import { getChannelRouter } from '@/lib/messaging/channel-router.service';
 import { extractAndUpdateBANT } from '../extraction/extraction.service';
+import { runDomainExtraction } from '../extraction/domain-extraction.service';
 import {
   buildConversationalPromptFromPatterns,
 } from './generative-schema';
@@ -566,8 +567,23 @@ export async function processIncomingMessage(
     // Replace response with validated (possibly fallback) version
     decision.response = validation.response;
 
-    // 10a. Dry-run mode: loga o que teria feito, mas não envia
+    // 10a. Dry-run mode (observe): loga o que teria feito, mas não envia.
     if (isDryRun) {
+      // Extração domain-specific (campos + tier) — AWAIT no observe pra gravar o tier de forma
+      // confiável (o serverless pode congelar após o return e cortar um fire-and-forget).
+      // Gated por board; só atualiza dados do card (não move etapa, não marca is_lost, não envia).
+      await runDomainExtraction({
+        supabase,
+        dealId,
+        conversationId,
+        organizationId,
+        boardId: deal.board_id,
+        aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model },
+        dryRun: true,
+      }).catch((err) => {
+        console.error('[AIAgent] Domain extraction failed:', err);
+      });
+
       console.log('[AIAgent] DRY-RUN — would have sent:', decision.response.substring(0, 80));
       await logAIInteraction({
         supabase,
@@ -664,6 +680,20 @@ export async function processIncomingMessage(
       triggerMessageId: messageId,
     }).catch((err) => {
       console.error('[AIAgent] BANT extraction failed:', err);
+    });
+
+    // 12b. Extração domain-specific (campos + tier do vertical) — fire-and-forget no respond
+    // (a resposta já foi enviada; aqui pode marcar is_lost quando fora do ICP). Gated por board.
+    runDomainExtraction({
+      supabase,
+      dealId,
+      conversationId,
+      organizationId,
+      boardId: deal.board_id,
+      aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model },
+      dryRun: false,
+    }).catch((err) => {
+      console.error('[AIAgent] Domain extraction failed:', err);
     });
 
     // 13. Enfileirar avaliação de avanço de estágio (desacoplado)
