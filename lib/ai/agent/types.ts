@@ -95,6 +95,9 @@ export interface LeadContext {
     fields: Record<string, unknown> | null;
   } | null;
 
+  /** Campos de qualificação já extraídos da conversa (deals.custom_fields.qualificacao) */
+  qualificacao?: Record<string, unknown> | null;
+
   /** Configuração do estágio */
   stage: {
     id: string;

@@ -161,6 +161,7 @@ export async function buildLeadContext(
   // A intake route grava o form em deals.custom_fields.lead_form (ver app/api/public/v1/leads/route.ts).
   // Expomos só mapped + fields (o útil); raw e first_touch são ruído/controle interno.
   let leadForm: LeadContext['lead_form'] = null;
+  let qualificacao: LeadContext['qualificacao'] = null;
   if (dealResult.data) {
     const customFields = (dealResult.data as { custom_fields?: Record<string, unknown> }).custom_fields;
     const lf = customFields?.lead_form as Record<string, unknown> | undefined;
@@ -174,6 +175,11 @@ export async function buildLeadContext(
           : null,
         fields: lf.fields && typeof lf.fields === 'object' ? (lf.fields as Record<string, unknown>) : null,
       };
+    }
+    // Campos que a Ana já coletou/extraiu na conversa (preserva o que já se sabe → não re-perguntar).
+    const qual = customFields?.qualificacao as Record<string, unknown> | undefined;
+    if (qual && typeof qual === 'object' && Object.keys(qual).length > 0) {
+      qualificacao = qual;
     }
   }
 
@@ -224,6 +230,7 @@ export async function buildLeadContext(
     contact,
     deal,
     lead_form: leadForm,
+    qualificacao,
     stage,
     messages,
     organization: {
@@ -321,6 +328,36 @@ export function formatContextForPrompt(context: LeadContext): string {
     if (entries.length > 0) {
       lines.push('## Dados já informados pelo lead (no formulário)');
       lines.push('CONFIRME estes dados na conversa — NÃO pergunte de novo o que já está aqui. Complete só o que faltar.');
+      entries.forEach((e) => lines.push(`- ${e}`));
+      lines.push('');
+    }
+  }
+
+  // Já coletado nesta conversa (campos extraídos) — Ana confirma, não re-pergunta
+  if (context.qualificacao) {
+    const QUAL_LABELS: Record<string, string> = {
+      tem_cnpj: 'CNPJ',
+      vidas: 'Vidas',
+      idades: 'Idades',
+      tem_plano_atual: 'Já tem plano',
+      operadora: 'Operadora',
+      valor_pago_exato: 'Valor que paga hoje',
+      coparticipacao: 'Coparticipação',
+      hospital_preferencia: 'Hospital de preferência',
+      cidade_uf: 'Cidade/UF',
+      reuniao_preferencia: 'Preferência para a ligação do consultor',
+      algo_a_destacar: 'A destacar para o consultor',
+    };
+    const entries: string[] = [];
+    for (const [key, value] of Object.entries(context.qualificacao)) {
+      if (value === null || value === undefined || value === '') continue;
+      if (Array.isArray(value) && value.length === 0) continue;
+      const label = QUAL_LABELS[key] ?? key;
+      const rendered = key === 'valor_pago_exato' ? `R$ ${formatFieldValue(value)}` : formatFieldValue(value);
+      entries.push(`${label}: ${rendered}`);
+    }
+    if (entries.length > 0) {
+      lines.push('## Já coletado nesta conversa (confirme se necessário; NÃO pergunte de novo)');
       entries.forEach((e) => lines.push(`- ${e}`));
       lines.push('');
     }
