@@ -286,6 +286,10 @@ function formatFieldValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  // Arrays de valores (ex.: idades, objeções) ficam mais legíveis como "30, 35, 8" do que "[30,35,8]".
+  if (Array.isArray(value)) {
+    return value.map((v) => formatFieldValue(v)).join(', ');
+  }
   try {
     return JSON.stringify(value);
   } catch {
