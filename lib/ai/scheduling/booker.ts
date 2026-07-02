@@ -1,6 +1,14 @@
 /**
  * @fileoverview Booker determinístico da agenda real: cria/cancela/remarca a
  * reunião como `activity` (type CALL) e grava o estado no deal. Sem LLM.
+ *
+ * Ordem à prova de falha (revisão adversarial 2026-07-02):
+ * 1. re-check explícito do slot (spec §6) — a unique index é a trava real, isto evita INSERT à toa;
+ * 2. INSERT da nova activity ANTES de cancelar a antiga (remarcação) — se o novo slot encheu, a
+ *    reunião antiga fica intacta;
+ * 3. UPDATE do deal — se falhar, ROLLBACK da activity nova e retorna não-marcou (nunca confirma falso);
+ * 4. só então cancela a antiga (best-effort) — o deal já aponta pra nova.
+ *
  * @module lib/ai/scheduling/booker
  */
 
@@ -28,15 +36,21 @@ export interface BookSlotResult {
 export async function bookSlot(params: BookSlotParams): Promise<BookSlotResult> {
   const { supabase, dealId, contactId, organizationId, consultantUserId, leadName, summary, slot } = params;
 
-  // Remarcação: cancela a anterior antes de criar a nova.
-  if (params.previousActivityId) {
-    await supabase
-      .from('activities')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', params.previousActivityId);
-  }
+  // 1. Re-check explícito (spec §6): o slot ainda está livre AGORA? A unique index
+  // (owner_id, date) WHERE type='CALL' é a trava atômica real; este SELECT só evita um
+  // INSERT inútil e honra o "re-check" da spec. Não conta como garantia (TOCTOU coberto pela index).
+  const { data: clash } = await supabase
+    .from('activities')
+    .select('id')
+    .eq('owner_id', consultantUserId)
+    .eq('type', 'CALL')
+    .eq('date', slot.startIso)
+    .is('deleted_at', null)
+    .limit(1);
+  if (clash && clash.length > 0) return { ok: false, reason: 'taken' };
 
-  // Cria a ligação. A unique index (owner_id, date) WHERE type='CALL' é a trava de corrida.
+  // 2. Cria a nova ligação PRIMEIRO (antes de cancelar a antiga, em remarcação): se o novo slot
+  // já encheu (23505), a reunião antiga permanece intacta e o lead não fica sem horário.
   const { data: act, error: insErr } = await supabase
     .from('activities')
     .insert({
@@ -60,7 +74,9 @@ export async function bookSlot(params: BookSlotParams): Promise<BookSlotResult> 
     return { ok: false, reason: 'db_error' };
   }
 
-  // Grava o estado no deal (merge no custom_fields + tag).
+  // 3. Grava o estado no deal (merge no custom_fields + tag). Se falhar, ROLLBACK: deleta a
+  // activity nova e retorna não-marcou — NUNCA confirma falso (spec §8). Sem isto, a Ana diria
+  // "fechado" com o deal desatualizado e a remarcação/cancelamento futuro não acharia a activity.
   const { data: deal } = await supabase
     .from('deals')
     .select('custom_fields, tags')
@@ -89,8 +105,20 @@ export async function bookSlot(params: BookSlotParams): Promise<BookSlotResult> 
     .eq('id', dealId);
 
   if (updErr) {
-    console.error('[Booker] update do deal falhou (activity criada):', updErr);
-    // A activity existe; devolvemos ok — o estado no deal é reconciliável, mas não confirmamos falso.
+    console.error('[Booker] update do deal falhou — rollback da activity nova:', updErr);
+    await supabase.from('activities').update({ deleted_at: new Date().toISOString() }).eq('id', act!.id);
+    return { ok: false, reason: 'db_error' };
+  }
+
+  // 4. Remarcação: agora que a nova está confirmada e o deal aponta pra ela, cancela a antiga
+  // (best-effort). Se falhar, sobra uma activity extra no calendário — reconciliável, mas o deal
+  // está correto e a Ana confirmou com verdade.
+  if (params.previousActivityId) {
+    const { error: delErr } = await supabase
+      .from('activities')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', params.previousActivityId);
+    if (delErr) console.error('[Booker] falha ao cancelar activity antiga (deal já aponta pra nova):', delErr);
   }
 
   return { ok: true, activityId: act!.id };

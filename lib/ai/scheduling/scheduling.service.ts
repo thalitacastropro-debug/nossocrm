@@ -6,7 +6,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AIProvider } from '../config';
-import type { Slot, SchedulingStatus } from './types';
+import type { Slot, SchedulingStatus, DetectResult } from './types';
 import { getSchedulingConfig } from './config';
 import { loadBusyIntervals } from './busy';
 import { getAvailableSlots } from './availability';
@@ -23,7 +23,7 @@ export interface RunSchedulingParams {
   leadName: string;
   summary: string;
   /** custom_fields.reuniao_agendada atual, se houver. */
-  reuniaoAgendada: { activity_id?: string; status?: string } | null;
+  reuniaoAgendada: { activity_id?: string; status?: string; data_hora?: string } | null;
   aiConfig: { provider: AIProvider; apiKey: string; model: string };
   /** false => respond (pode marcar); true => observe (só calcula/loga). */
   dryRun: boolean;
@@ -37,6 +37,8 @@ export interface RunSchedulingParams {
 export interface RunSchedulingResult {
   available: Slot[];
   status: SchedulingStatus;
+  /** Intenção detectada (pra logar em observe / debug). Ausente quando não rodou detecção. */
+  detected?: DetectResult;
 }
 
 export async function runScheduling(params: RunSchedulingParams): Promise<RunSchedulingResult> {
@@ -44,11 +46,12 @@ export async function runScheduling(params: RunSchedulingParams): Promise<RunSch
   if (!cfg || !params.consultantUserId) {
     return { available: [], status: { kind: 'none' } };
   }
+  const consultantUserId = params.consultantUserId;
 
   const busy = await loadBusyIntervals({
     supabase: params.supabase,
     organizationId: params.organizationId,
-    consultantUserId: params.consultantUserId,
+    consultantUserId,
     now: params.now,
     config: cfg.availability,
   });
@@ -66,39 +69,50 @@ export async function runScheduling(params: RunSchedulingParams): Promise<RunSch
     aiConfig: params.aiConfig,
   });
 
-  // Observe: não age; só devolve slots (o log de detecção sai no agent.service).
-  if (params.dryRun) return { available, status: { kind: 'none' } };
+  // Observe: não age; devolve os slots + a detecção (o agent.service loga pra validação).
+  if (params.dryRun) return { available, status: { kind: 'none' }, detected: detect };
 
   if (detect.intent === 'cancel' && alreadyBooked && params.reuniaoAgendada?.activity_id) {
     await cancelMeeting({ supabase: params.supabase, dealId: params.dealId, activityId: params.reuniaoAgendada.activity_id });
-    return { available, status: { kind: 'cancelled' } };
+    return { available, status: { kind: 'cancelled' }, detected: detect };
   }
 
   if (detect.intent === 'accept' || detect.intent === 'reschedule') {
     const slot = validateDetectedSlot(detect.slotIso, available);
-    if (!slot) return { available, status: { kind: 'none' } }; // horário inválido/tomado já saiu da lista
+    if (!slot) return { available, status: { kind: 'none' }, detected: detect }; // horário inválido/tomado já saiu da lista
+
+    // Idempotência (spec §6): se já há reunião confirmada pro MESMO slot, no-op — confirma sem re-marcar
+    // (evita colidir na unique index e a Ana dizer "encheu" pro próprio horário do lead).
+    if (alreadyBooked && params.reuniaoAgendada?.data_hora === slot.startIso) {
+      return { available, status: { kind: 'confirmed', label: slot.label }, detected: detect };
+    }
+
     const result = await bookSlot({
       supabase: params.supabase,
       dealId: params.dealId,
       contactId: params.contactId,
       organizationId: params.organizationId,
-      consultantUserId: params.consultantUserId,
+      consultantUserId,
       leadName: params.leadName,
       summary: params.summary,
       slot,
       previousActivityId: detect.intent === 'reschedule' ? params.reuniaoAgendada?.activity_id : null,
     });
-    if (result.ok) return { available, status: { kind: 'confirmed', label: slot.label } };
+    if (result.ok) return { available, status: { kind: 'confirmed', label: slot.label }, detected: detect };
     if (result.reason === 'taken') {
-      // Recalcula sem o slot que encheu.
-      const fresh = getAvailableSlots({
+      // Slot encheu entre a oferta e a reserva. Re-query do busy (outro consultor pode ter marcado
+      // no meio) e recalcula do zero — não confia no estado carregado no início.
+      const freshBusy = await loadBusyIntervals({
+        supabase: params.supabase,
+        organizationId: params.organizationId,
+        consultantUserId,
         now: params.now,
-        busy: [...busy, { startMs: new Date(slot.startIso).getTime(), endMs: new Date(slot.endIso).getTime() }],
         config: cfg.availability,
       });
-      return { available: fresh, status: { kind: 'slot_taken', alternatives: fresh.slice(0, 3) } };
+      const fresh = getAvailableSlots({ now: params.now, busy: freshBusy, config: cfg.availability });
+      return { available: fresh, status: { kind: 'slot_taken', alternatives: fresh.slice(0, 3) }, detected: detect };
     }
   }
 
-  return { available, status: { kind: 'none' } };
+  return { available, status: { kind: 'none' }, detected: detect };
 }

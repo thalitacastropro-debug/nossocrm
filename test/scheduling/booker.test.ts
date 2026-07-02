@@ -8,13 +8,34 @@ const slot: Slot = {
   label: 'quinta, 03/07, às 10h',
 };
 
-// Supabase fake: activities.insert configurável + deals select/update.
-function makeSupabase(opts: { insertError?: { code: string } | null } = {}) {
-  const state: any = { insertedActivity: null, dealUpdate: null, deletedIds: [] };
+/**
+ * Supabase fake com builder encadeável:
+ * - activities.select(...).eq().eq().eq().is().limit()  → re-check (clash configurável)
+ * - activities.insert(row).select('id').single()        → insertError configurável
+ * - activities.update(patch).eq('id', id)               → registra em activityUpdates
+ * - deals.select('...').eq().single()                   → custom_fields/tags vazios
+ * - deals.update(patch).eq('id')                        → dealUpdateError configurável
+ */
+function makeSupabase(opts: {
+  clash?: boolean;
+  insertError?: { code: string } | null;
+  dealUpdateError?: { code: string } | null;
+} = {}) {
+  const state: any = { insertedActivity: null, dealUpdate: null, activityUpdates: [] };
+  const clashResult = { data: opts.clash ? [{ id: 'clash-1' }] : [], error: null };
+
   const client: any = {
     from(table: string) {
       if (table === 'activities') {
         return {
+          select: () => {
+            const b: any = {
+              eq: () => b,
+              is: () => b,
+              limit: async () => clashResult,
+            };
+            return b;
+          },
           insert: (row: any) => ({
             select: () => ({
               single: async () => {
@@ -26,7 +47,7 @@ function makeSupabase(opts: { insertError?: { code: string } | null } = {}) {
           }),
           update: (patch: any) => ({
             eq: async (_c: string, id: string) => {
-              state.deletedIds.push({ id, patch });
+              state.activityUpdates.push({ id, patch });
               return { error: null };
             },
           }),
@@ -35,7 +56,7 @@ function makeSupabase(opts: { insertError?: { code: string } | null } = {}) {
       if (table === 'deals') {
         return {
           select: () => ({ eq: () => ({ single: async () => ({ data: { custom_fields: {}, tags: [] }, error: null }) }) }),
-          update: (patch: any) => ({ eq: async () => { state.dealUpdate = patch; return { error: null }; } }),
+          update: (patch: any) => ({ eq: async () => { state.dealUpdate = patch; return { error: opts.dealUpdateError ?? null }; } }),
         };
       }
       throw new Error('tabela inesperada: ' + table);
@@ -62,6 +83,15 @@ describe('bookSlot', () => {
     expect(state.dealUpdate.tags).toContain('reuniao:agendada');
   });
 
+  it('re-check: se o slot já está ocupado, retorna taken sem inserir', async () => {
+    const { client, state } = makeSupabase({ clash: true });
+    const r = await bookSlot({ supabase: client, ...base });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('taken');
+    expect(state.insertedActivity).toBeNull();
+    expect(state.dealUpdate).toBeNull();
+  });
+
   it('corrida: unique violation (23505) => taken, sem gravar deal', async () => {
     const { client, state } = makeSupabase({ insertError: { code: '23505' } });
     const r = await bookSlot({ supabase: client, ...base });
@@ -70,17 +100,36 @@ describe('bookSlot', () => {
     expect(state.dealUpdate).toBeNull();
   });
 
-  it('erro de banco genérico => db_error', async () => {
+  it('erro de banco genérico no insert => db_error', async () => {
     const { client } = makeSupabase({ insertError: { code: '08006' } });
     const r = await bookSlot({ supabase: client, ...base });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe('db_error');
   });
 
-  it('remarcação: cancela a activity anterior antes de criar a nova', async () => {
+  it('falha no UPDATE do deal => ROLLBACK da activity nova + db_error (nunca confirma falso)', async () => {
+    const { client, state } = makeSupabase({ dealUpdateError: { code: '55000' } });
+    const r = await bookSlot({ supabase: client, ...base });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('db_error');
+    // a activity criada (act-1) deve ter sido deletada no rollback
+    expect(state.activityUpdates.some((u: any) => u.id === 'act-1' && u.patch.deleted_at)).toBe(true);
+  });
+
+  it('remarcação: cria a nova e depois cancela a antiga', async () => {
     const { client, state } = makeSupabase();
     const r = await bookSlot({ supabase: client, ...base, previousActivityId: 'act-old' });
     expect(r.ok).toBe(true);
-    expect(state.deletedIds.some((d: any) => d.id === 'act-old' && d.patch.deleted_at)).toBe(true);
+    expect(state.insertedActivity).not.toBeNull();
+    expect(state.activityUpdates.some((u: any) => u.id === 'act-old' && u.patch.deleted_at)).toBe(true);
+  });
+
+  it('remarcação onde o novo slot encheu (23505): NÃO cancela a antiga (não deixa o lead sem reunião)', async () => {
+    const { client, state } = makeSupabase({ insertError: { code: '23505' } });
+    const r = await bookSlot({ supabase: client, ...base, previousActivityId: 'act-old' });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('taken');
+    // a activity antiga NÃO pode ter sido cancelada
+    expect(state.activityUpdates.some((u: any) => u.id === 'act-old')).toBe(false);
   });
 });

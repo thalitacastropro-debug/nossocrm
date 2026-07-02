@@ -554,7 +554,14 @@ export async function processIncomingMessage(
     context.available_slots = sched.available;
     context.scheduling_status = sched.status;
     if (isDryRun) {
-      console.log('[Scheduling][observe] status=%s slots=%d deal=%s', sched.status.kind, sched.available.length, dealId);
+      console.log(
+        '[Scheduling][observe] status=%s slots=%d intent=%s slot=%s deal=%s',
+        sched.status.kind,
+        sched.available.length,
+        sched.detected?.intent ?? 'n/a',
+        sched.detected?.slotIso ?? 'n/a',
+        dealId,
+      );
     }
   } catch (err) {
     console.error('[Scheduling] falhou (seguindo sem agenda):', err);
