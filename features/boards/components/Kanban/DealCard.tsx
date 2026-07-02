@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { DealView } from '@/types';
-import { Building2, Hourglass, Trophy, XCircle } from 'lucide-react';
+import { Building2, Clock, Hourglass, Trophy, XCircle } from 'lucide-react';
 import { ActivityStatusIcon } from './ActivityStatusIcon';
 import { priorityAriaLabelPtBr } from '@/lib/utils/priority';
 
@@ -45,6 +45,30 @@ const getInitials = (name: string) => {
     .toUpperCase();
 };
 
+/**
+ * Tempo que o lead está no CRM (desde createdAt), compacto e em pt-BR.
+ * Ajuda a bater o olho e ver há quanto tempo o lead está parado conosco.
+ */
+const tempoNoCrm = (createdAt?: string): string | null => {
+  if (!createdAt) return null;
+  const then = new Date(createdAt).getTime();
+  if (Number.isNaN(then)) return null;
+  const diffMs = Date.now() - then;
+  if (diffMs < 0) return null;
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return 'agora';
+  if (min < 60) return `${min}min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d`;
+  if (d < 30) return `${Math.floor(d / 7)} sem`;
+  const meses = Math.floor(d / 30);
+  if (d < 365) return `${meses} ${meses > 1 ? 'meses' : 'mês'}`;
+  const anos = Math.floor(d / 365);
+  return `${anos} ${anos > 1 ? 'anos' : 'ano'}`;
+};
+
 const DealCardComponent: React.FC<DealCardProps> = ({
   deal,
   isRotting,
@@ -60,6 +84,7 @@ const DealCardComponent: React.FC<DealCardProps> = ({
 }) => {
   const [localDragging, setLocalDragging] = useState(false);
   const isClosed = isDealClosed(deal);
+  const age = tempoNoCrm(deal.createdAt);
 
   const handleToggleMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -261,6 +286,14 @@ const DealCardComponent: React.FC<DealCardProps> = ({
           <span className="text-sm font-bold text-slate-700 dark:text-slate-200 font-mono">
             ${deal.value.toLocaleString()}
           </span>
+          {age && (
+            <span
+              className="text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-0.5 whitespace-nowrap"
+              title={`No CRM desde ${new Date(deal.createdAt).toLocaleDateString('pt-BR')}`}
+            >
+              <Clock size={9} aria-hidden="true" /> {age}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center">
