@@ -17,6 +17,9 @@ export interface BoardAIConfig {
 
   agent_mode: 'observe' | 'respond';
 
+  /** Consultor que recebe a ligação agendada pela SDR (agenda real). NULL => interino. */
+  consultant_user_id: string | null;
+
   circuit_breaker_threshold: number;
   hitl_threshold: number;
   hitl_min_confidence: number;

@@ -162,6 +162,7 @@ export async function buildLeadContext(
   // Expomos só mapped + fields (o útil); raw e first_touch são ruído/controle interno.
   let leadForm: LeadContext['lead_form'] = null;
   let qualificacao: LeadContext['qualificacao'] = null;
+  let reuniaoAgendada: LeadContext['reuniao_agendada'] = null;
   if (dealResult.data) {
     const customFields = (dealResult.data as { custom_fields?: Record<string, unknown> }).custom_fields;
     const lf = customFields?.lead_form as Record<string, unknown> | undefined;
@@ -180,6 +181,15 @@ export async function buildLeadContext(
     const qual = customFields?.qualificacao as Record<string, unknown> | undefined;
     if (qual && typeof qual === 'object' && Object.keys(qual).length > 0) {
       qualificacao = qual;
+    }
+    // Reunião já agendada (agenda real) — o wiring usa activity_id/status pra remarcar/cancelar.
+    const ra = customFields?.reuniao_agendada as Record<string, unknown> | undefined;
+    if (ra && typeof ra === 'object') {
+      reuniaoAgendada = {
+        activity_id: typeof ra.activity_id === 'string' ? ra.activity_id : undefined,
+        status: typeof ra.status === 'string' ? ra.status : undefined,
+        data_hora: typeof ra.data_hora === 'string' ? ra.data_hora : undefined,
+      };
     }
   }
 
@@ -231,6 +241,7 @@ export async function buildLeadContext(
     deal,
     lead_form: leadForm,
     qualificacao,
+    reuniao_agendada: reuniaoAgendada,
     stage,
     messages,
     organization: {
@@ -393,6 +404,28 @@ export function formatContextForPrompt(context: LeadContext): string {
   lines.push(`Mensagens do AI: ${context.stats.ai_messages_count}`);
   lines.push(`Conversa iniciada: ${new Date(context.stats.conversation_started_at).toLocaleDateString('pt-BR')}`);
   lines.push('');
+
+  // Agenda real: horários disponíveis + status da reunião
+  if (context.available_slots && context.available_slots.length > 0) {
+    lines.push('## Horários disponíveis para a ligação do consultor');
+    lines.push('Ofereça SOMENTE estes horários. NUNCA invente outro. Ofereça 2–3 por vez, não a lista toda.');
+    lines.push('Se nenhum servir, diga que vai confirmar a melhor data com o consultor (não prometa fora da lista).');
+    context.available_slots.forEach((s) => lines.push(`- ${s.label}`));
+    lines.push('');
+  }
+  if (context.scheduling_status && context.scheduling_status.kind !== 'none') {
+    lines.push('## Status da reunião');
+    const st = context.scheduling_status;
+    if (st.kind === 'confirmed') {
+      lines.push(`REUNIÃO JÁ CONFIRMADA para ${st.label}. Confirme pro lead com naturalidade; o consultor liga nesse horário.`);
+    } else if (st.kind === 'slot_taken') {
+      const alts = st.alternatives.map((s) => s.label).join(' ou ');
+      lines.push(`O horário que o lead pediu acabou de ser preenchido. Peça desculpa e ofereça: ${alts}.`);
+    } else if (st.kind === 'cancelled') {
+      lines.push('A reunião foi cancelada. NUNCA deixe solto: puxe um novo horário agora ou avise que o consultor reorganiza.');
+    }
+    lines.push('');
+  }
 
   // Histórico
   lines.push('## Histórico da Conversa');

@@ -98,6 +98,15 @@ export interface LeadContext {
   /** Campos de qualificação já extraídos da conversa (deals.custom_fields.qualificacao) */
   qualificacao?: Record<string, unknown> | null;
 
+  /** Horários livres pra oferecer (agenda real). Vazio quando não aplicável. */
+  available_slots?: import('../scheduling/types').Slot[];
+
+  /** Status da reunião pra orientar a resposta da Ana. */
+  scheduling_status?: import('../scheduling/types').SchedulingStatus;
+
+  /** Reunião já agendada (deals.custom_fields.reuniao_agendada), se houver. */
+  reuniao_agendada?: { activity_id?: string; status?: string; data_hora?: string } | null;
+
   /** Configuração do estágio */
   stage: {
     id: string;
