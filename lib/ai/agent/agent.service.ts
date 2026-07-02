@@ -17,6 +17,7 @@ import { buildLeadContext, formatContextForPrompt } from './context-builder';
 import { getChannelRouter } from '@/lib/messaging/channel-router.service';
 import { extractAndUpdateBANT } from '../extraction/extraction.service';
 import { runDomainExtraction } from '../extraction/domain-extraction.service';
+import { runScheduling } from '../scheduling/scheduling.service';
 import {
   buildConversationalPromptFromPatterns,
 } from './generative-schema';
@@ -520,6 +521,43 @@ export async function processIncomingMessage(
   // 8.5. Aplicar delay de resposta (simula tempo humano de digitação)
   if (config.settings.response_delay_seconds > 0) {
     await new Promise<void>((r) => setTimeout(r, config.settings.response_delay_seconds * 1000));
+  }
+
+  // 8.7. Agenda real (só board da Niva; marca só em respond). Anexa horários livres + status
+  // da reunião ao contexto ANTES de gerar a resposta, pra a confirmação da Ana ser sempre
+  // verdadeira (ela só diz "fechado" se o booker realmente marcou). Falha = segue sem agenda.
+  try {
+    const q = (context.qualificacao ?? {}) as Record<string, unknown>;
+    const summaryParts: string[] = [];
+    const tierVal = (q.tier as { value?: string } | undefined)?.value;
+    if (tierVal) summaryParts.push(`Tier ${tierVal}`);
+    if (q.vidas) summaryParts.push(`${q.vidas} vidas`);
+    if (q.valor_pago_exato) summaryParts.push(`paga R$${q.valor_pago_exato}`);
+    if (q.operadora) summaryParts.push(String(q.operadora));
+
+    const sched = await runScheduling({
+      supabase,
+      boardId: deal.board_id,
+      organizationId,
+      conversationId,
+      dealId,
+      contactId: conversation?.contact_id ?? null,
+      leadName: context.contact?.name ?? 'lead',
+      summary: summaryParts.join(' · ') || 'Lead qualificado pela SDR',
+      reuniaoAgendada: context.reuniao_agendada ?? null,
+      aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model },
+      dryRun: isDryRun,
+      consultantUserId: boardAIConfig?.consultant_user_id ?? null,
+      now: new Date(),
+      offeredBefore: context.stats.ai_messages_count >= 1 && context.stage.name !== 'Novo Lead',
+    });
+    context.available_slots = sched.available;
+    context.scheduling_status = sched.status;
+    if (isDryRun) {
+      console.log('[Scheduling][observe] status=%s slots=%d deal=%s', sched.status.kind, sched.available.length, dealId);
+    }
+  } catch (err) {
+    console.error('[Scheduling] falhou (seguindo sem agenda):', err);
   }
 
   // 9. Gerar resposta usando configuração de AI do banco
