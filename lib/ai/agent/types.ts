@@ -19,7 +19,8 @@ export interface StageAIConfig {
   system_prompt: string;
   stage_goal: string | null;
   advancement_criteria: string[];
-  settings: StageAISettings;
+  /** JSONB livre no banco — na prática pode vir `{}`; sempre acessar com fallback. */
+  settings: Partial<StageAISettings>;
   ai_model: string | null;
   notify_team: boolean;
   created_at: string;

@@ -343,6 +343,21 @@ export async function processIncomingMessage(
 
   const config = stageConfig as StageAIConfig;
 
+  // Settings efetivos: etapa → board → default seguro. Bug real de produção no fluxo
+  // webhook: stage_ai_config.settings era `{}` → handoff_keywords undefined →
+  // `for..of undefined` derrubava o agente ("TypeError: x is not iterable").
+  const effectiveSettings = {
+    max_messages_per_conversation:
+      config.settings?.max_messages_per_conversation ??
+      boardAIConfig?.max_messages_before_handoff ??
+      30,
+    handoff_keywords: config.settings?.handoff_keywords ?? boardAIConfig?.handoff_keywords ?? [],
+    business_hours_only: config.settings?.business_hours_only ?? false,
+    business_hours: config.settings?.business_hours,
+    response_delay_seconds:
+      config.settings?.response_delay_seconds ?? boardAIConfig?.response_delay_seconds ?? 0,
+  };
+
   // 3b. Verificar escopo do agente (agent_goal_stage_id)
   // Se o deal está além do estágio limite configurado no board, o agente não age.
   if (deal.board_id) {
@@ -472,14 +487,14 @@ export async function processIncomingMessage(
   }
 
   // 6. Verificar limite de mensagens
-  if (context.stats.ai_messages_count >= config.settings.max_messages_per_conversation) {
+  if (context.stats.ai_messages_count >= effectiveSettings.max_messages_per_conversation) {
     const handoffDecision = await handleHandoff(supabase, conversationId, organizationId, context, 'Limite de mensagens atingido', incomingMessage);
     await logAIInteraction({ supabase, organizationId, conversationId, messageId, stageId: deal.stage_id, context, decision: handoffDecision });
     return { success: true, decision: handoffDecision };
   }
 
   // 7. Verificar handoff keywords
-  const handoffKeyword = checkHandoffKeywords(incomingMessage, config.settings.handoff_keywords);
+  const handoffKeyword = checkHandoffKeywords(incomingMessage, effectiveSettings.handoff_keywords);
   if (handoffKeyword) {
     const handoffDecision = await handleHandoff(
       supabase,
@@ -508,7 +523,7 @@ export async function processIncomingMessage(
   }
 
   // 8. Verificar horário comercial
-  if (config.settings.business_hours_only && !isBusinessHours(config.settings.business_hours)) {
+  if (effectiveSettings.business_hours_only && !isBusinessHours(effectiveSettings.business_hours)) {
     return {
       success: true,
       decision: {
@@ -519,8 +534,8 @@ export async function processIncomingMessage(
   }
 
   // 8.5. Aplicar delay de resposta (simula tempo humano de digitação)
-  if (config.settings.response_delay_seconds > 0) {
-    await new Promise<void>((r) => setTimeout(r, config.settings.response_delay_seconds * 1000));
+  if (effectiveSettings.response_delay_seconds > 0) {
+    await new Promise<void>((r) => setTimeout(r, effectiveSettings.response_delay_seconds * 1000));
   }
 
   // 8.7. Agenda real (só board da Niva; marca só em respond). Anexa horários livres + status
@@ -1358,6 +1373,8 @@ async function isOperatorActive(
 }
 
 function checkHandoffKeywords(message: string, keywords: string[]): string | null {
+  // Defesa em profundidade: settings de etapa podem vir sem a lista (JSONB livre).
+  if (!Array.isArray(keywords)) return null;
   const lowerMessage = message.toLowerCase();
   for (const keyword of keywords) {
     if (lowerMessage.includes(keyword.toLowerCase())) {
