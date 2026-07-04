@@ -269,15 +269,15 @@ function generateStableEventId(
 ): string {
   if (eventNorm === "messages.upsert") {
     const data = (payload as UazAPIUpsertPayload).data;
-    return `evo_msg_${data.key.id}`;
+    return `evo_msg_${data?.key?.id ?? Date.now()}`;
   }
 
   if (eventNorm === "messages.update") {
     const updates = (payload as UazAPIUpdatePayload).data;
     if (Array.isArray(updates) && updates.length > 0) {
       const first = updates[0];
-      const status = first.update?.status ?? "unknown";
-      return `evo_status_${first.key.id}_${status}`;
+      const status = first?.update?.status ?? "unknown";
+      return `evo_status_${first?.key?.id ?? "unknown"}_${status}`;
     }
     return `evo_status_unknown_${Date.now()}`;
   }
@@ -296,6 +296,68 @@ function generateStableEventId(
  */
 function determineEventType(eventNorm: string): string {
   return eventNorm || "unknown";
+}
+
+/**
+ * Adapta o payload NATIVO da UAZAPI (formato { EventType, message, owner, ... })
+ * para o formato interno estilo Evolution ({ event, instance, data.key... }).
+ *
+ * A UAZAPI real NÃO manda `event`/`data` — descoberto no cutover (2026-07-04):
+ * o payload nativo derrubava a função com 500 antes mesmo da auditoria.
+ * Campos observados em /message/find e /chat/find: message.chatid, message.text,
+ * message.fromMe, message.messageType ("Conversation", "ExtendedTextMessage", ...),
+ * message.messageTimestamp (em MILISSEGUNDOS), message.senderName, message.sender.
+ */
+function adaptUazapiNative(raw: Record<string, unknown>): UazAPIUpsertPayload | null {
+  const m = raw?.message as Record<string, unknown> | undefined;
+  if (!m || typeof m !== "object") return null;
+
+  const chatid = String(m.chatid ?? m.remoteJid ?? "");
+  if (!chatid) return null;
+
+  const tsRaw = Number(m.messageTimestamp ?? 0);
+  const tsSec = tsRaw > 1e12 ? Math.floor(tsRaw / 1000) : tsRaw;
+  const text = String(m.text ?? (m.content as Record<string, unknown>)?.text ?? "");
+  const mtypeRaw = String(m.messageType ?? "").toLowerCase();
+
+  let messageType = "conversation";
+  let message: UazAPIMessageContent = { conversation: text };
+  if (mtypeRaw.includes("extendedtext")) {
+    messageType = "extendedTextMessage";
+    message = { extendedTextMessage: { text } };
+  } else if (mtypeRaw.includes("image")) {
+    messageType = "imageMessage";
+    message = { imageMessage: { caption: String(m.caption ?? text) } };
+  } else if (mtypeRaw.includes("audio") || mtypeRaw.includes("ptt")) {
+    messageType = "audioMessage";
+    message = { audioMessage: {} };
+  } else if (mtypeRaw.includes("video")) {
+    messageType = "videoMessage";
+    message = { videoMessage: { caption: String(m.caption ?? text) } };
+  } else if (mtypeRaw.includes("document")) {
+    messageType = "documentMessage";
+    message = { documentMessage: { fileName: String(m.fileName ?? m.filename ?? "") } };
+  } else if (mtypeRaw.includes("sticker")) {
+    messageType = "stickerMessage";
+    message = { stickerMessage: {} };
+  }
+
+  return {
+    event: "messages.upsert",
+    instance: String(raw.owner ?? raw.instance ?? ""),
+    data: {
+      key: {
+        remoteJid: chatid,
+        id: String(m.messageid ?? m.id ?? `uaz_${Date.now()}`),
+        fromMe: m.fromMe === true,
+      },
+      pushName: (m.senderName ?? m.pushName ?? m.notifyName) as string | undefined,
+      senderPn: m.sender ? String(m.sender).split("@")[0] : undefined,
+      message,
+      messageType,
+      messageTimestamp: tsSec || undefined,
+    },
+  };
 }
 
 /**
@@ -434,8 +496,24 @@ Deno.serve(async (req) => {
   // Log instance name from payload (truncated to prevent log injection)
   const instanceName = (payload as { instance?: string }).instance ?? "";
 
-  // Normalize event name: UazAPI v2 sends UPPERCASE, some versions use lowercase
-  const eventNorm = payload.event?.toLowerCase().replace(/_/g, ".");
+  // Normalize event name. Aceita `event` (estilo Evolution) e `EventType` (UAZAPI nativo);
+  // NUNCA deixa undefined derrubar a função (o 500 de 2026-07-04 morria aqui).
+  const rawEvent =
+    (payload as Record<string, unknown>).event ??
+    (payload as Record<string, unknown>).EventType ??
+    "";
+  let eventNorm = String(rawEvent).toLowerCase().replace(/_/g, ".");
+
+  // Payload nativo da UAZAPI ("messages" + message{}) → adapta pro formato interno.
+  if ((eventNorm === "messages" || eventNorm === "messages.upsert") && !(payload as Record<string, unknown>).data) {
+    const adapted = adaptUazapiNative(payload as Record<string, unknown>);
+    if (adapted) {
+      payload = adapted;
+      eventNorm = "messages.upsert";
+    }
+  }
+  // Nomes nativos → nomes internos (updates/conexão seguem só auditados por ora).
+  if (eventNorm === "messages") eventNorm = "messages.upsert";
 
   // =========================================================================
   // AUDIT LOGGING & DEDUPLICATION
