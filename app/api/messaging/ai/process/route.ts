@@ -25,34 +25,28 @@ import { waitUntil } from '@vercel/functions';
 // Maximum function execution duration (seconds)
 export const maxDuration = 60;
 
+/** Comparação timing-safe (mesmo tamanho + timingSafeEqual). */
+function timingSafeEqualStr(expected: string, provided: string): boolean {
+  const expectedBuf = Buffer.from(expected, 'utf8');
+  const providedBuf = Buffer.from(provided, 'utf8');
+  return expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf);
+}
+
 export async function POST(request: NextRequest) {
   // Verify internal API secret
-  // Accepts both X-Internal-Secret header and Authorization: Bearer
+  // Accepts both X-Internal-Secret header and Authorization: Bearer.
+  // O segredo pode vir do env (INTERNAL_API_SECRET) OU de
+  // organization_settings.internal_api_secret (handshake via banco — é o que a
+  // Edge Function usa, já que o runtime dela não tem os envs do Vercel).
   const internalSecret = request.headers.get('X-Internal-Secret');
   const authHeader = request.headers.get('Authorization');
   const providedKey = internalSecret || authHeader?.replace('Bearer ', '');
-
-  if (!INTERNAL_API_SECRET) {
-    console.error('[AI Process] INTERNAL_API_SECRET not configured');
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
 
   if (!providedKey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Timing-safe comparison to prevent timing attacks
-  const expectedBuf = Buffer.from(INTERNAL_API_SECRET, 'utf8');
-  const providedBuf = Buffer.from(providedKey, 'utf8');
-  const isValid =
-    expectedBuf.length === providedBuf.length &&
-    crypto.timingSafeEqual(expectedBuf, providedBuf);
-
-  if (!isValid) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Parse and validate request body
+  // Parse and validate request body (antes da auth por banco — ela precisa do organizationId)
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object') {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
@@ -93,6 +87,26 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createClient(supabaseUrl, supabaseKey);
+
+  // Auth default-deny: env primeiro; senão, o segredo compartilhado no banco da org.
+  let isValid = false;
+  if (INTERNAL_API_SECRET) {
+    isValid = timingSafeEqualStr(INTERNAL_API_SECRET, providedKey);
+  }
+  if (!isValid) {
+    const { data: orgSettings } = await supabase
+      .from('organization_settings')
+      .select('internal_api_secret')
+      .eq('organization_id', organizationId)
+      .maybeSingle();
+    const dbSecret = orgSettings?.internal_api_secret as string | null | undefined;
+    if (dbSecret) {
+      isValid = timingSafeEqualStr(dbSecret, providedKey);
+    }
+  }
+  if (!isValid) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   // In dev, waitUntil drops the callback — await directly for testability.
   // In production, Vercel executes waitUntil after the response is sent.

@@ -10,9 +10,10 @@
  * - `POST /functions/v1/messaging-webhook-uazapi/<channel_id>`
  *
  * Autenticação:
- * - Header `x-api-key` ou `apikey` verificado contra `UAZAPI_WEBHOOK_SECRET`
- *   (global) ou, se ausente, contra o `apiKey` nos credentials do canal.
- * - Nunca aceita sem auth (default-deny).
+ * - Header `x-api-key`/`apikey` OU query param `?key=` (a UAZAPI não manda headers
+ *   customizados no webhook — autentica pela URL), verificado contra
+ *   `UAZAPI_WEBHOOK_SECRET` (global) ou, se ausente, contra o `apiKey` nos
+ *   credentials do canal. Nunca aceita sem auth (default-deny).
  *
  * Deploy:
  * - Esta função deve ser deployada com `--no-verify-jwt` pois recebe
@@ -98,12 +99,17 @@ function json(status: number, body: unknown) {
   });
 }
 
-function getApiKeyFromRequest(req: Request): string {
+function getApiKeyFromRequest(req: Request, url: URL): string {
   const xApiKey = req.headers.get("x-api-key") || "";
   if (xApiKey.trim()) return xApiKey.trim();
 
   const apikey = req.headers.get("apikey") || "";
   if (apikey.trim()) return apikey.trim();
+
+  // A UAZAPI não suporta headers customizados no webhook — ela autentica pela URL.
+  // Aceitamos o segredo como query param (?key=...), comparado timing-safe como os headers.
+  const urlKey = url.searchParams.get("key") || "";
+  if (urlKey.trim()) return urlKey.trim();
 
   return "";
 }
@@ -297,20 +303,31 @@ function determineEventType(eventNorm: string): string {
  * Fire-and-forget: errors are logged but don't fail the webhook.
  */
 async function triggerAIProcessing(params: {
+  supabase: ReturnType<typeof createClient>;
   conversationId: string;
   organizationId: string;
   messageText: string;
   messageId?: string;
 }): Promise<void> {
-  const appUrl = Deno.env.get("APP_URL") || Deno.env.get("CRM_APP_URL") || "http://localhost:3000";
-  const internalSecret = Deno.env.get("INTERNAL_API_SECRET");
+  // Config preferida: organization_settings (handshake via banco — o runtime das
+  // Edge Functions não tem os envs do Vercel). Env fica como fallback.
+  let appUrl = Deno.env.get("APP_URL") || Deno.env.get("CRM_APP_URL") || "";
+  let internalSecret = Deno.env.get("INTERNAL_API_SECRET") || "";
 
-  if (!internalSecret) {
-    console.warn("[UazAPI] INTERNAL_API_SECRET not set, skipping AI processing");
+  const { data: orgSettings } = await params.supabase
+    .from("organization_settings")
+    .select("app_base_url, internal_api_secret")
+    .eq("organization_id", params.organizationId)
+    .maybeSingle();
+  if (orgSettings?.app_base_url) appUrl = orgSettings.app_base_url as string;
+  if (orgSettings?.internal_api_secret) internalSecret = orgSettings.internal_api_secret as string;
+
+  if (!appUrl || !internalSecret) {
+    console.warn("[UazAPI] app_base_url/internal_api_secret ausentes (banco e env), skipping AI processing");
     return;
   }
 
-  const endpoint = `${appUrl}/api/messaging/ai/process`;
+  const endpoint = `${appUrl.replace(/\/$/, "")}/api/messaging/ai/process`;
 
   try {
     const response = await fetch(endpoint, {
@@ -408,7 +425,7 @@ Deno.serve(async (req) => {
   const webhookSecret =
     Deno.env.get("UAZAPI_WEBHOOK_SECRET") ??
     (channel.credentials as Record<string, string>)?.apiKey;
-  const providedKey = getApiKeyFromRequest(req);
+  const providedKey = getApiKeyFromRequest(req, url);
 
   if (!webhookSecret || !providedKey || !(await timingSafeEqual(providedKey, webhookSecret))) {
     return json(401, { error: "API key inválida" });
@@ -675,6 +692,7 @@ async function handleMessagesUpsert(
     const textContent = content.text as string | undefined;
     if (textContent) {
       triggerAIProcessing({
+        supabase,
         conversationId,
         organizationId: channel.organization_id,
         messageText: textContent,
