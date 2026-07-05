@@ -626,7 +626,7 @@ async function handleMessagesUpsert(
   // Find existing conversation
   const { data: existingConv, error: convFindErr } = await supabase
     .from("messaging_conversations")
-    .select("id, contact_id")
+    .select("id, contact_id, metadata")
     .eq("channel_id", channel.id)
     .eq("external_contact_id", phone)
     .maybeSingle();
@@ -639,6 +639,24 @@ async function handleMessagesUpsert(
   if (existingConv) {
     conversationId = existingConv.id;
     contactId = existingConv.contact_id;
+
+    // Conversa existente SEM deal vinculado (órfã): roda o find-or-create também.
+    // Cobre conversas criadas antes do fix e leads do backfill voltando a falar.
+    const hasDeal = Boolean((existingConv.metadata as Record<string, unknown>)?.deal_id);
+    if (!hasDeal && contactId) {
+      const routingRule = await getLeadRoutingRule(supabase, channel.id);
+      if (routingRule) {
+        await autoCreateDeal(supabase, {
+          organizationId: channel.organization_id,
+          contactId,
+          boardId: routingRule.boardId,
+          stageId: routingRule.stageId,
+          conversationId,
+          contactName: data.pushName || phone,
+          phone,
+        });
+      }
+    }
   } else {
     // Find or create contact
     const { data: existingContact, error: contactLookupErr } = await supabase
@@ -710,6 +728,7 @@ async function handleMessagesUpsert(
           stageId: routingRule.stageId,
           conversationId,
           contactName: pushName || phone,
+          phone,
         });
       }
     }
@@ -936,6 +955,108 @@ async function getLeadRoutingRule(
   return { boardId: data.board_id, stageId: data.stage_id };
 }
 
+/** Vincula a conversa a um deal via metadata (merge seguro do JSONB). */
+async function linkConversationToDeal(
+  supabase: ReturnType<typeof createClient>,
+  conversationId: string,
+  dealId: string,
+  autoCreated: boolean,
+) {
+  const { data: conv, error: convMetaErr } = await supabase
+    .from("messaging_conversations")
+    .select("metadata")
+    .eq("id", conversationId)
+    .maybeSingle();
+
+  if (convMetaErr) {
+    console.error("[UazAPI] Failed to read conversation metadata:", convMetaErr);
+    return;
+  }
+
+  const { error: metaUpdateErr } = await supabase
+    .from("messaging_conversations")
+    .update({
+      metadata: {
+        ...((conv?.metadata as Record<string, unknown>) || {}),
+        deal_id: dealId,
+        auto_created_deal: autoCreated,
+      },
+    })
+    .eq("id", conversationId);
+
+  if (metaUpdateErr) {
+    console.error("[UazAPI] Failed to update conversation metadata:", metaUpdateErr);
+  }
+}
+
+/**
+ * Encontra um deal ABERTO já existente pra este lead (na org inteira) — evita
+ * duplicar card de quem já está no CRM (backfill/consultor). Ordem de busca:
+ * 1. deal vinculado ao contato; 2. custom_fields.phone = E.164 (backfill novo);
+ * 3. título = telefone cru (backfill antigo sem nome). Adota o contato no deal
+ * quando ele ainda não tem (cura os cards do backfill).
+ */
+async function findExistingOpenDeal(
+  supabase: ReturnType<typeof createClient>,
+  organizationId: string,
+  contactId: string,
+  phone: string,
+): Promise<string | null> {
+  // 1. Pelo contato
+  const { data: byContact } = await supabase
+    .from("deals")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("is_won", false)
+    .eq("is_lost", false)
+    .is("deleted_at", null)
+    .eq("contact_id", contactId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (byContact?.id) return byContact.id as string;
+
+  // 2. Pelo telefone em custom_fields.phone (deals do backfill, sem contato)
+  const { data: byPhone } = await supabase
+    .from("deals")
+    .select("id, contact_id")
+    .eq("organization_id", organizationId)
+    .eq("is_won", false)
+    .eq("is_lost", false)
+    .is("deleted_at", null)
+    .eq("custom_fields->>phone", phone)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (byPhone?.id) {
+    if (!byPhone.contact_id) {
+      await supabase.from("deals").update({ contact_id: contactId }).eq("id", byPhone.id);
+    }
+    return byPhone.id as string;
+  }
+
+  // 3. Pelo título = telefone cru (backfill antigo)
+  const { data: byTitle } = await supabase
+    .from("deals")
+    .select("id, contact_id")
+    .eq("organization_id", organizationId)
+    .eq("is_won", false)
+    .eq("is_lost", false)
+    .is("deleted_at", null)
+    .eq("title", phone)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (byTitle?.id) {
+    if (!byTitle.contact_id) {
+      await supabase.from("deals").update({ contact_id: contactId }).eq("id", byTitle.id);
+    }
+    return byTitle.id as string;
+  }
+
+  return null;
+}
+
 async function autoCreateDeal(
   supabase: ReturnType<typeof createClient>,
   params: {
@@ -945,9 +1066,25 @@ async function autoCreateDeal(
     stageId?: string | null;
     conversationId: string;
     contactName: string;
+    phone: string;
   }
 ) {
   try {
+    // 0. Lead já tem deal aberto no CRM? Vincula em vez de duplicar (o trigger
+    //    check_deal_duplicate rejeitaria mesmo caminho contato+stage; e leads do
+    //    backfill precisam CASAR com a conversa, não ganhar card novo).
+    const existingDealId = await findExistingOpenDeal(
+      supabase,
+      params.organizationId,
+      params.contactId,
+      params.phone,
+    );
+    if (existingDealId) {
+      await linkConversationToDeal(supabase, params.conversationId, existingDealId, false);
+      console.log(`[UazAPI] Linked conversation ${params.conversationId} to existing deal ${existingDealId}`);
+      return;
+    }
+
     let stageId = params.stageId;
 
     if (!stageId) {
@@ -980,40 +1117,20 @@ async function autoCreateDeal(
       .single();
 
     if (dealErr) {
+      // Corrida com o trigger check_deal_duplicate: outro caminho criou o deal
+      // entre a busca e o insert — re-busca e vincula em vez de perder a conversa.
+      const retryId = await findExistingOpenDeal(supabase, params.organizationId, params.contactId, params.phone);
+      if (retryId) {
+        await linkConversationToDeal(supabase, params.conversationId, retryId, false);
+        console.log(`[UazAPI] Insert rejeitado; linked to existing deal ${retryId}`);
+        return;
+      }
       console.error("[UazAPI] Error auto-creating deal:", dealErr);
       return;
     }
 
     console.log(`[UazAPI] Auto-created deal: ${newDeal.id} for contact ${params.contactId}`);
-
-    // Update conversation metadata with deal reference — abort on read error
-    // to avoid wiping existing JSONB data with a bad merge.
-    const { data: conv, error: convMetaErr } = await supabase
-      .from("messaging_conversations")
-      .select("metadata")
-      .eq("id", params.conversationId)
-      .maybeSingle();
-
-    if (convMetaErr) {
-      console.error("[UazAPI] Failed to read conversation metadata:", convMetaErr);
-      // Do not proceed with update to avoid losing existing metadata
-      return;
-    }
-
-    const { error: metaUpdateErr } = await supabase
-      .from("messaging_conversations")
-      .update({
-        metadata: {
-          ...((conv?.metadata as Record<string, unknown>) || {}),
-          deal_id: newDeal.id,
-          auto_created_deal: true,
-        },
-      })
-      .eq("id", params.conversationId);
-
-    if (metaUpdateErr) {
-      console.error("[UazAPI] Failed to update conversation metadata:", metaUpdateErr);
-    }
+    await linkConversationToDeal(supabase, params.conversationId, newDeal.id as string, true);
   } catch (error) {
     console.error("[UazAPI] Unexpected error in autoCreateDeal:", error);
   }
