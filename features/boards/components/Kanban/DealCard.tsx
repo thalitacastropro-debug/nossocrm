@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { DealView } from '@/types';
-import { Building2, Clock, Hourglass, Trophy, XCircle } from 'lucide-react';
+import { Building2, Clock, Hourglass, MessageCircle, Trophy, XCircle } from 'lucide-react';
 import { ActivityStatusIcon } from './ActivityStatusIcon';
 import { priorityAriaLabelPtBr } from '@/lib/utils/priority';
 
@@ -46,6 +46,20 @@ const getInitials = (name: string) => {
 };
 
 /**
+ * Telefone do lead pra abrir o WhatsApp direto do card (wa.me).
+ * Fontes: custom_fields.phone (E.164, gravado pelo webhook/backfill) ou o
+ * título quando ainda é o telefone cru (backfill antigo sem nome).
+ */
+const telefoneWhatsApp = (deal: DealView): string | null => {
+  const cf = (deal.customFields?.phone ?? '') as string;
+  const candidato = typeof cf === 'string' && cf.trim() ? cf : deal.title || '';
+  const digits = candidato.replace(/\D/g, '');
+  // Telefone plausível: 10-15 dígitos (E.164). Evita transformar títulos comuns em link.
+  if (!/^\+?[\d\s()-]+$/.test(candidato.trim()) || digits.length < 10 || digits.length > 15) return null;
+  return digits;
+};
+
+/**
  * Tempo que o lead está no CRM (desde createdAt), compacto e em pt-BR.
  * Ajuda a bater o olho e ver há quanto tempo o lead está parado conosco.
  */
@@ -85,6 +99,7 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   const [localDragging, setLocalDragging] = useState(false);
   const isClosed = isDealClosed(deal);
   const age = tempoNoCrm(deal.createdAt);
+  const waPhone = telefoneWhatsApp(deal);
 
   const handleToggleMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -296,7 +311,21 @@ const DealCardComponent: React.FC<DealCardProps> = ({
           )}
         </div>
 
-        <div className="flex items-center">
+        <div className="flex items-center gap-1">
+          {waPhone && (
+            <a
+              href={`https://wa.me/${waPhone}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              onMouseDown={e => e.stopPropagation()}
+              title="Abrir conversa no WhatsApp"
+              aria-label={`Abrir WhatsApp de ${deal.title}`}
+              className="p-1 rounded-full text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors"
+            >
+              <MessageCircle size={14} aria-hidden="true" />
+            </a>
+          )}
           <ActivityStatusIcon
             status={activityStatus}
             type={deal.nextActivity?.type}

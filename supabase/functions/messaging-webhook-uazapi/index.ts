@@ -1112,6 +1112,9 @@ async function autoCreateDeal(
         contact_id: params.contactId,
         title: `${params.contactName} - WhatsApp`,
         value: 0,
+        // phone no custom_fields: alimenta o botão de WhatsApp no card e o
+        // find-or-link de conversas futuras (mesma chave do backfill).
+        custom_fields: { phone: params.phone, source: "whatsapp-webhook" },
       })
       .select("id")
       .single();
