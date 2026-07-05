@@ -268,7 +268,9 @@ export const dealsService = {
         .select(`
           *,
           deal_items (*)
-        `);
+        `)
+        // Soft-deletados não aparecem na board (bug: cards excluídos continuavam visíveis)
+        .is('deleted_at', null);
       if (options?.signal) dealsQuery = dealsQuery.abortSignal(options.signal);
       const { data, error } = await dealsQuery
         .order('created_at', { ascending: false })
