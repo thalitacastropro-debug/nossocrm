@@ -34,6 +34,21 @@ WHERE board_id = 'c2e36157-1b63-43cc-be35-bb1cab7a287f'
 -- APLICADO no banco vivo em 2026-07-05. Idempotente.
 -- =============================================================================
 
+-- =============================================================================
+-- PARTE 3 (mesmo dia, 2ª conversa real) — formulário e pergunta de interesse:
+-- 1. Ana disse "você preencheu nosso formulário" pra lead que chegou DIRETO
+--    pelo WhatsApp (card novo sem lead_form) — alucinou a origem;
+-- 2. perguntou "você teria interesse em...?" — pergunta sim/não que convida o
+--    "não" (quem chamou JÁ tem interesse);
+-- 3. o prompt da ETAPA novo-lead também dizia "formulário" e "consultor
+--    especialista" (fonte extra dos dois vícios) — corrigido no stage_ai_config.
+-- Regras novas na persona: formulário só se existir no contexto; com formulário,
+-- 1ª atitude = confirmar os dados da solicitação; NUNCA pergunta de interesse
+-- sim/não. APLICADO no banco vivo em 2026-07-05. Idempotente.
+-- (Ver UPDATEs no banco; anchors: seção "O QUE JÁ VEIO NO FORMULÁRIO" da persona
+--  e o texto do system_prompt da etapa novo-lead.)
+-- =============================================================================
+
 UPDATE board_ai_config
 SET persona_prompt = replace(
   replace(
