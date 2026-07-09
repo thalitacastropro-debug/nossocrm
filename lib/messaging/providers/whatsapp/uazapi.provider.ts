@@ -31,6 +31,20 @@ export type UazApiCredentials = EvolutionCredentials;
 export type UazApiWebhookPayload = EvolutionWebhookPayload;
 
 /**
+ * Normaliza o id de mensagem da UazAPI para a forma PURA (sem o prefixo do
+ * remetente). O /send/text devolve "5511988209448:3EB0..." mas o webhook (eco
+ * fromMe e status updates) usa "3EB0...". Guardar sempre a forma pura faz o
+ * índice único de external_id deduplicar o eco e os status casarem com o envio.
+ */
+export function normalizeUazApiMessageId(id: string | undefined): string | undefined {
+  if (!id) return id;
+  // Prefixo do remetente = só dígitos antes do primeiro ":". Preserva ids que
+  // não seguem esse formato (não corta ":" que faça parte do próprio id).
+  const m = id.match(/^\d+:(.+)$/);
+  return m ? m[1] : id;
+}
+
+/**
  * UazAPI WhatsApp provider.
  *
  * Herda do Evolution para conexão/QR/webhook, mas faz OVERRIDE do envio
@@ -96,11 +110,20 @@ export class UazApiWhatsAppProvider extends EvolutionWhatsAppProvider {
         };
       }
 
-      const externalMessageId =
+      const rawMessageId =
         (json.id as string) ||
         (json.messageid as string) ||
         ((json.key as { id?: string } | undefined)?.id) ||
         undefined;
+
+      // A UazAPI devolve o id do /send/text prefixado com o número do remetente
+      // (ex.: "5511988209448:3EB0...") enquanto o eco do MESMO envio chega no
+      // webhook (fromMe) com o id PURO ("3EB0..."). Se guardarmos o id prefixado,
+      // o índice único de external_id não reconhece o eco como duplicata → o
+      // webhook insere uma 2ª linha (a mensagem aparece DOBRADA na conversa) e
+      // ainda cai no ramo de "reply manual", pausando a IA sem motivo. Normalizamos
+      // pro id puro (o que o webhook usa) pra o dedup e os status updates casarem.
+      const externalMessageId = normalizeUazApiMessageId(rawMessageId);
 
       return { success: true, externalMessageId, status: 'sent' };
     } catch (error) {

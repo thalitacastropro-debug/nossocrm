@@ -219,7 +219,10 @@ function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): Dom
   return {
     customFields,
     tier: tierResult.tier,
-    tags: [`tier:${tierResult.tier}`],
+    // Não gera tag de tier: o selo COLORIDO do card (derivado de custom_fields.tier)
+    // já mostra o tier automaticamente. Uma tag "tier:bronze" além do selo seria
+    // informação duplicada. A service ainda remove tags tier:* antigas dos deals.
+    tags: [],
     priority,
     lossReason,
   };
