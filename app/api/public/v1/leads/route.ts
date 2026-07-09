@@ -47,7 +47,7 @@ const BUSINESS_HOURS = { start: '08:00', end: '17:30', daysOfWeek: [1, 2, 3, 4, 
 // sem diminutivo; conduz (não pede permissão); reforça o consultor.
 const DEFAULT_GREETING: string[] = [
   'Oi {nome}, tudo bem? Aqui é a Ana, da Niva.',
-  'Vi que você se interessou por um plano de saúde empresarial pra você e sua família.',
+  'Vi que você tem interesse em otimizar seu plano de saúde pra você e sua família.',
   'Quem vai cuidar disso com você é um dos nossos consultores — eu já vou adiantando por aqui pra ele chegar preparado.',
   'Me conta: você já tem plano hoje ou seria o primeiro?',
 ];
