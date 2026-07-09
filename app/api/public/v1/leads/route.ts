@@ -61,13 +61,21 @@ const CONTROL_KEYS = new Set([
 
 // Schema permissivo (.passthrough()): o formulário é AGNÓSTICO — qualquer campo extra
 // que vier é preservado e guardado em custom_fields.lead_form.
+// Integrações (Make/n8n/Meta) às vezes mandam telefone como NÚMERO (sem aspas) ou
+// null. Aceitamos número→string e tratamos null/undefined como ausente, pra não
+// rejeitar o payload por um detalhe de tipagem do conector.
+const looseString = z.preprocess(
+  (v) => (v === null || v === undefined ? undefined : typeof v === 'number' ? String(v) : v),
+  z.string().optional()
+);
+
 const LeadIntakeSchema = z
   .object({
-    name: z.string().optional(),
-    nome: z.string().optional(),
-    phone: z.string().optional(),
-    telefone: z.string().optional(),
-    email: z.string().optional(),
+    name: looseString,
+    nome: looseString,
+    phone: looseString,
+    telefone: looseString,
+    email: looseString,
     channel_id: z.string().uuid().optional(),
     board_id: z.string().uuid().optional(),
     board_key: z.string().min(1).optional(),
@@ -202,7 +210,13 @@ export async function POST(request: Request) {
   const rawBody = await request.json().catch(() => null);
   const parsed = LeadIntakeSchema.safeParse(rawBody);
   if (!parsed.success) {
-    return NextResponse.json({ error: 'Invalid payload', code: 'VALIDATION_ERROR' }, { status: 422 });
+    // Detalha QUAL campo falhou (ex.: "channel_id: Invalid uuid") — sem isso, o
+    // integrador (Make/n8n) só via "Invalid payload" e ficava no escuro.
+    const issues = parsed.error.issues.map((i) => `${i.path.join('.') || '(body)'}: ${i.message}`);
+    return NextResponse.json(
+      { error: 'Invalid payload', code: 'VALIDATION_ERROR', issues },
+      { status: 422 }
+    );
   }
   const body = parsed.data;
 
