@@ -34,32 +34,29 @@ export const maxDuration = 30;
  * @module app/api/public/v1/leads/route
  */
 
-// Horário comercial (replica a regra do DataCrazy): seg–sex 08:00–17:30 (timezone da org).
+// Horário comercial (seg–sex 08:00–17:30, timezone da org) — usado SÓ como informação
+// (`within_business_hours` na resposta/registro do toque). NÃO é gate: a Ana engaja 24/7.
 const BUSINESS_HOURS = { start: '08:00', end: '17:30', daysOfWeek: [1, 2, 3, 4, 5] };
 
 // Saudação inicial (aprovada pela Niva) — enviada em BOLHAS curtas, estilo WhatsApp
 // (uma ideia por bolha; a última bolha é sempre a pergunta), NUNCA um bloco único.
-// O chamador (Make) pode sobrescrever via `greeting_in_hours` / `greeting_after_hours`
-// (string com UMA bolha por linha). Cada bolha suporta {nome} (primeiro nome) e {retorno}.
-// Regras de voz: SEM emojis; sem diminutivo; conduz (não pede permissão); reforça o
-// consultor; fora do horário a Ana retoma no próximo dia útil (sem prometer fim de semana).
-const DEFAULT_GREETING_IN_HOURS: string[] = [
+// A Ana engaja 24/7 (é IA): o MESMO opener imediato a qualquer hora e qualquer dia —
+// quem respeita horário comercial é só o AGENDAMENTO (o motor de agenda só oferece slot
+// real do consultor, seg–sex). O chamador pode sobrescrever via `greeting` (string, UMA
+// bolha por linha). Cada bolha suporta {nome} (primeiro nome). Regras de voz: SEM emojis;
+// sem diminutivo; conduz (não pede permissão); reforça o consultor.
+const DEFAULT_GREETING: string[] = [
   'Oi {nome}, tudo bem? Aqui é a Ana, da Niva.',
   'Vi que você se interessou por um plano de saúde empresarial pra você e sua família.',
   'Quem vai cuidar disso com você é um dos nossos consultores — eu já vou adiantando por aqui pra ele chegar preparado.',
   'Me conta: você já tem plano hoje ou seria o primeiro?',
-];
-const DEFAULT_GREETING_AFTER_HOURS: string[] = [
-  'Oi {nome}, tudo bem? Aqui é a Ana, da Niva.',
-  'Vi seu interesse num plano de saúde empresarial pra você e sua família.',
-  'Hoje já encerramos o atendimento, mas {retorno} eu te chamo aqui pra adiantar tudo e deixar nosso consultor pronto pra cuidar do seu caso.',
 ];
 
 // Campos de controle/roteamento — NÃO fazem parte dos "campos do formulário".
 const CONTROL_KEYS = new Set([
   'name', 'nome', 'phone', 'telefone', 'email',
   'channel_id', 'board_id', 'board_key', 'stage_id',
-  'source', 'title', 'greeting_in_hours', 'greeting_after_hours',
+  'source', 'title', 'greeting',
 ]);
 
 // Schema permissivo (.passthrough()): o formulário é AGNÓSTICO — qualquer campo extra
@@ -77,8 +74,7 @@ const LeadIntakeSchema = z
     stage_id: z.string().uuid().optional(),
     source: z.string().optional(),
     title: z.string().optional(),
-    greeting_in_hours: z.string().optional(),
-    greeting_after_hours: z.string().optional(),
+    greeting: z.string().optional(),
   })
   .passthrough();
 
@@ -113,55 +109,11 @@ function isWithinBusinessHours(timezone: string): boolean {
   }
 }
 
-/**
- * Frase do próximo contato útil, respeitando seg–sex (NUNCA promete fim de semana).
- * - dia útil antes de abrir → "ainda hoje pela manhã"
- * - próximo dia é útil → "amanhã pela manhã"
- * - senão (sex à noite / sáb / dom) → "na <dia útil> pela manhã" (ex.: segunda-feira)
- */
-function computeReturnPhrase(timezone: string): string {
-  try {
-    const now = new Date();
-    const dayStr = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short' }).format(now);
-    const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-    const day = dayMap[dayStr] ?? now.getUTCDay();
-
-    const [hStr, mStr] = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    })
-      .format(now)
-      .split(':');
-    const minutes = parseInt(hStr) * 60 + parseInt(mStr);
-    const [sH, sM] = BUSINESS_HOURS.start.split(':').map(Number);
-    const startMinutes = sH * 60 + sM;
-
-    const isBizDay = (d: number) => BUSINESS_HOURS.daysOfWeek.includes(d);
-    const names: Record<number, string> = {
-      1: 'segunda-feira', 2: 'terça-feira', 3: 'quarta-feira', 4: 'quinta-feira', 5: 'sexta-feira',
-    };
-
-    // Dia útil, mas antes de abrir → atende ainda hoje
-    if (isBizDay(day) && minutes < startMinutes) return 'ainda hoje pela manhã';
-
-    // Próximo dia útil (pula sábado/domingo)
-    let add = 1;
-    while (!isBizDay((day + add) % 7)) add++;
-    if (add === 1) return 'amanhã pela manhã';
-    return `na ${names[(day + add) % 7]} pela manhã`;
-  } catch {
-    return 'no próximo dia útil pela manhã';
-  }
-}
-
-/** Interpola {nome} (primeiro nome) e {retorno}, limpando pontuação órfã quando não há nome. */
-function renderGreeting(template: string, vars: { nome: string | null; retorno: string }): string {
+/** Interpola {nome} (primeiro nome), limpando pontuação órfã quando não há nome. */
+function renderGreeting(template: string, vars: { nome: string | null }): string {
   const firstName = (vars.nome ?? '').trim().split(/\s+/)[0] ?? '';
   return template
     .replaceAll('{nome}', firstName)
-    .replaceAll('{retorno}', vars.retorno)
     .replace(/\s{2,}/g, ' ')
     .replace(/\s+([,!?.])/g, '$1')
     .trim();
@@ -457,17 +409,14 @@ export async function POST(request: Request) {
     );
   }
 
-  // 8. Lógica de horário → escolhe a saudação (em bolhas) e o status do toque
+  // 8. Saudação em bolhas. A Ana engaja 24/7 — o MESMO opener imediato a qualquer hora/dia.
+  //    `withinHours` fica só como informação (analytics / registro do toque), não gate.
   const timezone = await getOrgTimezone(sb, auth.organizationId);
   const withinHours = isWithinBusinessHours(timezone);
-  const retorno = computeReturnPhrase(timezone);
-  const bubbles = resolveGreetingBubbles(
-    withinHours ? body.greeting_in_hours : body.greeting_after_hours,
-    withinHours ? DEFAULT_GREETING_IN_HOURS : DEFAULT_GREETING_AFTER_HOURS,
-  )
-    .map((t) => renderGreeting(t, { nome: name, retorno }))
+  const bubbles = resolveGreetingBubbles(body.greeting, DEFAULT_GREETING)
+    .map((t) => renderGreeting(t, { nome: name }))
     .filter(Boolean);
-  const touchStatus = withinHours ? 'greeted' : 'acked_after_hours';
+  const touchStatus = 'greeted';
 
   // 9. Enviar a saudação em BOLHAS (várias mensagens curtas, estilo WhatsApp)
   const send = await sendGreetingBubbles({
