@@ -224,6 +224,10 @@ const DealCardComponent: React.FC<DealCardProps> = ({
     if (deal.isWon) parts.push('ganho');
     if (deal.isLost) parts.push('perdido');
 
+    // Tier (selo colorido): antes vinha via tag "tier:*" no aria-label; agora que
+    // a tag saiu, anunciamos o tier a partir do selo pra não perder pro leitor de tela.
+    if (tier) parts.push(`Tier ${tier.label}${tier.provisorio ? ' provisório' : ''}`);
+
     // Tags (visible text) - include all shown tags
     const shownTags = deal.tags.slice(0, isClosed ? 1 : 2);
     if (shownTags.length > 0) {

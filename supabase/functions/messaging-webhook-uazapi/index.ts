@@ -153,6 +153,19 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
  * Handles @s.whatsapp.net and @lid suffixes.
  * Falls back to senderPn when @lid is detected (UazAPI bug).
  */
+/**
+ * Normaliza o id de mensagem da UazAPI pra forma PURA (sem o prefixo do
+ * remetente, ex.: "5511988209448:3EB0..." → "3EB0..."). O provider do lado do
+ * app já guarda o id puro; aplicar aqui também deixa o dedup SIMÉTRICO e robusto
+ * caso a UazAPI passe a mandar o eco/status com o id prefixado. Hoje o eco vem
+ * puro, então isto é um no-op defensivo. Espelha normalizeUazApiMessageId do
+ * provider (lib/messaging/providers/whatsapp/uazapi.provider.ts).
+ */
+function normalizeExternalMessageId(id: string): string {
+  const m = id.match(/^\d+:(.+)$/);
+  return m ? m[1] : id;
+}
+
 function normalizeRemoteJid(remoteJid: string, senderPn?: string): string | null {
   if (!remoteJid) return null;
   // @lid bug: UazAPI às vezes retorna lid em vez do número real
@@ -615,7 +628,7 @@ async function handleMessagesUpsert(
     return;
   }
 
-  const externalMessageId = data.key.id;
+  const externalMessageId = normalizeExternalMessageId(data.key.id);
   const { contentType, content } = extractMessageContent(data);
   const messageText = extractMessageText(data); // for last_message_preview only
   const pushName = data.pushName;
@@ -878,7 +891,7 @@ async function handleMessagesUpdate(
     // Only process outbound message status updates
     if (!update.key.fromMe) continue;
 
-    const externalId = update.key.id;
+    const externalId = normalizeExternalMessageId(update.key.id);
     const numericStatus = update.update?.status;
     if (numericStatus === undefined) continue;
 

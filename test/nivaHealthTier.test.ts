@@ -130,10 +130,11 @@ const fullExt: NivaHealthExtraction = {
 };
 
 describe('nivaHealthExtractor.apply', () => {
-  it('grava tier ouro + tag + priority high; lossReason null', () => {
+  it('grava tier ouro + priority high; NÃO gera tag de tier (o selo colorido já mostra); lossReason null', () => {
     const r = nivaHealthExtractor.apply({}, fullExt);
     expect(r.tier).toBe('ouro');
-    expect(r.tags).toContain('tier:ouro');
+    // O tier é mostrado pelo SELO colorido do card (custom_fields.tier), não por tag de texto.
+    expect(r.tags).toEqual([]);
     expect(r.priority).toBe('high');
     expect(r.lossReason).toBeNull();
     expect((r.customFields.tier as { value: string }).value).toBe('ouro');
