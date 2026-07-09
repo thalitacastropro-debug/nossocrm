@@ -206,7 +206,11 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   const getBorderLeftClass = () => {
     if (deal.isWon) return '!border-l-green-500';
     if (deal.isLost) return '!border-l-red-500';
-    // Priority-based colors for open deals
+    // Card com selo de tier: a cor do tier já é comunicada pelo SELO colorido.
+    // Repetir na borda (com paleta diferente: prata→âmbar, bronze→azul) só
+    // competiria e confundiria. Deixa a borda neutra — o selo é o único sinal.
+    if (tier) return '';
+    // Priority-based colors para os demais (sem tier: outros boards, não-qualificado)
     if (deal.priority === 'high') return '!border-l-red-500';
     if (deal.priority === 'medium') return '!border-l-amber-500';
     return '!border-l-blue-500';
