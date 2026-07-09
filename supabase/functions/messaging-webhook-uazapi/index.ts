@@ -734,6 +734,54 @@ async function handleMessagesUpsert(
     }
   }
 
+  // Eco de uma mensagem NOSSA (API/IA/automação de lead-intake) que ainda não
+  // recebeu external_id: todo envio daqui insere a linha (status pending,
+  // external_id NULL) ANTES de chamar o provider, só grava o external_id
+  // DEPOIS que a UAZAPI responde — e esse webhook pode chegar antes desse
+  // UPDATE terminar. Sem este check, o "duplicate" (que só olha external_id)
+  // não pega essa corrida, e a mensagem cai como "reply manual" — pausando a
+  // IA à toa logo depois do opener automático de todo lead novo.
+  if (isFromMe) {
+    const { data: inFlight } = await supabase
+      .from("messaging_messages")
+      .select("id")
+      .eq("conversation_id", conversationId)
+      .eq("direction", "outbound")
+      .is("external_id", null)
+      .in("status", ["pending", "queued"])
+      .gte("created_at", new Date(timestamp.getTime() - 60_000).toISOString())
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (inFlight?.id) {
+      await supabase
+        .from("messaging_messages")
+        .update({
+          external_id: externalMessageId,
+          status: "sent",
+          sent_at: timestamp.toISOString(),
+          metadata: {
+            uazapi_message_id: externalMessageId,
+            message_type: data.messageType,
+            timestamp: data.messageTimestamp,
+          },
+        })
+        .eq("id", inFlight.id);
+
+      await supabase
+        .from("messaging_conversations")
+        .update({
+          last_message_at: timestamp.toISOString(),
+          last_message_preview: messageText.slice(0, 100),
+          last_message_direction: "outbound",
+        })
+        .eq("id", conversationId);
+
+      return; // backfill feito — não é reply manual, não insere linha nova, não pausa a IA
+    }
+  }
+
   // Insert message (inbound or outbound from WhatsApp app)
   // Preserve real content type instead of always saving as 'text'
   const { data: insertedMsg, error: msgErr } = await supabase
@@ -764,6 +812,23 @@ async function handleMessagesUpsert(
     }
     console.log(`[UazAPI] Duplicate message ignored: ${externalMessageId}`);
     return;
+  }
+
+  // Consultor respondeu direto pelo celular (fora do CRM): se fosse um envio
+  // da nossa API/IA, o external_id já teria sido gravado antes e caído no
+  // "duplicate" acima. Chegar aqui = mensagem nova nunca vista → pausa a IA
+  // pro contato (auto-serviço pra reativar: painel do contato no Inbox).
+  if (isFromMe && contactId) {
+    const { error: pauseErr } = await supabase
+      .from("contacts")
+      .update({ ai_paused: true })
+      .eq("id", contactId)
+      .eq("ai_paused", false);
+    if (pauseErr) {
+      console.error("[UazAPI] Failed to pause AI after manual reply:", pauseErr, { contactId });
+    } else {
+      console.log(`[UazAPI] AI paused for contact ${contactId} (consultant replied manually)`);
+    }
   }
 
   // Update conversation — only reopen (status: open) for inbound messages
