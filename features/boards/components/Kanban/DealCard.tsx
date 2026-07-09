@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { DealView } from '@/types';
-import { Building2, Clock, Hourglass, MessageCircle, Trophy, XCircle } from 'lucide-react';
+import { Building2, Clock, Hourglass, MessageCircle, PhoneMissed, Trophy, XCircle } from 'lucide-react';
 import { ActivityStatusIcon } from './ActivityStatusIcon';
 import { priorityAriaLabelPtBr } from '@/lib/utils/priority';
 
@@ -27,6 +27,13 @@ interface DealCardProps {
   setLastMouseDownDealId: (id: string | null) => void;
   /** Callback to open move-to-stage modal for keyboard accessibility */
   onMoveToStage?: (dealId: string) => void;
+  /** Abre a conversa do WhatsApp num modal, direto na board (quando há conversationId) */
+  onOpenWhatsApp?: (dealId: string) => void;
+  /**
+   * Marca no-show: move o deal de volta pro board da Ana, reativa a IA e dispara
+   * a mensagem de resgate. Só é passado nos cards do board do Consultor.
+   */
+  onMarkNoShow?: (deal: DealView) => void;
 }
 
 // Check if deal is closed (won or lost)
@@ -83,6 +90,29 @@ const tempoNoCrm = (createdAt?: string): string | null => {
   return `${anos} ${anos > 1 ? 'anos' : 'ano'}`;
 };
 
+/**
+ * Selo de tier gravado pela extração de domínio em custom_fields.tier
+ * (estrutura: { value: 'ouro'|'prata'|'bronze'|'fora_icp'|'indefinido', motivos, provisorio }).
+ * Só os três tiers "de medalha" viram selo colorido; fora_icp/indefinido não geram selo
+ * (não têm cor definida e seriam ruído — a perda/indefinição já aparece por outros sinais).
+ */
+const TIER_BADGES: Record<string, { label: string; bg: string; fg: string }> = {
+  ouro: { label: 'Ouro', bg: '#EAB308', fg: '#422006' },
+  prata: { label: 'Prata', bg: '#94A3B8', fg: '#1E293B' },
+  bronze: { label: 'Bronze', bg: '#B45309', fg: '#FFFFFF' },
+};
+
+const tierBadge = (
+  deal: DealView
+): { label: string; bg: string; fg: string; provisorio: boolean } | null => {
+  const tier = deal.customFields?.tier as { value?: unknown; provisorio?: unknown } | undefined;
+  const value = typeof tier?.value === 'string' ? tier.value : null;
+  if (!value) return null;
+  const style = TIER_BADGES[value];
+  if (!style) return null;
+  return { ...style, provisorio: tier?.provisorio === true };
+};
+
 const DealCardComponent: React.FC<DealCardProps> = ({
   deal,
   isRotting,
@@ -95,11 +125,30 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   onQuickAddActivity,
   setLastMouseDownDealId,
   onMoveToStage,
+  onOpenWhatsApp,
+  onMarkNoShow,
 }) => {
   const [localDragging, setLocalDragging] = useState(false);
+  // Trava o botão de no-show após o disparo p/ evitar duplo-envio (a ação pinga o cliente).
+  // No sucesso o card some do board; o timeout é só uma rede de segurança no erro.
+  const [isMarkingNoShow, setIsMarkingNoShow] = useState(false);
   const isClosed = isDealClosed(deal);
   const age = tempoNoCrm(deal.createdAt);
   const waPhone = telefoneWhatsApp(deal);
+  const tier = tierBadge(deal);
+
+  const handleMarkNoShow = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onMarkNoShow || isMarkingNoShow) return;
+    const ok = window.confirm(
+      'Marcar no-show? O card volta pra IA (Ana) e o cliente recebe uma mensagem de resgate agora.'
+    );
+    if (!ok) return;
+    setIsMarkingNoShow(true);
+    onMarkNoShow(deal);
+    // Rede de segurança: se der erro e o card não sumir, reabilita o botão.
+    setTimeout(() => setIsMarkingNoShow(false), 10000);
+  };
 
   const handleToggleMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -245,6 +294,24 @@ const DealCardComponent: React.FC<DealCardProps> = ({
       )}
 
       <div className="flex gap-1 mb-2 flex-wrap">
+        {/* Selo de tier (ouro/prata/bronze) — só aparece quando há tier classificado */}
+        {tier && (
+          <span
+            className="text-[10px] font-bold px-1.5 py-0.5 rounded ring-1 ring-black/5 dark:ring-white/10"
+            style={{
+              backgroundColor: tier.bg,
+              color: tier.fg,
+              opacity: tier.provisorio ? 0.72 : 1,
+            }}
+            title={
+              tier.provisorio
+                ? `Tier ${tier.label} (provisório — o consultor confirma na ligação)`
+                : `Tier ${tier.label}`
+            }
+          >
+            {tier.provisorio ? `~${tier.label}` : tier.label}
+          </span>
+        )}
         {/* Won/Lost status badge */}
         {deal.isWon && (
           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-800/40 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-700">
@@ -312,7 +379,31 @@ const DealCardComponent: React.FC<DealCardProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
-          {waPhone && (
+          {waPhone && deal.conversationId && onOpenWhatsApp ? (
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                onOpenWhatsApp(deal.id);
+              }}
+              onMouseDown={e => e.stopPropagation()}
+              title="Abrir conversa do WhatsApp"
+              aria-label={
+                deal.conversationUnreadCount
+                  ? `Abrir WhatsApp de ${deal.title}, ${deal.conversationUnreadCount} mensagens não lidas`
+                  : `Abrir WhatsApp de ${deal.title}`
+              }
+              className="relative p-1 rounded-full text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors"
+            >
+              <MessageCircle size={14} aria-hidden="true" />
+              {Boolean(deal.conversationUnreadCount) && (
+                <span
+                  className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 ring-1 ring-white dark:ring-slate-800"
+                  aria-hidden="true"
+                />
+              )}
+            </button>
+          ) : waPhone ? (
             <a
               href={`https://wa.me/${waPhone}`}
               target="_blank"
@@ -325,6 +416,19 @@ const DealCardComponent: React.FC<DealCardProps> = ({
             >
               <MessageCircle size={14} aria-hidden="true" />
             </a>
+          ) : null}
+          {onMarkNoShow && (
+            <button
+              type="button"
+              onClick={handleMarkNoShow}
+              onMouseDown={e => e.stopPropagation()}
+              disabled={isMarkingNoShow}
+              title="Marcar no-show (volta pra IA e envia resgate)"
+              aria-label={`Marcar no-show de ${deal.title}`}
+              className="p-1 rounded-full text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <PhoneMissed size={14} aria-hidden="true" />
+            </button>
           )}
           <ActivityStatusIcon
             status={activityStatus}

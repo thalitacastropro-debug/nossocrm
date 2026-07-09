@@ -10,7 +10,7 @@
 import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys, DEALS_VIEW_KEY } from '../index';
-import { dealsService, contactsService, companiesService, boardStagesService } from '@/lib/supabase';
+import { dealsService, contactsService, companiesService, boardStagesService, conversationsService } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import type { Deal, DealView, DealItem, Contact } from '@/types';
 
@@ -48,24 +48,29 @@ export const dealsViewQueryFn = async (
   const contactIds = deals.map(d => d.contactId).filter(Boolean);
   const companyIds = deals.map(d => d.clientCompanyId).filter(Boolean) as string[];
 
-  const [contactsResult, companiesResult] = await Promise.all([
+  const [contactsResult, companiesResult, conversationsResult] = await Promise.all([
     contactsService.getByIds(contactIds, { signal }),
     companiesService.getByIds(companyIds, { signal }),
+    conversationsService.getLatestByContactIds(contactIds, { signal }),
   ]);
 
   const contactMap = new Map((contactsResult.data || []).map(c => [c.id, c]));
   const companyMap = new Map((companiesResult.data || []).map(c => [c.id, c]));
   const stageMap = new Map(stages.map(s => [s.id, s.label || s.name]));
+  const conversationMap = conversationsResult.data;
 
   return deals.map(deal => {
     const contact = contactMap.get(deal.contactId);
     const company = deal.clientCompanyId ? companyMap.get(deal.clientCompanyId) : undefined;
+    const conversation = conversationMap.get(deal.contactId);
     return {
       ...deal,
       companyName: company?.name || 'Sem empresa',
       contactName: contact?.name || 'Sem contato',
       contactEmail: contact?.email || '',
       stageLabel: stageMap.get(deal.status) || 'Estágio não identificado',
+      conversationId: conversation?.id,
+      conversationUnreadCount: conversation?.unreadCount ?? 0,
     };
   });
 };

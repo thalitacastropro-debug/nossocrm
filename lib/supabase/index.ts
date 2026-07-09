@@ -5,3 +5,5 @@ export { dealsService } from './deals';
 export { activitiesService } from './activities';
 export { productsService } from './products';
 export { settingsService, lifecycleStagesService } from './settings';
+export { conversationsService } from './conversations';
+export type { ConversationSummary } from './conversations';

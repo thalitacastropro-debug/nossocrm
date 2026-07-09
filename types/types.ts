@@ -254,6 +254,10 @@ export interface DealView extends Deal {
   contactEmail: string;
   /** Nome/label do estágio atual (resolvido a partir do status UUID) */
   stageLabel: string;
+  /** ID da conversa de mensageria mais recente do contato (p/ abrir o WhatsApp no card). */
+  conversationId?: string;
+  /** Mensagens não lidas dessa conversa (p/ bolinha de não-lida no card). */
+  conversationUnreadCount?: number;
 
   // @deprecated - Use clientCompanyName instead
   companyName?: string;
@@ -304,7 +308,11 @@ export interface BoardGoal {
   kpi: string; // "Taxa de Conversão"
   targetValue: string; // "20%"
   currentValue?: string; // "15%" (Progresso atual)
-  type?: 'currency' | 'number' | 'percentage'; // Explicit type for calculation
+  // Tipo da meta para cálculo do progresso.
+  // - 'count': contagem de fechamentos (deals ganhos / is_won), ex. "Fechamentos / mês".
+  // - 'conversion_rate': taxa (ex. agendados ÷ recebidos) — hoje sem tracking histórico
+  //   confiável, tratada como placeholder na UI (ver BoardStrategyHeader).
+  type?: 'currency' | 'number' | 'percentage' | 'count' | 'conversion_rate'; // Explicit type for calculation
 }
 
 // Persona do Agente (Quem opera o board)

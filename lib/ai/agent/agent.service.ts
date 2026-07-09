@@ -1009,7 +1009,7 @@ export function splitIntoBubbles(text: string): string[] {
  * pela metade. `success`/`messageId` refletem a 1ª bolha. Para 1 bolha, comportamento idêntico
  * ao envio único anterior.
  */
-async function sendAIResponse(params: {
+export async function sendAIResponse(params: {
   supabase: SupabaseClient;
   conversationId: string;
   response: string;

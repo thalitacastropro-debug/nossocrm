@@ -81,6 +81,9 @@ export {
   useMoveDealSimple,
 } from './useMoveDeal';
 
+// No-show (move-back pro board da Ana + reativa IA + msg de resgate)
+export { useMarkNoShow } from './useMarkNoShow';
+
 // Navigation prefetch
 export { usePrefetchRoute } from './usePrefetchRoute';
 

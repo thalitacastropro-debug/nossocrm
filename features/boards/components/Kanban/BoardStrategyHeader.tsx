@@ -36,7 +36,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board 
   const [editedBoard, setEditedBoard] = useState(board);
 
   // Calculate Progress Automatically
-  const calculatedProgress = React.useMemo(() => {
+  const calculatedProgress = React.useMemo<{ value: number; display: string; label?: string }>(() => {
     const type = board.goal?.type || 'number';
 
     /**
@@ -69,7 +69,34 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board 
       };
     }
 
-    // Default: Number
+    // 'count': metas de fechamento (ex. "Fechamentos / mês", alvo 7). O progresso
+    // deve refletir apenas os deals GANHOS (is_won), não o total de cards do board.
+    // Antes esse tipo caía no default e contava TODOS os cards, inflando o número
+    // (55/83) e travando a barra em 100%.
+    if (type === 'count') {
+      return {
+        value: wonCount,
+        display: wonCount.toString(),
+      };
+    }
+
+    // 'conversion_rate': ex. "Taxa de agendamento sobre leads recebidos" (alvo 30).
+    // Não dá para calcular de forma confiável hoje: os leads agendados saem deste
+    // board para o board do consultor e não existe histórico de eventos
+    // (agendados ÷ recebidos) para reconstruir a taxa. Em vez de exibir um número
+    // falso — o default contava todos os cards e deixava a barra sempre cheia —
+    // mostramos um placeholder e deixamos a barra VAZIA (value 0 → progress 0).
+    // TODO: implementar a métrica real quando houver tracking histórico de leads
+    // recebidos vs. agendados.
+    if (type === 'conversion_rate') {
+      return {
+        value: 0,
+        display: '—',
+        label: 'a definir',
+      };
+    }
+
+    // Default: Number (conta todos os cards do board)
     return {
       value: dealCount,
       display: dealCount.toString(),
@@ -368,7 +395,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board 
                   ></div>
                 </div>
                 <div className="flex justify-between text-[9px] font-medium text-slate-400 uppercase tracking-wider">
-                  <span>{calculatedProgress.display} Concluído</span>
+                  <span>{calculatedProgress.display} {calculatedProgress.label ?? 'Concluído'}</span>
                   <div className="group/goal relative cursor-help">
                     <span className="border-b border-dotted border-slate-600 hover:text-blue-400 transition-colors">
                       Detalhes

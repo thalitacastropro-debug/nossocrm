@@ -1,10 +1,13 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { DealView, BoardStage } from '@/types';
 import { DealCard } from './DealCard';
+import { DealWhatsAppModal } from './DealWhatsAppModal';
 import { isDealRotting, getActivityStatus } from '@/features/boards/hooks/useBoardsController';
 import { MoveToStageModal } from '../Modals/MoveToStageModal';
 import { SkeletonDealCard } from '@/components/ui/Skeleton';
 import { useLifecycleStages } from '@/lib/query/hooks/useLifecycleStagesQuery';
+import { useMarkNoShow } from '@/lib/query/hooks/useMarkNoShow';
+import { CONSULTOR_BOARD_ID } from '@/lib/config/boards';
 
 /**
  * UI: Drop highlight should follow the stage color.
@@ -68,6 +71,8 @@ interface KanbanBoardProps {
   onMoveDealToStage?: (dealId: string, newStageId: string) => void;
   /** Exibe skeleton cards enquanto os dados carregam */
   isLoading?: boolean;
+  /** ID do board ativo — habilita o botão de no-show só no board do Consultor. */
+  boardId?: string;
 }
 /**
  * Componente React `KanbanBoard`.
@@ -115,8 +120,10 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   setLastMouseDownDealId,
   onMoveDealToStage,
   isLoading = false,
+  boardId,
 }) => {
   const { data: lifecycleStages = [] } = useLifecycleStages();
+  const { mutate: markNoShowMutate } = useMarkNoShow();
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
   
   // State for move-to-stage modal (keyboard accessibility alternative to drag-and-drop)
@@ -125,6 +132,9 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     deal: DealView;
     currentStageId: string;
   } | null>(null);
+
+  // State for the WhatsApp conversation modal opened from the card icon
+  const [whatsAppDeal, setWhatsAppDeal] = useState<DealView | null>(null);
 
   /**
    * Performance: o Kanban renderiza listas grandes. Evitamos padrões O(S*N) no render:
@@ -186,6 +196,36 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     }
     setMoveToStageModal(null);
   }, [onMoveDealToStage]);
+
+  // Handler to open the WhatsApp conversation modal (stable across re-renders)
+  const handleOpenWhatsApp = useCallback(
+    (dealId: string) => {
+      const deal = dealsById.get(dealId);
+      if (deal) setWhatsAppDeal(deal);
+    },
+    [dealsById]
+  );
+
+  // Handler: marca no-show. `markNoShowMutate` é referência estável (React Query),
+  // então o callback fica estável e não quebra a memoização dos cards.
+  const handleMarkNoShow = useCallback(
+    (deal: DealView) => {
+      markNoShowMutate(
+        {
+          dealId: deal.id,
+          conversationId: deal.conversationId,
+          contactId: deal.contactId,
+        },
+        {
+          onError: (err) =>
+            window.alert(
+              err instanceof Error ? err.message : 'Não foi possível marcar no-show.'
+            ),
+        }
+      );
+    },
+    [markNoShowMutate]
+  );
 
   return (
     <div role="list" aria-label="Colunas do pipeline" className="flex gap-4 h-full overflow-x-auto pb-2 w-full">
@@ -312,6 +352,8 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                     onQuickAddActivity={handleQuickAddActivity}
                     setLastMouseDownDealId={setLastMouseDownDealId}
                     onMoveToStage={onMoveDealToStage ? handleOpenMoveToStage : undefined}
+                    onOpenWhatsApp={handleOpenWhatsApp}
+                    onMarkNoShow={boardId === CONSULTOR_BOARD_ID ? handleMarkNoShow : undefined}
                   />
                 </div>
               ))}
@@ -331,6 +373,13 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
           currentStageId={moveToStageModal.currentStageId}
         />
       )}
+
+      {/* Conversa do WhatsApp aberta direto do ícone do card */}
+      <DealWhatsAppModal
+        conversationId={whatsAppDeal?.conversationId}
+        dealTitle={whatsAppDeal?.title ?? ''}
+        onClose={() => setWhatsAppDeal(null)}
+      />
     </div>
   );
 };
