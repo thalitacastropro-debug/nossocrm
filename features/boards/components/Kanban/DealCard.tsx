@@ -387,7 +387,7 @@ const DealCardComponent: React.FC<DealCardProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
-          {waPhone && deal.conversationId && onOpenWhatsApp ? (
+          {waPhone && onOpenWhatsApp ? (
             <button
               type="button"
               onClick={e => {

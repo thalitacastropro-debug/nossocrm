@@ -376,8 +376,11 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
       {/* Conversa do WhatsApp aberta direto do ícone do card */}
       <DealWhatsAppModal
-        conversationId={whatsAppDeal?.conversationId}
-        dealTitle={whatsAppDeal?.title ?? ''}
+        deal={
+          whatsAppDeal
+            ? { id: whatsAppDeal.id, conversationId: whatsAppDeal.conversationId, title: whatsAppDeal.title }
+            : null
+        }
         onClose={() => setWhatsAppDeal(null)}
       />
     </div>

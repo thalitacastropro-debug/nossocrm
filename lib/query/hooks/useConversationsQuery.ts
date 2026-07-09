@@ -449,6 +449,30 @@ export function useAssignConversation() {
 }
 
 /**
+ * Garante a conversa de WhatsApp de um deal (find-or-create no servidor) e
+ * retorna o id. Usado pelo modal do card quando o lead ainda não tem conversa
+ * (ex.: base fria do backfill) — permite abordar qualquer lead pelo modal.
+ */
+export function useEnsureDealConversation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (dealId: string): Promise<string> => {
+      const res = await fetch(`/api/deals/${dealId}/whatsapp-conversation`, { method: 'POST' });
+      const body = (await res.json().catch(() => ({}))) as { conversationId?: string; error?: string };
+      if (!res.ok || !body.conversationId) {
+        throw new Error(body.error || 'Não foi possível abrir a conversa do lead');
+      }
+      return body.conversationId;
+    },
+    onSuccess: () => {
+      // A conversa nova aparece no Inbox e o card passa a ter conversationId.
+      queryClient.invalidateQueries({ queryKey: queryKeys.messagingConversations.all });
+    },
+  });
+}
+
+/**
  * Delete a conversation and all its messages.
  * Use with caution - this is a destructive action.
  */
