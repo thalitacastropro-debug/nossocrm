@@ -309,10 +309,49 @@ function formatFieldValue(value: unknown): string {
 }
 
 /**
+ * Descreve o "agora" (data/hora no fuso da org + período do dia) para o prompt.
+ * A Ana não tem noção de tempo por conta própria — sem isso ela ecoa o
+ * cumprimento errado do lead (ex.: responde "bom dia" às 15h). Injeta o período
+ * atual e manda cumprimentar de acordo, sem repetir o erro do lead.
+ */
+function describeNowBlock(timezone: string): string[] {
+  const tz = timezone || 'America/Sao_Paulo';
+  const now = new Date();
+  const hourStr = new Intl.DateTimeFormat('pt-BR', { timeZone: tz, hour: '2-digit', hour12: false }).format(now);
+  const hour = Number.parseInt(hourStr, 10);
+  const dataLabel = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: tz, weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric',
+  }).format(now);
+  const horaLabel = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(now);
+
+  let periodo = 'manhã';
+  let saudacao = 'bom dia';
+  if (Number.isFinite(hour)) {
+    if (hour >= 12 && hour < 18) { periodo = 'tarde'; saudacao = 'boa tarde'; }
+    else if (hour >= 18 || hour < 5) { periodo = 'noite'; saudacao = 'boa noite'; }
+  }
+
+  return [
+    '## Agora (ATENÇÃO AO HORÁRIO)',
+    `Data e hora atuais: ${dataLabel}, ${horaLabel} — período da ${periodo}.`,
+    `Cumprimente de acordo com o período ATUAL: "${saudacao}". Se o lead cumprimentar com o período errado (ex.: "bom dia" à tarde), NÃO repita o erro dele — responda com "${saudacao}" com naturalidade.`,
+    '',
+  ];
+}
+
+/**
  * Formata o contexto como texto para o prompt.
  */
-export function formatContextForPrompt(context: LeadContext): string {
+export function formatContextForPrompt(
+  context: LeadContext,
+  options?: { timezone?: string | null }
+): string {
   const lines: string[] = [];
+
+  // Hora atual (para a Ana cumprimentar de acordo com o período do dia)
+  lines.push(...describeNowBlock(options?.timezone || 'America/Sao_Paulo'));
 
   // Informações do lead
   lines.push('## Sobre o Lead');
