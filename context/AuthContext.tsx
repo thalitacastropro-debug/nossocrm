@@ -198,6 +198,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         const { data: { subscription } } = sb.auth.onAuthStateChange((_event, session) => {
+            // Garante que o socket do Realtime carregue o JWT do usuário. Sem o token, o
+            // postgres_changes avalia a RLS como `anon` e políticas baseadas em auth.uid()
+            // (ex.: messaging_conversations) NÃO entregam o evento — o inbox/board não
+            // atualiza sozinho (só no F5). O supabase-js normalmente faz isso internamente;
+            // reforçamos aqui por causa do @supabase/ssr (sessão vem de cookie, timing async).
+            void sb.realtime.setAuth(session?.access_token ?? null);
             setSession(session);
             setUser(session?.user ?? null);
             if (session?.user) {
