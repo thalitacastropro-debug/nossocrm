@@ -655,8 +655,11 @@ async function handleMessagesUpsert(
 
     // Conversa existente SEM deal vinculado (órfã): roda o find-or-create também.
     // Cobre conversas criadas antes do fix e leads do backfill voltando a falar.
+    // SÓ em mensagem INBOUND (!isFromMe): um eco de mensagem NOSSA (automação de
+    // lead-intake / prospecção manual) não pode gerar card fantasma de SDR — o
+    // card nasce quando o lead REALMENTE responde.
     const hasDeal = Boolean((existingConv.metadata as Record<string, unknown>)?.deal_id);
-    if (!hasDeal && contactId) {
+    if (!hasDeal && contactId && !isFromMe) {
       const routingRule = await getLeadRoutingRule(supabase, channel.id);
       if (routingRule) {
         await autoCreateDeal(supabase, {
@@ -730,8 +733,12 @@ async function handleMessagesUpsert(
     if (convCreateErr) throw convCreateErr;
     conversationId = newConv.id;
 
-    // Auto-create deal if lead routing rule exists
-    if (contactId) {
+    // Auto-create deal if lead routing rule exists.
+    // SÓ em mensagem INBOUND (!isFromMe): se a 1ª mensagem desta conversa for um
+    // eco NOSSO (outbound), criamos contato + conversa (aparece no Inbox) mas NÃO
+    // o card — senão vira card fantasma de SDR. O card nasce no ramo acima quando
+    // o lead responde de verdade.
+    if (contactId && !isFromMe) {
       const routingRule = await getLeadRoutingRule(supabase, channel.id);
       if (routingRule) {
         await autoCreateDeal(supabase, {
