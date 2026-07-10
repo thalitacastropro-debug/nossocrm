@@ -105,6 +105,13 @@ export async function runScheduling(params: RunSchedulingParams): Promise<RunSch
       previousActivityId: detect.intent === 'reschedule' ? params.reuniaoAgendada?.activity_id : null,
     });
     if (result.ok) return { available, status: { kind: 'confirmed', label: slot.label }, detected: detect };
+    // Corrida: outro processamento (mensagem quase simultânea) já confirmou a reunião. Reafirma
+    // o horário REAL que ficou marcado — nunca cria uma 2ª ligação nem desliza o horário.
+    if (result.reason === 'already_confirmed') {
+      const label =
+        result.confirmedLabel ?? slotLabelFromIso(result.confirmedIso, cfg.availability.utcOffset);
+      return { available, status: { kind: 'confirmed', label }, detected: detect };
+    }
     if (result.reason === 'taken') {
       // Slot encheu entre a oferta e a reserva. Re-query do busy (outro consultor pode ter marcado
       // no meio) e recalcula do zero — não confia no estado carregado no início.

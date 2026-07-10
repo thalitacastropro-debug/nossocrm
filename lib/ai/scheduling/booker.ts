@@ -30,11 +30,39 @@ export interface BookSlotParams {
 export interface BookSlotResult {
   ok: boolean;
   activityId?: string;
-  reason?: 'taken' | 'db_error';
+  reason?: 'taken' | 'db_error' | 'already_confirmed';
+  /** Quando reason='already_confirmed': label/ISO da reunião que JÁ estava marcada (p/ reafirmar). */
+  confirmedLabel?: string;
+  confirmedIso?: string;
 }
 
 export async function bookSlot(params: BookSlotParams): Promise<BookSlotResult> {
   const { supabase, dealId, contactId, organizationId, consultantUserId, leadName, summary, slot } = params;
+
+  // 0. Anti-corrida (fecha o duplo-agendamento em mensagens quase simultâneas): relê o estado
+  // FRESCO do deal. O guard do scheduling.service usa `reuniao_agendada` do contexto montado no
+  // INÍCIO do turno — se duas mensagens do lead forem processadas em paralelo, ambas veem "sem
+  // reunião" e marcariam 2 horários. Esta releitura pega o commit do outro processamento: se já
+  // há reunião confirmada e NÃO é remarcação explícita, não marca outra — reafirma a existente.
+  if (!params.previousActivityId) {
+    const { data: fresh } = await supabase
+      .from('deals')
+      .select('custom_fields')
+      .eq('id', dealId)
+      .single();
+    const ra = ((fresh?.custom_fields as Record<string, unknown> | null)?.reuniao_agendada ?? null) as
+      | { status?: string; activity_id?: string; data_hora?: string; label?: string }
+      | null;
+    if (ra?.status === 'confirmada') {
+      return {
+        ok: false,
+        reason: 'already_confirmed',
+        activityId: ra.activity_id,
+        confirmedLabel: ra.label,
+        confirmedIso: ra.data_hora,
+      };
+    }
+  }
 
   // 1. Re-check explícito (spec §6): o slot ainda está livre AGORA? A unique index
   // (owner_id, date) WHERE type='CALL' é a trava atômica real; este SELECT só evita um

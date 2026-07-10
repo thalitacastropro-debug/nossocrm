@@ -20,9 +20,12 @@ function makeSupabase(opts: {
   clash?: boolean;
   insertError?: { code: string } | null;
   dealUpdateError?: { code: string } | null;
+  /** reuniao_agendada já gravada no deal (para testar a anti-corrida). */
+  existingReuniao?: Record<string, unknown> | null;
 } = {}) {
   const state: any = { insertedActivity: null, dealUpdate: null, activityUpdates: [] };
   const clashResult = { data: opts.clash ? [{ id: 'clash-1' }] : [], error: null };
+  const dealCustomFields = opts.existingReuniao ? { reuniao_agendada: opts.existingReuniao } : {};
 
   const client: any = {
     from(table: string) {
@@ -55,7 +58,7 @@ function makeSupabase(opts: {
       }
       if (table === 'deals') {
         return {
-          select: () => ({ eq: () => ({ single: async () => ({ data: { custom_fields: {}, tags: [] }, error: null }) }) }),
+          select: () => ({ eq: () => ({ single: async () => ({ data: { custom_fields: dealCustomFields, tags: [] }, error: null }) }) }),
           update: (patch: any) => ({ eq: async () => { state.dealUpdate = patch; return { error: opts.dealUpdateError ?? null }; } }),
         };
       }
@@ -114,6 +117,34 @@ describe('bookSlot', () => {
     expect(r.reason).toBe('db_error');
     // a activity criada (act-1) deve ter sido deletada no rollback
     expect(state.activityUpdates.some((u: any) => u.id === 'act-1' && u.patch.deleted_at)).toBe(true);
+  });
+
+  it('anti-corrida: já há reunião confirmada (releitura fresca) => already_confirmed, NÃO insere 2ª', async () => {
+    const { client, state } = makeSupabase({
+      existingReuniao: {
+        status: 'confirmada',
+        activity_id: 'act-existente',
+        data_hora: '2026-07-13T13:00:00.000Z',
+        label: 'segunda, 13/07, às 10h',
+      },
+    });
+    const r = await bookSlot({ supabase: client, ...base });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('already_confirmed');
+    expect(r.confirmedLabel).toBe('segunda, 13/07, às 10h');
+    expect(r.activityId).toBe('act-existente');
+    // nada de nova activity nem de sobrescrever o deal
+    expect(state.insertedActivity).toBeNull();
+    expect(state.dealUpdate).toBeNull();
+  });
+
+  it('anti-corrida NÃO afeta remarcação: com previousActivityId, re-marca mesmo já havendo reunião', async () => {
+    const { client, state } = makeSupabase({
+      existingReuniao: { status: 'confirmada', activity_id: 'act-old', data_hora: '2026-07-13T12:00:00.000Z' },
+    });
+    const r = await bookSlot({ supabase: client, ...base, previousActivityId: 'act-old' });
+    expect(r.ok).toBe(true);
+    expect(state.insertedActivity).not.toBeNull();
   });
 
   it('remarcação: cria a nova e depois cancela a antiga', async () => {
