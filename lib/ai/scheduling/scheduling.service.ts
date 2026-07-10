@@ -24,7 +24,7 @@ export interface RunSchedulingParams {
   summary: string;
   /** custom_fields.reuniao_agendada atual, se houver. */
   reuniaoAgendada: { activity_id?: string; status?: string; data_hora?: string } | null;
-  aiConfig: { provider: AIProvider; apiKey: string; model: string };
+  aiConfig: { provider: AIProvider; apiKey: string; model: string; structuredApiKey: string; structuredModel: string };
   /** false => respond (pode marcar); true => observe (só calcula/loga). */
   dryRun: boolean;
   /** consultant_user_id da board (null => cai no interino, não marca). */

@@ -89,6 +89,13 @@ export interface OrgAIConfig {
   provider: AIProvider;
   model: string;
   apiKey: string;
+  /**
+   * Provider de STRUCTURED OUTPUT (Output.object) — SEMPRE Google. O Anthropic
+   * rejeita min/max/int nos JSON schemas (extração/tier/avanço/scheduling usam).
+   * Modo híbrido: a org roda o TEXTO da Ana no Claude, mas os dados no Gemini.
+   */
+  structuredApiKey: string;
+  structuredModel: string;
   hitlThreshold: number;
   /** Min confidence to surface a stage-advance suggestion. DB: ai_hitl_min_confidence. Default 0.70. */
   hitlMinConfidence: number;
@@ -115,7 +122,7 @@ export async function getOrgAIConfig(
   const { data: orgSettings, error } = await supabase
     .from('organization_settings')
     .select(
-      'ai_enabled, ai_provider, ai_model, ai_google_key, ai_hitl_threshold, ai_hitl_min_confidence, ai_hitl_expiration_hours, ai_config_mode, ai_learned_patterns, ai_template_id, ai_takeover_enabled, ai_takeover_minutes, ai_base_system_prompt, timezone'
+      'ai_enabled, ai_provider, ai_model, ai_google_key, ai_anthropic_key, ai_hitl_threshold, ai_hitl_min_confidence, ai_hitl_expiration_hours, ai_config_mode, ai_learned_patterns, ai_template_id, ai_takeover_enabled, ai_takeover_minutes, ai_base_system_prompt, timezone'
     )
     .eq('organization_id', organizationId)
     .maybeSingle();
@@ -132,7 +139,12 @@ export async function getOrgAIConfig(
 
   const provider = (orgSettings.ai_provider || AI_DEFAULT_PROVIDER) as AIProvider;
 
-  const apiKey = orgSettings.ai_google_key || '';
+  // Escolhe a chave da coluna do provider ativo. Sem isso, virar
+  // ai_provider='anthropic' passaria a chave do Google e a IA calaria.
+  const apiKey =
+    (provider === 'anthropic'
+      ? orgSettings.ai_anthropic_key
+      : orgSettings.ai_google_key) || '';
 
   if (!apiKey) {
     console.warn('[AIAgent] No API key configured for provider:', provider);
@@ -155,6 +167,13 @@ export async function getOrgAIConfig(
     provider,
     model: orgSettings.ai_model || AI_DEFAULT_MODELS[provider],
     apiKey,
+    // Structured output roda sempre no Google (ver interface). Se a org já é
+    // google, usa o mesmo modelo; se é anthropic, cai no default google barato.
+    structuredApiKey: orgSettings.ai_google_key || '',
+    structuredModel:
+      provider === 'google'
+        ? orgSettings.ai_model || AI_DEFAULT_MODELS.google
+        : AI_DEFAULT_MODELS.google,
     hitlThreshold: orgSettings.ai_hitl_threshold ?? 0.85,
     hitlMinConfidence: orgSettings.ai_hitl_min_confidence ?? 0.70,
     hitlExpirationHours: orgSettings.ai_hitl_expiration_hours ?? 24,
@@ -560,7 +579,7 @@ export async function processIncomingMessage(
       leadName: context.contact?.name ?? 'lead',
       summary: summaryParts.join(' · ') || 'Lead qualificado pela SDR',
       reuniaoAgendada: context.reuniao_agendada ?? null,
-      aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model },
+      aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model, structuredApiKey: aiConfig.structuredApiKey, structuredModel: aiConfig.structuredModel },
       dryRun: isDryRun,
       consultantUserId: boardAIConfig?.consultant_user_id ?? null,
       now: new Date(),
@@ -638,7 +657,7 @@ export async function processIncomingMessage(
         conversationId,
         organizationId,
         boardId: deal.board_id,
-        aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model },
+        aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model, structuredApiKey: aiConfig.structuredApiKey, structuredModel: aiConfig.structuredModel },
         dryRun: true,
       }).catch((err) => {
         console.error('[AIAgent] Domain extraction failed:', err);
@@ -750,7 +769,7 @@ export async function processIncomingMessage(
       conversationId,
       organizationId,
       boardId: deal.board_id,
-      aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model },
+      aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model, structuredApiKey: aiConfig.structuredApiKey, structuredModel: aiConfig.structuredModel },
       dryRun: false,
     }).catch((err) => {
       console.error('[AIAgent] Domain extraction failed:', err);

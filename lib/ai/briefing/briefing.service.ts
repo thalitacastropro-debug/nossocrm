@@ -349,7 +349,7 @@ export async function generateMeetingBriefing(
   const contextText = formatContextForPrompt(context);
 
   // 4. Generate briefing with structured output
-  const model = getModel(aiConfig.provider, aiConfig.apiKey, aiConfig.model);
+  const model = getModel('google', aiConfig.structuredApiKey ?? aiConfig.apiKey, aiConfig.structuredModel ?? aiConfig.model);
 
   const prompt = `Analise o contexto abaixo e gere um briefing COMPLETO EM PORTUGUÊS BRASILEIRO para a próxima conversa com este lead.
 

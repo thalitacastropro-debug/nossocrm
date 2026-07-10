@@ -32,7 +32,7 @@ export interface DetectParams {
   supabase: SupabaseClient;
   conversationId: string;
   offered: Slot[];
-  aiConfig: { provider: AIProvider; apiKey: string; model: string };
+  aiConfig: { provider: AIProvider; apiKey: string; model: string; structuredApiKey: string; structuredModel: string };
 }
 
 const MAX_MESSAGES = 12;
@@ -61,7 +61,7 @@ export async function detectSchedulingIntent(params: DetectParams): Promise<Dete
 
   const offeredList = offered.map((s) => `- ${s.label} => ${s.startIso}`).join('\n');
 
-  const model = getModel(aiConfig.provider, aiConfig.apiKey, aiConfig.model);
+  const model = getModel('google', aiConfig.structuredApiKey ?? aiConfig.apiKey, aiConfig.structuredModel ?? aiConfig.model);
   const result = await generateText({
     model,
     output: Output.object({ schema: DetectSchema, name: 'SchedulingIntent', description: 'Intenção de agendamento' }),

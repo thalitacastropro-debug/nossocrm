@@ -149,6 +149,8 @@ export async function GET(req: Request) {
             provider: aiConfig.provider,
             apiKey: aiConfig.apiKey,
             model: aiConfig.model,
+            structuredApiKey: aiConfig.structuredApiKey,
+            structuredModel: aiConfig.structuredModel,
           },
           organizationId: organization_id,
           hitlThreshold: aiConfig.hitlThreshold,

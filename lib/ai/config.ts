@@ -9,9 +9,10 @@
  */
 
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { AI_DEFAULT_MODELS, AI_DEFAULT_PROVIDER } from './defaults';
 
-export type AIProvider = 'google';
+export type AIProvider = 'google' | 'anthropic';
 
 const ALLOWED_GOOGLE_MODELS = new Set([
   'gemini-2.0-flash',
@@ -25,6 +26,14 @@ const ALLOWED_GOOGLE_MODELS = new Set([
   'gemini-2.5-pro',
   'gemini-2.5-flash-preview-05-20',
   'gemini-2.5-pro-preview-05-06',
+]);
+
+// Modelos Claude permitidos (Anthropic). Se ai_model não estiver aqui, cai no
+// default AI_DEFAULT_MODELS.anthropic. IDs exatos conforme console.anthropic.com.
+const ALLOWED_ANTHROPIC_MODELS = new Set([
+  'claude-haiku-4-5-20251001',
+  'claude-sonnet-5',
+  'claude-opus-4-8',
 ]);
 
 /**
@@ -55,6 +64,18 @@ export const getModel = (provider: AIProvider, apiKey: string, modelId: string) 
         throw new Error('API Key is missing');
     }
 
+    if (provider === 'anthropic') {
+        const resolvedModel = modelId && ALLOWED_ANTHROPIC_MODELS.has(modelId)
+            ? modelId
+            : AI_DEFAULT_MODELS.anthropic;
+
+        // baseURL explícito blinda contra uma env ANTHROPIC_BASE_URL herdada do
+        // ambiente sem "/v1" (sobrescreveria o default do SDK e causaria 404).
+        const anthropic = createAnthropic({ apiKey, baseURL: 'https://api.anthropic.com/v1' });
+        return anthropic(resolvedModel);
+    }
+
+    // default: Google Gemini
     const resolvedModel = modelId && ALLOWED_GOOGLE_MODELS.has(modelId)
         ? modelId
         : AI_DEFAULT_MODELS.google;

@@ -129,7 +129,7 @@ export async function generateStagePrompts(
 
   // 4. Gerar via LLM com structured output
   try {
-    const model = getModel(aiConfig.provider, aiConfig.apiKey, aiConfig.model);
+    const model = getModel('google', aiConfig.structuredApiKey ?? aiConfig.apiKey, aiConfig.structuredModel ?? aiConfig.model);
 
     const result = await generateText({
       model,

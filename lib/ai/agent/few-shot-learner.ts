@@ -214,7 +214,7 @@ export async function learnFromConversations(
     conversations = conversations.slice(0, 10);
   }
 
-  const model = getModel(aiConfig.provider, aiConfig.apiKey, aiConfig.model);
+  const model = getModel('google', aiConfig.structuredApiKey ?? aiConfig.apiKey, aiConfig.structuredModel ?? aiConfig.model);
 
   const { output } = await generateText({
     model,

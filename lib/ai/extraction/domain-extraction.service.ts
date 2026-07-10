@@ -25,7 +25,7 @@ export interface RunDomainExtractionParams {
   organizationId: string;
   boardId: string | null | undefined;
   /** Config de IA da org (passada pelo agent.service para evitar import circular). */
-  aiConfig: { provider: AIProvider; apiKey: string; model: string };
+  aiConfig: { provider: AIProvider; apiKey: string; model: string; structuredApiKey: string; structuredModel: string };
   /** observe mode: não marca is_lost (não move o card). */
   dryRun: boolean;
 }
@@ -69,7 +69,7 @@ export async function runDomainExtraction(
       .join('\n');
 
     // 2. Extração estruturada
-    const model = getModel(aiConfig.provider, aiConfig.apiKey, aiConfig.model);
+    const model = getModel('google', aiConfig.structuredApiKey ?? aiConfig.apiKey, aiConfig.structuredModel ?? aiConfig.model);
     const result = await generateText({
       model,
       output: Output.object({

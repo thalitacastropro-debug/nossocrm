@@ -73,6 +73,8 @@ export interface EvaluateAdvancementParams {
     provider: AIProvider;
     apiKey: string;
     model: string;
+    structuredApiKey: string;
+    structuredModel: string;
   };
   /** ID da organização para criar pending advances */
   organizationId: string;
@@ -129,7 +131,7 @@ export async function evaluateStageAdvancement(
   }
 
   try {
-    const model = getModel(aiConfig.provider, aiConfig.apiKey, aiConfig.model);
+    const model = getModel('google', aiConfig.structuredApiKey ?? aiConfig.apiKey, aiConfig.structuredModel ?? aiConfig.model);
 
     // Montar histórico formatado
     const historyText = conversationHistory

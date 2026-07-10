@@ -105,7 +105,7 @@ export async function extractAndUpdateBANT(params: ExtractBANTParams): Promise<{
     const currentExtracted = (deal?.ai_extracted as AIExtractedData) || {};
 
     // 5. Generate extraction
-    const model = getModel(aiConfig.provider, aiConfig.apiKey, aiConfig.model);
+    const model = getModel('google', aiConfig.structuredApiKey ?? aiConfig.apiKey, aiConfig.structuredModel ?? aiConfig.model);
 
     const result = await generateText({
       model,

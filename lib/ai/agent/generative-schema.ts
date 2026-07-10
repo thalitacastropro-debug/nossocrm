@@ -213,7 +213,7 @@ export async function evaluateWithLearnedCriteria(
     .map((m) => `[${m.role.toUpperCase()}]: ${m.content}`)
     .join('\n');
 
-  const model = getModel(aiConfig.provider, aiConfig.apiKey, aiConfig.model);
+  const model = getModel('google', aiConfig.structuredApiKey ?? aiConfig.apiKey, aiConfig.structuredModel ?? aiConfig.model);
 
   const { output } = await generateText({
     model,
