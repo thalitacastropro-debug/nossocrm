@@ -59,6 +59,7 @@ import { ActivityRow } from '@/features/activities/components/ActivityRow';
 import { formatPriorityPtBr } from '@/lib/utils/priority';
 import { BriefingDrawer } from '@/features/deals/components/BriefingDrawer';
 import { AIExtractedFields } from '@/features/deals/components/AIExtractedFields';
+import { QualificacaoSDRPanel, sdrPanelHasData } from '@/features/deals/components/QualificacaoSDRPanel';
 
 interface DealDetailModalProps {
   dealId: string | null;
@@ -805,6 +806,13 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                   </div>
                 </div>
 
+                {/* QUALIFICAÇÃO DA SDR (Ana) — resumo pro consultor (só aparece se houver dados) */}
+                {sdrPanelHasData(deal.customFields, { compact: true }) && (
+                  <div className="pt-4 border-t border-slate-100 dark:border-white/5">
+                    <QualificacaoSDRPanel customFields={deal.customFields} compact />
+                  </div>
+                )}
+
                 {/* AI EXTRACTED FIELDS (Zero Config BANT) */}
                 <div className="pt-4 border-t border-slate-100 dark:border-white/5">
                   <AIExtractedFields
@@ -1085,6 +1093,11 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
 
                 {activeTab === 'info' && (
                   <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+                    {sdrPanelHasData(deal.customFields) && (
+                      <div className="bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl p-5 shadow-sm">
+                        <QualificacaoSDRPanel customFields={deal.customFields} />
+                      </div>
+                    )}
                     <div className="bg-linear-to-br from-primary-50 to-white dark:from-primary-900/10 dark:to-dark-card p-6 rounded-xl border border-primary-100 dark:border-primary-500/20">
                       <div className="flex items-center gap-3 mb-4">
                         <div className="p-2 bg-primary-100 dark:bg-primary-500/20 rounded-lg text-primary-600 dark:text-primary-400">
