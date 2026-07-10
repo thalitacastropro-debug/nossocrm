@@ -76,3 +76,18 @@ export function getAvailableSlots(params: GetAvailableSlotsParams): Slot[] {
 
   return slots;
 }
+
+/**
+ * Reconstrói o label PT-BR ("segunda, 13/07, às 10h") de um horário já marcado, a partir
+ * do ISO (UTC) gravado em `reuniao_agendada.data_hora`. Usado quando a reunião JÁ está
+ * confirmada e precisamos reafirmar o horário sem re-marcar (idempotência do booker).
+ * Mesmo fuso fixo do resto do módulo (offset -03:00).
+ */
+export function slotLabelFromIso(iso: string | undefined | null, utcOffset: string): string {
+  if (!iso) return 'o horário combinado';
+  const m = /^([+-])(\d{2}):(\d{2})$/.exec(utcOffset);
+  const offMin = m ? (m[1] === '-' ? -1 : 1) * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10)) : -180;
+  const local = new Date(new Date(iso).getTime() + offMin * 60 * 1000);
+  const dow = local.getUTCDay();
+  return `${WEEKDAYS_PT[dow]}, ${String(local.getUTCDate()).padStart(2, '0')}/${String(local.getUTCMonth() + 1).padStart(2, '0')}, às ${local.getUTCHours()}h`;
+}

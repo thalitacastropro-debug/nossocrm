@@ -9,7 +9,7 @@ import type { AIProvider } from '../config';
 import type { Slot, SchedulingStatus, DetectResult } from './types';
 import { getSchedulingConfig } from './config';
 import { loadBusyIntervals } from './busy';
-import { getAvailableSlots } from './availability';
+import { getAvailableSlots, slotLabelFromIso } from './availability';
 import { detectSchedulingIntent, validateDetectedSlot } from './detect';
 import { bookSlot, cancelMeeting } from './booker';
 
@@ -23,7 +23,7 @@ export interface RunSchedulingParams {
   leadName: string;
   summary: string;
   /** custom_fields.reuniao_agendada atual, se houver. */
-  reuniaoAgendada: { activity_id?: string; status?: string; data_hora?: string } | null;
+  reuniaoAgendada: { activity_id?: string; status?: string; data_hora?: string; label?: string } | null;
   aiConfig: { provider: AIProvider; apiKey: string; model: string; structuredApiKey: string; structuredModel: string };
   /** false => respond (pode marcar); true => observe (só calcula/loga). */
   dryRun: boolean;
@@ -78,14 +78,20 @@ export async function runScheduling(params: RunSchedulingParams): Promise<RunSch
   }
 
   if (detect.intent === 'accept' || detect.intent === 'reschedule') {
+    // Idempotência FORTE (corrige o bug 9h→10h + "Ligação diagnóstica" duplicada):
+    // se JÁ existe reunião confirmada e o lead está só reconfirmando (accept, não reschedule),
+    // NÃO re-marca. Sem isto, cada nova mensagem re-agendava: o slot já reservado sai da
+    // disponibilidade, o detect cai no PRÓXIMO horário (9h→10h) e o booker cria uma 2ª activity.
+    // Reafirma o horário que já está marcado. Só um pedido EXPLÍCITO de remarcar (reschedule) refaz.
+    if (alreadyBooked && detect.intent === 'accept') {
+      const label =
+        params.reuniaoAgendada?.label ??
+        slotLabelFromIso(params.reuniaoAgendada?.data_hora, cfg.availability.utcOffset);
+      return { available, status: { kind: 'confirmed', label }, detected: detect };
+    }
+
     const slot = validateDetectedSlot(detect.slotIso, available);
     if (!slot) return { available, status: { kind: 'none' }, detected: detect }; // horário inválido/tomado já saiu da lista
-
-    // Idempotência (spec §6): se já há reunião confirmada pro MESMO slot, no-op — confirma sem re-marcar
-    // (evita colidir na unique index e a Ana dizer "encheu" pro próprio horário do lead).
-    if (alreadyBooked && params.reuniaoAgendada?.data_hora === slot.startIso) {
-      return { available, status: { kind: 'confirmed', label: slot.label }, detected: detect };
-    }
 
     const result = await bookSlot({
       supabase: params.supabase,

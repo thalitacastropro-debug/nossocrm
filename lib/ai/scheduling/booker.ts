@@ -97,6 +97,9 @@ export async function bookSlot(params: BookSlotParams): Promise<BookSlotResult> 
           activity_id: act!.id,
           status: 'confirmada',
           criada_em: new Date().toISOString(),
+          // Label PT-BR do horário marcado — permite reafirmar a reunião sem re-marcar
+          // (idempotência: nova mensagem do lead confirma o mesmo horário, não desliza).
+          label: slot.label,
         },
       },
       tags,

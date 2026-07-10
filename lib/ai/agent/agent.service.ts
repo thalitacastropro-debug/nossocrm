@@ -18,6 +18,7 @@ import { getChannelRouter } from '@/lib/messaging/channel-router.service';
 import { extractAndUpdateBANT } from '../extraction/extraction.service';
 import { runDomainExtraction } from '../extraction/domain-extraction.service';
 import { runScheduling } from '../scheduling/scheduling.service';
+import { evaluateStageAdvancement } from './stage-evaluator';
 import {
   buildConversationalPromptFromPatterns,
 } from './generative-schema';
@@ -561,14 +562,6 @@ export async function processIncomingMessage(
   // da reunião ao contexto ANTES de gerar a resposta, pra a confirmação da Ana ser sempre
   // verdadeira (ela só diz "fechado" se o booker realmente marcou). Falha = segue sem agenda.
   try {
-    const q = (context.qualificacao ?? {}) as Record<string, unknown>;
-    const summaryParts: string[] = [];
-    const tierVal = (q.tier as { value?: string } | undefined)?.value;
-    if (tierVal) summaryParts.push(`Tier ${tierVal}`);
-    if (q.vidas) summaryParts.push(`${q.vidas} vidas`);
-    if (q.valor_pago_exato) summaryParts.push(`paga R$${q.valor_pago_exato}`);
-    if (q.operadora) summaryParts.push(String(q.operadora));
-
     const sched = await runScheduling({
       supabase,
       boardId: deal.board_id,
@@ -577,7 +570,7 @@ export async function processIncomingMessage(
       dealId,
       contactId: conversation?.contact_id ?? null,
       leadName: context.contact?.name ?? 'lead',
-      summary: summaryParts.join(' · ') || 'Lead qualificado pela SDR',
+      summary: buildConsultantSummary(context.qualificacao),
       reuniaoAgendada: context.reuniao_agendada ?? null,
       aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model, structuredApiKey: aiConfig.structuredApiKey, structuredModel: aiConfig.structuredModel },
       dryRun: isDryRun,
@@ -775,26 +768,36 @@ export async function processIncomingMessage(
       console.error('[AIAgent] Domain extraction failed:', err);
     });
 
-    // 13. Enfileirar avaliação de avanço de estágio (desacoplado)
-    // Em vez de chamar evaluateStageAdvancement() diretamente (segundo LLM call
-    // que pode ser cancelado pelo timeout da função Vercel), inserimos na fila
-    // ai_pending_evaluations para processamento pelo cron /api/cron/stage-evaluations.
+    // 13. Avaliar avanço de estágio INLINE (a resposta ao lead JÁ foi enviada acima).
+    // Antes isto era enfileirado em `ai_pending_evaluations` para um cron — mas o cron roda
+    // 1x/dia (0 7 * * * UTC), então o deal ficava preso em "Novo Lead" a conversa INTEIRA:
+    // a Ana se re-apresentava a cada turno e o agendamento nunca ativava (a etapa nunca mudava).
+    // Rodar inline move o card no mesmo turno. É seguro contra timeout da Vercel: a mensagem ao
+    // lead já foi enviada, então um eventual timeout aqui só perde a avaliação, nunca a resposta.
+    // Await + try/catch para nunca afetar o retorno da função.
     if (config.advancement_criteria && config.advancement_criteria.length > 0) {
-      const { error: queueError } = await supabase
-        .from('ai_pending_evaluations')
-        .insert({
-          organization_id: organizationId,
-          conversation_id: conversationId,
-          deal_id: dealId,
-          message_id: messageId ?? null,
-          message_text: incomingMessage,
+      try {
+        const history = await getConversationHistory(supabase, conversationId);
+        await evaluateStageAdvancement({
+          supabase,
+          context,
+          stageConfig: config,
+          conversationHistory: history,
+          aiConfig: {
+            provider: aiConfig.provider,
+            apiKey: aiConfig.apiKey,
+            model: aiConfig.model,
+            structuredApiKey: aiConfig.structuredApiKey,
+            structuredModel: aiConfig.structuredModel,
+          },
+          organizationId,
+          conversationId,
+          hitlThreshold: aiConfig.hitlThreshold,
+          hitlMinConfidence: aiConfig.hitlMinConfidence,
+          hitlExpirationHours: aiConfig.hitlExpirationHours,
         });
-
-      if (queueError) {
-        console.error('[AIAgent] Failed to enqueue stage evaluation:', queueError);
-        // Non-fatal: response was already sent successfully
-      } else {
-        console.log('[AIAgent] Stage evaluation enqueued for conversation:', conversationId);
+      } catch (err) {
+        console.error('[AIAgent] Inline stage evaluation failed (non-fatal):', err);
       }
     }
 
@@ -1034,10 +1037,29 @@ function bubbleGapMs(nextBubble: string): number {
 }
 
 /**
+ * Remove o travessão "—" (e variantes en-dash "–", barra horizontal "―" e "--") das mensagens
+ * da Ana. O travessão denuncia texto de IA de cara — humano no WhatsApp não usa. A persona já
+ * pede pra evitar, mas o modelo às vezes escorrega (visto ao vivo mesmo no Claude), então
+ * garantimos no código, no envio. Vira vírgula quando separa orações ("você — segunda" →
+ * "você, segunda"). NÃO toca no hífen simples de datas/compostos ("13-07", "bem-estar").
+ */
+export function stripDashTells(text: string): string {
+  return text
+    .replace(/\s*[—–―]\s*/g, ', ') // travessão/en-dash/barra → vírgula
+    .replace(/\s+--\s+/g, ', ') // "--" usado como travessão
+    .replace(/\s+,/g, ',') // espaço antes de vírgula que possa ter sobrado
+    .replace(/,\s*,/g, ',') // vírgula dupla
+    .replace(/^\s*,\s*/, '') // vírgula solta no início
+    .replace(/\s*,\s*$/, '') // vírgula solta no fim
+    .trim();
+}
+
+/**
  * Quebra a resposta da IA em bolhas quando a persona separa ideias por LINHA EM BRANCO.
  * Conservador e backward-compatible: se houver um único bloco — ou se algum bloco for longo
  * (parágrafo, não bolha) — devolve a resposta inteira como UMA bolha. Personas que não usam
  * linha em branco (outras orgs) seguem com 1 envio, comportamento idêntico ao anterior.
+ * Cada bolha passa por stripDashTells (tira travessões antes de enviar).
  */
 export function splitIntoBubbles(text: string): string[] {
   const trimmed = text.trim();
@@ -1046,14 +1068,16 @@ export function splitIntoBubbles(text: string): string[] {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  if (segments.length <= 1) return [trimmed];
+  if (segments.length <= 1) return [stripDashTells(trimmed)];
   // Algum segmento longo => é prosa, não bolha: não fragmentar.
-  if (segments.some((s) => s.length > MAX_BUBBLE_LEN)) return [trimmed];
+  if (segments.some((s) => s.length > MAX_BUBBLE_LEN)) return [stripDashTells(trimmed)];
   // Cap: junta o excedente na última bolha.
   if (segments.length > MAX_BUBBLES) {
-    return [...segments.slice(0, MAX_BUBBLES - 1), segments.slice(MAX_BUBBLES - 1).join('\n\n')];
+    return [...segments.slice(0, MAX_BUBBLES - 1), segments.slice(MAX_BUBBLES - 1).join('\n\n')].map(
+      stripDashTells,
+    );
   }
-  return segments;
+  return segments.map(stripDashTells);
 }
 
 /**
@@ -1423,6 +1447,50 @@ async function isOperatorActive(
 
   const minutesSince = (Date.now() - new Date(referenceTime).getTime()) / 60000;
   return minutesSince < takeoverMinutes;
+}
+
+/**
+ * Monta o resumo da qualificação que vai para o CONSULTOR (vira a descrição da activity
+ * "Ligação diagnóstica"). Além dos dados coletados, PONTUA as pendências — o que o consultor
+ * ainda precisa fechar na ligação (ex.: o número do CNPJ, que a Ana de propósito não cobra;
+ * ela pega só a cidade). Pedido da Thalita (#8b).
+ */
+function buildConsultantSummary(qual: Record<string, unknown> | null | undefined): string {
+  const q = (qual ?? {}) as Record<string, unknown>;
+  const parts: string[] = [];
+
+  const vidas = typeof q.vidas === 'number' ? (q.vidas as number) : null;
+  const idades = Array.isArray(q.idades)
+    ? (q.idades as unknown[]).filter((n) => typeof n === 'number')
+    : [];
+  if (vidas) parts.push(idades.length ? `${vidas} vidas (${idades.join(', ')})` : `${vidas} vidas`);
+
+  if (q.tem_plano_atual === 'sim') {
+    const plano: string[] = [];
+    if (q.operadora) plano.push(String(q.operadora));
+    if (typeof q.valor_pago_exato === 'number') plano.push(`R$${q.valor_pago_exato}`);
+    if (q.coparticipacao === 'com') plano.push('c/ copart');
+    else if (q.coparticipacao === 'sem') plano.push('s/ copart');
+    parts.push(plano.length ? `plano atual: ${plano.join(' ')}` : 'já tem plano');
+  } else if (q.tem_plano_atual === 'nao') {
+    parts.push('primeiro plano');
+  }
+
+  if (q.cidade_uf) parts.push(String(q.cidade_uf));
+  if (q.hospital_preferencia) parts.push(`hosp. ${q.hospital_preferencia}`);
+  if (q.algo_a_destacar) parts.push(`obs: ${q.algo_a_destacar}`);
+
+  // Pendências — o que o consultor ainda precisa fechar na ligação.
+  const pend: string[] = [];
+  const cnpj = q.tem_cnpj as string | undefined;
+  if (cnpj === 'vai_abrir_mei') pend.push('lead vai abrir MEI (orientar)');
+  else if (!cnpj || cnpj === 'desconhecido') pend.push('confirmar CNPJ (PME/MEI)');
+  else pend.push('pegar nº do CNPJ' + (q.cidade_uf ? '' : ' e a cidade')); // Ana coleta só a cidade
+  if (q.tem_plano_atual === 'sim' && typeof q.valor_pago_exato !== 'number') pend.push('valor da mensalidade');
+  if (vidas && idades.length > 0 && idades.length < vidas) pend.push('idades faltando');
+
+  const base = parts.join(' · ') || 'Lead qualificado pela SDR';
+  return pend.length ? `${base}\n⚠ Consultor: ${pend.join('; ')}` : base;
 }
 
 function checkHandoffKeywords(message: string, keywords: string[]): string | null {

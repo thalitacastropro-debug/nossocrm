@@ -122,6 +122,11 @@ export async function runDomainExtraction(
       updated_at: new Date().toISOString(),
     };
     if (applyResult.priority) update.priority = applyResult.priority;
+    // Valor "na mesa": grava a mensalidade atual em deals.value (topo do card + total da coluna).
+    // Só sobe/atualiza quando o extractor tem um número; nunca zera um valor já preenchido.
+    if (typeof applyResult.dealValue === 'number' && applyResult.dealValue > 0) {
+      update.value = applyResult.dealValue;
+    }
     if (applyResult.lossReason) {
       update.loss_reason = applyResult.lossReason;
       // Mover o card pra "perdido" é ação — só fora do dry-run (observe não move card).

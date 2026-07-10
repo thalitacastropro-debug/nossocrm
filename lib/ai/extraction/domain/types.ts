@@ -31,6 +31,11 @@ export interface DomainApplyResult {
   priority: 'high' | 'medium' | 'low' | null;
   /** Motivo da perda, quando fora_icp; null caso contrário. */
   lossReason: string | null;
+  /**
+   * Valor numérico a gravar em `deals.value` (aparece no topo do card e no total "na mesa"
+   * da coluna). Para a Niva = a mensalidade que o lead paga hoje. null = não mexer no value.
+   */
+  dealValue?: number | null;
 }
 
 export interface DomainExtractor<T = unknown> {

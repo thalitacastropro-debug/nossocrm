@@ -61,6 +61,28 @@ export const StageAdvancementSchema = z.object({
 export type StageAdvancementEvaluation = z.infer<typeof StageAdvancementSchema>;
 
 // =============================================================================
+// Probability por estágio
+// =============================================================================
+
+/**
+ * Probabilidade (0–100) sugerida ao ENTRAR num estágio do funil da SDR. Mapeada pelo
+ * NOME (slug) do estágio de destino — só reconhece o funil da Niva; estágio desconhecido
+ * devolve null (não mexe no probability, não afeta outras orgs/boards).
+ * A probabilidade nunca era escrita pela IA (ficava no seed de criação) — por isso o card
+ * mostrava 0%. Ao avançar, refletimos o progresso real no funil.
+ */
+export function probabilityForStage(stageName: string | null | undefined): number | null {
+  if (!stageName) return null;
+  const map: Record<string, number> = {
+    'novo-lead': 10,
+    'em-qualificacao': 30,
+    'qualificado': 60,
+    'agendado': 90,
+  };
+  return map[stageName.trim().toLowerCase()] ?? null;
+}
+
+// =============================================================================
 // Evaluator Function
 // =============================================================================
 
@@ -247,12 +269,17 @@ Avalie cada critério de avanço e decida se o lead deve avançar para o próxim
 
     // Caso 2: Avanço automático (confidence >= hitlThreshold)
     if (hitlDecision.autoAdvance) {
+      // Probabilidade acompanha o avanço no funil (antes ficava presa no seed → card em 0%).
+      const prob = probabilityForStage(nextStageResult.nextStageName);
+      const dealUpdate: Record<string, unknown> = {
+        stage_id: nextStageResult.nextStageId,
+        updated_at: new Date().toISOString(),
+      };
+      if (prob != null) dealUpdate.probability = prob;
+
       const { error: updateError } = await supabase
         .from('deals')
-        .update({
-          stage_id: nextStageResult.nextStageId,
-          updated_at: new Date().toISOString(),
-        })
+        .update(dealUpdate)
         .eq('id', context.deal.id);
 
       if (updateError) {

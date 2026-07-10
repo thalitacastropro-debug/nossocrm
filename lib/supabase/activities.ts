@@ -138,6 +138,7 @@ export const activitiesService = {
           *,
           deals:deal_id (title)
         `)
+        .is('deleted_at', null) // não mostrar atividades canceladas/soft-deletadas (ex.: reunião remarcada)
         .order('date', { ascending: false })
         .limit(1000); // Safety limit for non-paginated access
 

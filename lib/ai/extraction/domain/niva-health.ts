@@ -216,9 +216,14 @@ function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): Dom
 
   const lossReason = tierResult.tier === 'fora_icp' ? tierResult.motivos[0] ?? 'Fora do perfil (ICP)' : null;
 
+  // Valor "na mesa" = a mensalidade que o lead paga hoje (o que ele quer otimizar). Vai pro
+  // deals.value pra aparecer no topo do card e somar no total da coluna do pipeline.
+  const dealValue = typeof merged.valor_pago_exato === 'number' ? (merged.valor_pago_exato as number) : null;
+
   return {
     customFields,
     tier: tierResult.tier,
+    dealValue,
     // Não gera tag de tier: o selo COLORIDO do card (derivado de custom_fields.tier)
     // já mostra o tier automaticamente. Uma tag "tier:bronze" além do selo seria
     // informação duplicada. A service ainda remove tags tier:* antigas dos deals.
