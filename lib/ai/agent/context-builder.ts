@@ -364,31 +364,15 @@ export function formatContextForPrompt(
   }
   lines.push('');
 
-  // Dados já informados pelo lead (formulário de entrada) — Ana confirma, não re-pergunta
-  if (context.lead_form) {
-    const lf = context.lead_form;
-    const entries: string[] = [];
-    if (lf.mapped) {
-      if (lf.mapped.name) entries.push(`Nome: ${lf.mapped.name}`);
-      if (lf.mapped.email) entries.push(`Email: ${lf.mapped.email}`);
-      if (lf.mapped.phone) entries.push(`Telefone: ${lf.mapped.phone}`);
-    }
-    if (lf.fields) {
-      for (const [key, value] of Object.entries(lf.fields)) {
-        if (value === null || value === undefined || value === '') continue;
-        entries.push(`${key}: ${formatFieldValue(value)}`);
-      }
-    }
-    if (entries.length > 0) {
-      lines.push('## Dados já informados pelo lead (no formulário)');
-      lines.push('CONFIRME estes dados na conversa — NÃO pergunte de novo o que já está aqui. Complete só o que faltar.');
-      entries.forEach((e) => lines.push(`- ${e}`));
-      lines.push('');
-    }
-  }
-
-  // Já coletado nesta conversa (campos extraídos) — Ana confirma, não re-pergunta
-  if (context.qualificacao) {
+  // O QUE JÁ SABEMOS sobre o lead — bloco ÚNICO (formulário do Meta + o que já foi
+  // coletado na conversa), com o MESMO vocabulário que a Ana deve coletar, pra ela não
+  // re-perguntar. Antes vinham DOIS blocos com rótulos diferentes (chaves cruas do Meta
+  // "Você possuí CNPJ?: sim" x labels de coleta), e o modelo não ligava um ao outro.
+  // Precedência: a CONVERSA (qualificacao) VENCE o formulário (dado mais recente); o form
+  // só preenche lacunas. Normalização conservadora: o valor fica como o lead informou —
+  // nunca cravamos o enum de CNPJ (PME/MEI) a partir de um "sim" (isso é pendência do
+  // consultor confirmar), evitando a Ana afirmar dado errado com confiança.
+  {
     const QUAL_LABELS: Record<string, string> = {
       tem_cnpj: 'CNPJ',
       vidas: 'Vidas',
@@ -402,17 +386,65 @@ export function formatContextForPrompt(
       reuniao_preferencia: 'Preferência para a ligação do consultor',
       algo_a_destacar: 'A destacar para o consultor',
     };
-    const entries: string[] = [];
-    for (const [key, value] of Object.entries(context.qualificacao)) {
-      if (value === null || value === undefined || value === '') continue;
-      if (Array.isArray(value) && value.length === 0) continue;
-      const label = QUAL_LABELS[key] ?? key;
-      const rendered = key === 'valor_pago_exato' ? `R$ ${formatFieldValue(value)}` : formatFieldValue(value);
-      entries.push(`${label}: ${rendered}`);
+    // Chaves de controle/atribuição do Meta (não são qualificação → ruído no prompt).
+    const FORM_NOISE = new Set([
+      'anuncio', 'conjunto', 'campanha', 'channel_id', 'ad_id', 'adset_id', 'nome', 'email', 'telefone',
+    ]);
+    // Rótulo cru do formulário do Meta → label curto alinhado ao vocabulário de coleta.
+    // Só normaliza em match de alta confiança; o resto cai no rótulo original (fallback).
+    const labelForFormKey = (key: string): string | null => {
+      const k = key.toLowerCase();
+      if (k.includes('cnpj')) return 'CNPJ';
+      if (k.includes('idade')) return 'Idades';
+      if (k.includes('paga') || k.includes('valor')) return 'Valor que paga hoje';
+      if (k.includes('plano de saúde') || k.includes('plano de saude') || k.includes('possui plano')) return 'Já tem plano';
+      if (k.includes('hospital') || k.includes('rede credenciada')) return 'Hospital de preferência';
+      if (k.includes('operadora')) return 'Operadora';
+      return null;
+    };
+
+    const known: string[] = [];
+    const seen = new Set<string>();
+
+    const formName = context.lead_form?.mapped?.name;
+    if (formName) {
+      known.push(`Nome: ${formName}`);
+      seen.add('Nome');
     }
-    if (entries.length > 0) {
-      lines.push('## Já coletado nesta conversa (confirme se necessário; NÃO pergunte de novo)');
-      entries.forEach((e) => lines.push(`- ${e}`));
+
+    // 1) Conversa (autoritativa) primeiro.
+    if (context.qualificacao) {
+      for (const [key, value] of Object.entries(context.qualificacao)) {
+        if (value === null || value === undefined || value === '') continue;
+        if (Array.isArray(value) && value.length === 0) continue;
+        const label = QUAL_LABELS[key] ?? key;
+        if (seen.has(label)) continue;
+        const rendered = key === 'valor_pago_exato' ? `R$ ${formatFieldValue(value)}` : formatFieldValue(value);
+        known.push(`${label}: ${rendered}`);
+        seen.add(label);
+      }
+    }
+
+    // 2) Formulário do Meta preenche só as lacunas (valor cru; sem cravar enum de CNPJ).
+    if (context.lead_form?.fields) {
+      for (const [key, value] of Object.entries(context.lead_form.fields)) {
+        if (value === null || value === undefined || value === '') continue;
+        if (FORM_NOISE.has(key.toLowerCase())) continue;
+        const label = labelForFormKey(key) ?? key;
+        if (seen.has(label)) continue;
+        known.push(`${label}: ${formatFieldValue(value)}`);
+        seen.add(label);
+      }
+    }
+
+    if (known.length > 0) {
+      lines.push('## O QUE JÁ SABEMOS SOBRE O LEAD — NÃO PERGUNTE DE NOVO');
+      lines.push(
+        'Trate como FATO já informado (veio do formulário ou já foi dito na conversa). ' +
+          'Pergunte SÓ o que NÃO está nesta lista. Se precisar validar, confirme de leve e UMA vez — ' +
+          'nunca re-pergunte estes itens e NUNCA diga "você preencheu no formulário"/"você já falou isso"; apenas siga sabendo.'
+      );
+      known.forEach((e) => lines.push(`- ${e}`));
       lines.push('');
     }
   }
