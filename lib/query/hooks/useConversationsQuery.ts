@@ -366,15 +366,23 @@ export function useMarkConversationRead() {
         queryKey: queryKeys.messagingConversations.all,
       });
 
-      // Optimistically set unread to 0
+      // Optimistically set unread to 0.
+      // `messagingConversations.all` é PREFIXO de `.detail(id)` — o setQueriesData também
+      // casa o cache de DETALHE (um objeto ConversationView, NÃO array). Sem o guard de
+      // array, `old.map` estourava, o onMutate lançava e o UPDATE unread_count=0 nem chegava
+      // no banco (o badge "voltava" no refetch). Barramos não-arrays e zeramos o detalhe à parte.
       queryClient.setQueriesData(
         { queryKey: queryKeys.messagingConversations.all },
         (old: ConversationView[] | undefined) => {
-          if (!old) return old;
+          if (!Array.isArray(old)) return old;
           return old.map((conv) =>
             conv.id === conversationId ? { ...conv, unreadCount: 0 } : conv
           );
         }
+      );
+      queryClient.setQueryData(
+        queryKeys.messagingConversations.detail(conversationId),
+        (old: ConversationView | undefined) => (old ? { ...old, unreadCount: 0 } : old)
       );
     },
     onSettled: () => {
