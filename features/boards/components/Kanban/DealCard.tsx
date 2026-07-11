@@ -58,8 +58,18 @@ const getInitials = (name: string) => {
  * título quando ainda é o telefone cru (backfill antigo sem nome).
  */
 const telefoneWhatsApp = (deal: DealView): string | null => {
-  const cf = (deal.customFields?.phone ?? '') as string;
-  const candidato = typeof cf === 'string' && cf.trim() ? cf : deal.title || '';
+  const cf = deal.customFields as Record<string, unknown> | undefined;
+  // Fontes do telefone, em ordem: custom_fields.phone (webhook/backfill),
+  // custom_fields.lead_form (leads do Meta Ads: mapped.phone / raw.telefone) ou o
+  // título quando ainda é o telefone cru. Sem o lead_form, os leads de anúncio
+  // (que não gravam custom_fields.phone) ficavam sem o ícone.
+  const leadForm = cf?.lead_form as
+    | { mapped?: { phone?: unknown }; raw?: { telefone?: unknown } }
+    | undefined;
+  const fromCf = typeof cf?.phone === 'string' ? cf.phone : '';
+  const fromMapped = typeof leadForm?.mapped?.phone === 'string' ? leadForm.mapped.phone : '';
+  const fromRaw = typeof leadForm?.raw?.telefone === 'string' ? leadForm.raw.telefone : '';
+  const candidato = fromCf.trim() || fromMapped.trim() || fromRaw.trim() || deal.title || '';
   const digits = candidato.replace(/\D/g, '');
   // Telefone plausível: 10-15 dígitos (E.164). Evita transformar títulos comuns em link.
   if (!/^\+?[\d\s()-]+$/.test(candidato.trim()) || digits.length < 10 || digits.length > 15) return null;
@@ -387,7 +397,7 @@ const DealCardComponent: React.FC<DealCardProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
-          {waPhone && onOpenWhatsApp ? (
+          {onOpenWhatsApp && (waPhone || deal.conversationId) ? (
             <button
               type="button"
               onClick={e => {
