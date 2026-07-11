@@ -18,6 +18,7 @@ import {
   GitMerge,
   BotOff,
   Bot,
+  FileText,
 } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -38,6 +39,8 @@ interface ContactPanelProps {
   onViewDeals?: (contactId: string) => void;
   hasDuplicate?: boolean;
   onResolveDuplicate?: () => void;
+  /** Formulário de entrada (deals.custom_fields.lead_form) do deal vinculado ao contato. */
+  leadForm?: { fields?: Record<string, unknown> | null } | null;
   className?: string;
 }
 
@@ -100,6 +103,7 @@ export const ContactPanel = memo(function ContactPanel({
   onViewDeals,
   hasDuplicate,
   onResolveDuplicate,
+  leadForm,
   className,
 }: ContactPanelProps) {
   // Hooks must be called unconditionally before any early returns
@@ -161,6 +165,17 @@ export const ContactPanel = memo(function ContactPanel({
 
   const displayName = contactName || externalContactName || 'Contato desconhecido';
   const hasLinkedContact = !!contactId;
+
+  // Respostas do formulário de entrada (Meta Ads), sem o ruído de controle/atribuição.
+  const FORM_NOISE = new Set([
+    'anuncio', 'conjunto', 'campanha', 'channel_id', 'ad_id', 'adset_id', 'nome', 'email', 'telefone',
+  ]);
+  const leadFormFields = leadForm?.fields
+    ? Object.entries(leadForm.fields).filter(
+        ([k, v]) =>
+          v !== null && v !== undefined && String(v).trim() !== '' && !FORM_NOISE.has(k.toLowerCase())
+      )
+    : [];
 
   return (
     <div className={cn('flex flex-col h-full', className)}>
@@ -332,6 +347,15 @@ export const ContactPanel = memo(function ContactPanel({
             </button>
           </div>
         </Section>
+
+        {/* Formulário de entrada (Meta Ads) — o que o lead preencheu */}
+        {leadFormFields.length > 0 && (
+          <Section title="Formulário">
+            {leadFormFields.map(([k, v]) => (
+              <InfoRow key={k} icon={FileText} label={k} value={String(v)} />
+            ))}
+          </Section>
+        )}
 
         {/* Conversation Stats */}
         <Section title="Conversa">

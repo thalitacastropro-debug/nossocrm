@@ -26,6 +26,7 @@ import {
   addPendingDeletion,
   removePendingDeletion,
 } from '@/lib/query/hooks/useConversationsQuery';
+import { useDealsView } from '@/lib/query/hooks/useDealsQuery';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,6 +65,16 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
 
   // Fetch selected conversation details
   const { data: selectedConversation, isLoading: isConversationLoading } = useConversation(selectedConversationId);
+
+  // Formulário de entrada (lead_form) do deal vinculado ao contato desta conversa, pra
+  // mostrar no painel direito — o operador vê CNPJ/idades/valor sem precisar abrir o deal.
+  const { data: allDeals } = useDealsView();
+  const leadFormForContact = React.useMemo(() => {
+    const cid = selectedConversation?.contactId;
+    if (!cid || !allDeals) return null;
+    const deal = allDeals.find((d) => d.contactId === cid);
+    return (deal?.customFields?.lead_form as { fields?: Record<string, unknown> | null } | undefined) ?? null;
+  }, [allDeals, selectedConversation?.contactId]);
 
   // Mutations
   const { mutate: markAsRead } = useMarkConversationRead();
@@ -337,6 +348,7 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
           onLinkContact={() => setIsLinkModalOpen(true)}
           onViewContact={handleViewContact}
           onViewDeals={handleViewDeals}
+          leadForm={leadFormForContact}
         />
       </div>
 
