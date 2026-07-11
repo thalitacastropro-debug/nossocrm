@@ -857,6 +857,15 @@ export function useRealtimeSync(
                         normalizedData.status = newData.stage_id;
                         delete normalizedData.stage_id;
                       }
+
+                      // Normalize board_id (cross-board move via NextBoard automation / no-show).
+                      // CRÍTICO: sem isto, um deal que muda de board_id mantém o boardId velho
+                      // no DEALS_VIEW_KEY, então o filtro client-side (d.boardId === boardId) nunca
+                      // realoca o card — ele some das duas boards até um refetch (F5). Espelha o INSERT.
+                      if (newData.board_id !== undefined && newData.boardId === undefined) {
+                        normalizedData.boardId = newData.board_id;
+                        delete normalizedData.board_id;
+                      }
                       
                       // Normalize boolean fields
                       if (newData.is_won !== undefined && newData.isWon === undefined) {
