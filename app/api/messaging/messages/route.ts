@@ -8,6 +8,10 @@ import {
   getConversationCache,
   setConversationCache,
 } from '@/lib/messaging/conversation-cache';
+import { waitUntil } from '@vercel/functions';
+
+// Dá folga ao envio ao provider (UazAPI) no runtime serverless.
+export const maxDuration = 30;
 
 type ChannelInfo = { id: string; channel_type: string; provider: string };
 
@@ -120,7 +124,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fire-and-forget: send to provider without blocking the response.
+    // Send to provider without blocking the response, mas SEM fire-and-forget puro:
+    // registramos a Promise com waitUntil() para a Vercel manter a instância viva
+    // até o envio terminar. Sem isso, a função congela logo após a resposta e o
+    // background morre no meio — deixando a mensagem presa em 'queued' (silencioso).
     // Uses createStaticAdminClient (service role, no request context needed)
     // because the standard createClient depends on next/headers which is
     // unavailable after the response has been sent.
@@ -128,7 +135,9 @@ export async function POST(request: NextRequest) {
     const messageId = dbMessage.id;
     const channelId = channel.id;
 
-    void (async () => {
+    // Em dev, waitUntil descarta o callback — await direto para testabilidade.
+    const isDev = process.env.NODE_ENV === 'development';
+    const task = (async () => {
       const supabaseAdmin = createStaticAdminClient();
       try {
         await supabaseAdmin
@@ -189,8 +198,27 @@ export async function POST(request: NextRequest) {
         }
       } catch (err: unknown) {
         console.error('[messaging/messages] background send failed:', err instanceof Error ? err.message : err, err instanceof Error ? err.stack : '');
+        // Nunca deixe a mensagem presa em 'queued' silenciosamente: marca 'failed'
+        // para o erro ficar visível na UI e habilitar o retry.
+        await supabaseAdmin
+          .from('messaging_messages')
+          .update({
+            status: 'failed',
+            error_code: 'BACKGROUND_SEND_ERROR',
+            error_message: err instanceof Error ? err.message : 'Unknown error',
+            failed_at: new Date().toISOString(),
+          })
+          .eq('id', messageId);
       }
     })();
+
+    // Mantém a instância serverless viva até o envio concluir (senão a Vercel
+    // congela a função após a resposta e a task morre com a mensagem em 'queued').
+    if (isDev) {
+      await task;
+    } else {
+      waitUntil(task);
+    }
 
     // Respond immediately with pending message — UI updates via realtime
     return NextResponse.json(transformMessage(dbMessage as DbMessagingMessage));

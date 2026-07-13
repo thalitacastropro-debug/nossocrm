@@ -252,6 +252,8 @@ export interface DealView extends Deal {
   clientCompanyName?: string; // Name of the CRM client company
   contactName: string;
   contactEmail: string;
+  /** Telefone do contato vinculado (E.164) — usado p/ o ícone de WhatsApp no card. */
+  contactPhone?: string;
   /** Nome/label do estágio atual (resolvido a partir do status UUID) */
   stageLabel: string;
   /** ID da conversa de mensageria mais recente do contato (p/ abrir o WhatsApp no card). */

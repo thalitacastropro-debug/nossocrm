@@ -196,8 +196,12 @@ export const useMoveDeal = () => {
                 owner: deal.owner || { name: 'Unknown', avatar: '' },
                 items: deal.items || [],
                 tags: deal.tags || [],
-                // Rastreabilidade (ajuda também a prevenir duplicidade no futuro)
+                // Preserva os dados do card de origem (lead_form/qualificacao/tier/
+                // reuniao_realizada e afins) em TODOS os funis. Spread seguro: se o
+                // deal não tiver customFields, cai em {}. As chaves de rastreabilidade
+                // vêm por último para sempre prevalecer sobre chaves homônimas.
                 customFields: {
+                  ...(deal.customFields ?? {}),
                   originDealId: deal.id,
                   originBoardId: board.id,
                   originAutomation: 'NEXT_BOARD',

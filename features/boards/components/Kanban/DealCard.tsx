@@ -72,9 +72,10 @@ const telefoneWhatsApp = (deal: DealView): string | null => {
     | { mapped?: { phone?: unknown }; raw?: { telefone?: unknown } }
     | undefined;
   const fromCf = typeof cf?.phone === 'string' ? cf.phone : '';
+  const fromContact = typeof deal.contactPhone === 'string' ? deal.contactPhone : '';
   const fromMapped = typeof leadForm?.mapped?.phone === 'string' ? leadForm.mapped.phone : '';
   const fromRaw = typeof leadForm?.raw?.telefone === 'string' ? leadForm.raw.telefone : '';
-  const candidato = fromCf.trim() || fromMapped.trim() || fromRaw.trim() || deal.title || '';
+  const candidato = fromCf.trim() || fromContact.trim() || fromMapped.trim() || fromRaw.trim() || deal.title || '';
   const digits = candidato.replace(/\D/g, '');
   // Telefone plausível: 10-15 dígitos (E.164). Evita transformar títulos comuns em link.
   if (!/^\+?[\d\s()-]+$/.test(candidato.trim()) || digits.length < 10 || digits.length > 15) return null;
@@ -416,7 +417,7 @@ const DealCardComponent: React.FC<DealCardProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
-          {onOpenWhatsApp && (waPhone || deal.conversationId) ? (
+          {onOpenWhatsApp && (waPhone || deal.conversationId || deal.contactId) ? (
             <button
               type="button"
               onClick={e => {
