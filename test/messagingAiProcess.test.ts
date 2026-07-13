@@ -50,9 +50,18 @@ vi.mock('@vercel/functions', () => ({
   waitUntil: vi.fn((p: Promise<unknown>) => p),
 }))
 
-// Mock do createClient do Supabase (chamado direto nesta rota, não via helper)
+// Mock do createClient do Supabase (chamado direto nesta rota, não via helper).
+// A rota faz fallback de auth no banco quando o secret do header não bate no
+// env (organization_settings.internal_api_secret). O builder precisa existir e,
+// por padrão, devolver data:null (sem secret no banco → segue inválido → 401).
 vi.mock('@supabase/supabase-js', () => ({
-  createClient: vi.fn(() => ({})),
+  createClient: vi.fn(() => ({
+    from: vi.fn(() => ({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+    })),
+  })),
 }))
 
 // ---------------------------------------------------------------------------
@@ -60,6 +69,7 @@ vi.mock('@supabase/supabase-js', () => ({
 // ---------------------------------------------------------------------------
 import { POST } from '@/app/api/messaging/ai/process/route'
 import { processIncomingMessage } from '@/lib/ai/agent'
+import { createClient } from '@supabase/supabase-js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -111,6 +121,53 @@ describe('POST /api/messaging/ai/process', () => {
     const req = makeRequest(
       { conversationId: CONV_ID, organizationId: ORG_ID, messageText: 'Olá' },
       { 'X-Internal-Secret': 'wrong-secret' }
+    )
+
+    // Act
+    const res = await POST(req)
+    const body = await res.json()
+
+    // Assert
+    expect(res.status).toBe(401)
+    expect(body.error).toBe('Unauthorized')
+  })
+
+  it('aceita autenticação via secret do banco (handshake da Edge Function)', async () => {
+    // Arrange — o secret NÃO bate no env; vem de organization_settings.internal_api_secret.
+    const DB_SECRET = 'db-shared-secret-xyz'
+    vi.mocked(createClient).mockReturnValueOnce({
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn(async () => ({ data: { internal_api_secret: DB_SECRET }, error: null })),
+      })),
+    } as never)
+    const req = makeRequest(
+      { conversationId: CONV_ID, organizationId: ORG_ID, messageText: 'Oi' },
+      { 'X-Internal-Secret': DB_SECRET }
+    )
+
+    // Act
+    const res = await POST(req)
+    const body = await res.json()
+
+    // Assert
+    expect(res.status).toBe(200)
+    expect(body.received).toBe(true)
+  })
+
+  it('retorna 401 quando o secret do banco também não bate', async () => {
+    // Arrange — env não bate E o secret do banco é outro → default-deny.
+    vi.mocked(createClient).mockReturnValueOnce({
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn(async () => ({ data: { internal_api_secret: 'outro-secret' }, error: null })),
+      })),
+    } as never)
+    const req = makeRequest(
+      { conversationId: CONV_ID, organizationId: ORG_ID, messageText: 'Oi' },
+      { 'X-Internal-Secret': 'chute-errado' }
     )
 
     // Act
