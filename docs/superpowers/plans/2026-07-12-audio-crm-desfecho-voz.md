@@ -253,7 +253,6 @@ const MIME_TO_EXT: Record<string, string> = {
 
 export async function uploadDealAudioServer(opts: {
   dealId: string;
-  organizationId: string;
   buffer: Buffer;
   mimeType: string;
   createdBy?: string | null;
@@ -269,7 +268,6 @@ export async function uploadDealAudioServer(opts: {
 
   const { error: insertError } = await admin.from('deal_files').insert({
     deal_id: opts.dealId,
-    organization_id: opts.organizationId,
     file_name: filePath.split('/').pop(),
     file_path: filePath,
     file_size: opts.buffer.length,
@@ -294,7 +292,7 @@ export async function getDealAudioSignedUrl(filePath: string): Promise<string | 
 Run: `pnpm typecheck`
 Expected: PASS.
 
-> ⚠️ Se `deal_files` não tiver coluna `organization_id`, o insert falha com `42703`. Confirme via `SELECT column_name FROM information_schema.columns WHERE table_name='deal_files';` antes; se não existir, remova `organization_id` do insert (o bucket já isola por path `{dealId}/…`).
+> ✅ Confirmado no schema_init: `deal_files` NÃO tem `organization_id` (colunas: id, deal_id, file_name, file_path, file_size, mime_type, created_at, created_by). O insert acima omite org_id de propósito (espelha o `dealFilesService` do client). O path `{dealId}/voice/…` isola por deal. Bucket privado (`public=false`, 10MB).
 
 - [ ] **Step 3: Commit**
 
@@ -448,7 +446,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { filePath, error: uploadErr } = await uploadDealAudioServer({
     dealId,
-    organizationId: profile.organization_id,
     buffer,
     mimeType,
     createdBy: user.id,
