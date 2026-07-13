@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { DealDetailModal } from '@/features/boards/components/Modals/DealDetailModal';
 import { runStorySteps } from './storyRunner';
@@ -197,10 +198,15 @@ describe('Story — US-001: Abrir deal no Boards', () => {
   it('simula a história e garante que não quebra', async () => {
     const user = userEvent.setup();
 
+    // O modal usa hooks reais de React Query por caminho direto (useMarkMeetingHeld
+    // + VoiceOutcomeCapture) — precisam de um QueryClientProvider no mount.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     const Harness = ({ open }: { open: boolean }) => (
-      <div>
-        <DealDetailModal dealId="deal-1" isOpen={open} onClose={() => {}} />
-      </div>
+      <QueryClientProvider client={qc}>
+        <div>
+          <DealDetailModal dealId="deal-1" isOpen={open} onClose={() => {}} />
+        </div>
+      </QueryClientProvider>
     );
 
     const { rerender } = render(<Harness open={false} />);

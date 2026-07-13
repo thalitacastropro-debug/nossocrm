@@ -1,8 +1,20 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { DealDetailModal } from './DealDetailModal';
+
+// O modal usa hooks reais de React Query importados por caminho direto (não pelo
+// barrel mockado): useMarkMeetingHeld + os do VoiceOutcomeCapture. Precisam de
+// um QueryClientProvider — senão useQueryClient/useMutation crasham no mount.
+function renderWithClient(ui: React.ReactElement) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const wrapper = ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  );
+  return render(ui, { wrapper });
+}
 
 // Keep this test focused: we only want to ensure opening/closing the modal
 // never crashes due to hook-order issues (React error #310).
@@ -197,7 +209,7 @@ vi.mock('@/context/CRMContext', () => ({
 
 describe('DealDetailModal', () => {
   it('does not crash when toggling open/close (hook order regression)', () => {
-    const { rerender } = render(
+    const { rerender } = renderWithClient(
       <DealDetailModal dealId="deal-1" isOpen={false} onClose={() => {}} />
     );
 
