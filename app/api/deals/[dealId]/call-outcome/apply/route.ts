@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
 import { DesfechoSchema } from '@/lib/ai/call-outcome/schemas';
+import { MOTIVO_LABELS } from '@/lib/ai/taxonomy/motivos';
 
 export const maxDuration = 60;
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -82,8 +83,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (d.desfecho === 'fechou' && typeof d.dados_negocio.valor === 'number' && d.dados_negocio.valor > 0) {
     dealUpdate.value = d.dados_negocio.valor;
   }
-  if (d.desfecho === 'perdeu' && d.motivo_perda_detalhe) {
-    dealUpdate.loss_reason = d.motivo_perda_detalhe;
+  // loss_reason = detalhe livre, senão o rótulo da categoria (spec §4.9:
+  // "detalhe||rótulo" — mantém a UI de perda funcionando mesmo sem detalhe).
+  if (d.desfecho === 'perdeu') {
+    const rotulo = d.motivo_perda ? MOTIVO_LABELS[d.motivo_perda] : null;
+    const lossReason = d.motivo_perda_detalhe ?? rotulo;
+    if (lossReason) dealUpdate.loss_reason = lossReason;
   }
 
   const { error: updErr } = await supabase.from('deals').update(dealUpdate).eq('id', dealId);

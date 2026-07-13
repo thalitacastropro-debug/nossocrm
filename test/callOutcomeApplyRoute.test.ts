@@ -89,6 +89,81 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     const types = activityInsertSpy.mock.calls.map((c) => (c[0] as { type: string }).type).sort();
     expect(types).toEqual(['NOTE', 'TASK']);
     expect(voiceInsertSpy).toHaveBeenCalledOnce();
+    // Shape do voice_calls: colunas com CHECK constraint no banco — um typo
+    // aqui passa no unit e explode em prod (23514), silencioso (best-effort).
+    const vc = voiceInsertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(vc).toMatchObject({
+      organization_id: ORG_ID,
+      deal_id: DEAL_ID,
+      mode: 'human_call',
+      status: 'completed',
+      channel: 'phone',
+      direction: 'outbound',
+    });
+    expect((vc.analysis as { desfecho: string }).desfecho).toBe('fechou');
+    expect((vc.metadata as { audio_path: string }).audio_path).toContain('/voice/');
+  });
+
+  it('N tarefas → 1 NOTE + N TASKs, com data da tarefa ou enviado_em', async () => {
+    const res = await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        tarefas: [
+          { descricao: 'Enviar contrato', data: '2026-07-15T13:00:00.000Z' },
+          { descricao: 'Cobrar documentos', data: null },
+          { descricao: 'Ligar sexta', data: '2026-07-17T14:00:00.000Z' },
+        ],
+      },
+    }));
+    expect(res.status).toBe(200);
+    expect(activityInsertSpy).toHaveBeenCalledTimes(4);
+    const rows = activityInsertSpy.mock.calls.map((c) => c[0] as { type: string; date: string; title: string });
+    expect(rows.filter((r) => r.type === 'TASK')).toHaveLength(3);
+    expect(rows.find((r) => r.title === 'Enviar contrato')?.date).toBe('2026-07-15T13:00:00.000Z');
+    expect(rows.find((r) => r.title === 'Ligar sexta')?.date).toBe('2026-07-17T14:00:00.000Z');
+    // tarefa sem data cai no enviado_em (timestamp do request, não null)
+    expect(rows.find((r) => r.title === 'Cobrar documentos')?.date).toBeTruthy();
+  });
+
+  it('perdeu → grava motivo_perda estruturado + loss_reason (detalhe)', async () => {
+    const res = await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        desfecho: 'perdeu', motivo_perda: 'concorrente', motivo_perda_detalhe: 'foi pro concorrente',
+        dados_negocio: { operadora: null, vidas: null, valor: null },
+      },
+    }));
+    expect(res.status).toBe(200);
+    const arg = dealUpdateSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect((arg.custom_fields as Record<string, unknown>).motivo_perda).toEqual({ categoria: 'concorrente', detalhe: 'foi pro concorrente' });
+    expect(arg.loss_reason).toBe('foi pro concorrente');
+    expect(arg.value).toBeUndefined(); // value só no fechou
+  });
+
+  it('perdeu sem detalhe → loss_reason cai no rótulo da categoria', async () => {
+    await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        desfecho: 'perdeu', motivo_perda: 'carencia', motivo_perda_detalhe: null,
+      },
+    }));
+    const arg = dealUpdateSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.loss_reason).toBe('Carência');
+  });
+
+  it('converte objecoes legadas string[] e acrescenta as do consultor', async () => {
+    dealRow = { ...dealRow, custom_fields: { ...(dealRow.custom_fields as object), objecoes: ['achou caro'] } };
+    await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        objecoes: ['carencia'],
+      },
+    }));
+    const cf = (dealUpdateSpy.mock.calls[0][0] as { custom_fields: Record<string, unknown> }).custom_fields;
+    expect(cf.objecoes).toEqual([
+      { categoria: 'outro', detalhe: 'achou caro', origem: 'ana' },
+      { categoria: 'carencia', detalhe: null, origem: 'consultor' },
+    ]);
   });
 
   it('NÃO apaga custom_fields existentes (spread) e faz merge de qualificacao', async () => {

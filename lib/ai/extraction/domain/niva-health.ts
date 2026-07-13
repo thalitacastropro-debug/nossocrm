@@ -188,6 +188,11 @@ function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): Dom
 
   // 2. Objeções (acumula estruturado {categoria,detalhe,origem} + dedupe por categoria;
   //    tolera formato antigo string[] convertendo pra categoria 'outro').
+  //    LIMITAÇÃO CONHECIDA (revisão 13/07, aceita): um deal legado com string
+  //    (ex.: 'achou caro') pode exibir a MESMA objeção 2x no painel — o chip
+  //    'outro: achou caro' + a re-classificação do Gemini ('sem_oportunidade').
+  //    É limitado (estabiliza em 2, não cresce) e só cosmético; o fix real
+  //    seria backfill único da base — não vale o risco agora.
   if (Array.isArray(ext.objecoes) && ext.objecoes.length) {
     const prev = Array.isArray(customFields.objecoes)
       ? (customFields.objecoes as unknown[]).map((o) =>

@@ -5,6 +5,8 @@ import { Mic, Square, Trash2, Loader2, Check } from 'lucide-react';
 import AudioPlayer from '@/components/ui/AudioPlayer';
 import { useTranscribeCallOutcome, useApplyCallOutcome, type TranscribeResult } from '@/lib/query/hooks/useCallOutcome';
 import type { Desfecho } from '@/lib/ai/call-outcome/schemas';
+import { MOTIVO_LABELS, MOTIVO_TAGS, type MotivoTag } from '@/lib/ai/taxonomy/motivos';
+import { convertAudioToMp3 } from '@/lib/utils/audioToMp3';
 
 interface VoiceOutcomeCaptureProps {
   dealId: string;
@@ -58,9 +60,15 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
       recorder.stream?.getTracks().forEach((t) => t.stop());
       setIsRecording(false);
       const type = recorder.mimeType.split(';')[0] || 'audio/webm';
-      const blob = new Blob(chunksRef.current, { type });
+      let blob: Blob = new Blob(chunksRef.current, { type });
       chunksRef.current = [];
       setLocalAudioUrl(URL.createObjectURL(blob));
+      // webm (Chrome/Edge) e mp4 (Safari) → mp3: o Gemini aceita mp3/ogg sem
+      // ambiguidade; a docs de webm é contraditória. Best-effort: se a
+      // conversão falhar (lamejs ausente), manda o original mesmo.
+      if (type !== 'audio/ogg') {
+        try { blob = await convertAudioToMp3(blob); } catch { /* usa o original */ }
+      }
       try {
         const result = await transcribe.mutateAsync({ dealId, audio: blob });
         setReview(result);
@@ -92,7 +100,12 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
           <span className="text-slate-400">Desfecho</span>
           <select
             value={edited.desfecho}
-            onChange={(e) => set({ desfecho: e.target.value as Desfecho['desfecho'] })}
+            onChange={(e) => {
+              const v = e.target.value as Desfecho['desfecho'];
+              // Ao virar 'perdeu' sem motivo da IA, default 'outro' — garante
+              // que o apply grave motivo_perda/loss_reason (o select exibe isso).
+              set(v === 'perdeu' && !edited.motivo_perda ? { desfecho: v, motivo_perda: 'outro' } : { desfecho: v });
+            }}
             className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm"
           >
             <option value="fechou">Fechou</option>
@@ -111,6 +124,33 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
             className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm min-h-[60px]"
           />
         </label>
+
+        {/* Motivo de perda: obrigatório expor quando o consultor marca Perdeu —
+            senão o motivo some (achado da revisão adversarial). */}
+        {edited.desfecho === 'perdeu' && (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-xs">
+              <span className="text-slate-400">Motivo da perda</span>
+              <select
+                value={edited.motivo_perda ?? 'outro'}
+                onChange={(e) => set({ motivo_perda: e.target.value as MotivoTag })}
+                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm"
+              >
+                {MOTIVO_TAGS.map((tag) => (
+                  <option key={tag} value={tag}>{MOTIVO_LABELS[tag]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs">
+              <span className="text-slate-400">Detalhe (opcional)</span>
+              <input
+                value={edited.motivo_perda_detalhe ?? ''}
+                onChange={(e) => set({ motivo_perda_detalhe: e.target.value || null })}
+                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm"
+              />
+            </label>
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-2">
           <label className="block text-xs">
