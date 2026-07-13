@@ -70,7 +70,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/comp
  */
 const PAGE_TITLES: Record<string, string> = {
   '/inbox': 'Inbox',
-  '/messaging': 'Mensagens',
+  '/messaging': 'Chat ao vivo',
   '/dashboard': 'Visão Geral',
   '/boards': 'Boards',
   '/pipeline': 'Boards',
@@ -301,7 +301,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <nav className={`flex-1 p-4 space-y-2 flex flex-col ${sidebarCollapsed ? 'items-center px-2' : ''}`} aria-label="Navegação do sistema">
           {[
             { to: '/inbox', icon: Inbox, label: 'Inbox', prefetch: 'inbox' as const, badge: undefined },
-            { to: '/messaging', icon: MessageSquare, label: 'Mensagens', prefetch: undefined, badge: unreadMessagesCount },
+            { to: '/messaging', icon: MessageSquare, label: 'Chat ao vivo', prefetch: undefined, badge: unreadMessagesCount },
             { to: '/dashboard', icon: LayoutDashboard, label: 'Visão Geral', prefetch: 'dashboard' as const, badge: undefined },
             { to: '/boards', icon: KanbanSquare, label: 'Boards', prefetch: 'boards' as const, badge: undefined },
             { to: '/contacts', icon: Users, label: 'Contatos', prefetch: 'contacts' as const, badge: undefined },

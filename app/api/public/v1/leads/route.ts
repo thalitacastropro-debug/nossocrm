@@ -6,6 +6,7 @@ import { normalizeEmail, normalizePhone, normalizeText } from '@/lib/public-api/
 import { resolveBoardIdFromKey, resolveFirstStageId } from '@/lib/public-api/resolve';
 import { sanitizeUUID } from '@/lib/supabase/utils';
 import { getChannelRouter } from '@/lib/messaging/channel-router.service';
+import { generateFirstTouchBubbles } from '@/lib/ai/lead-intake/first-touch';
 
 export const runtime = 'nodejs';
 // O envio em bolhas com pequeno stagger pode levar alguns segundos — dá folga ao limite serverless.
@@ -425,11 +426,28 @@ export async function POST(request: Request) {
 
   // 8. Saudação em bolhas. A Ana engaja 24/7 — o MESMO opener imediato a qualquer hora/dia.
   //    `withinHours` fica só como informação (analytics / registro do toque), não gate.
+  //    1º toque INTELIGENTE: a IA lê o lead_form e NÃO re-pergunta o que já sabe.
+  //    Prioridade: override do body (`greeting`) > opener da IA > DEFAULT_GREETING fixo.
   const timezone = await getOrgTimezone(sb, auth.organizationId);
   const withinHours = isWithinBusinessHours(timezone);
-  const bubbles = resolveGreetingBubbles(body.greeting, DEFAULT_GREETING)
-    .map((t) => renderGreeting(t, { nome: name }))
-    .filter(Boolean);
+
+  let bubbles: string[];
+  if (body.greeting && body.greeting.trim()) {
+    bubbles = resolveGreetingBubbles(body.greeting, DEFAULT_GREETING)
+      .map((t) => renderGreeting(t, { nome: name }))
+      .filter(Boolean);
+  } else {
+    const aiBubbles = await generateFirstTouchBubbles({
+      supabase: sb,
+      organizationId: auth.organizationId,
+      boardId,
+      firstName: name,
+      leadForm: leadFormBase,
+    });
+    bubbles = (aiBubbles && aiBubbles.length)
+      ? aiBubbles
+      : DEFAULT_GREETING.map((t) => renderGreeting(t, { nome: name })).filter(Boolean);
+  }
   const touchStatus = 'greeted';
 
   // 9. Enviar a saudação em BOLHAS (várias mensagens curtas, estilo WhatsApp)
