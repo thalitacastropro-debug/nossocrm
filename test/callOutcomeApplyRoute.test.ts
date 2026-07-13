@@ -176,6 +176,82 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     expect(updateArg.value).toBe(2100); // fechou → value do negócio
   });
 
+  it('fechou → move pra Implantação/aguardando-doc com is_won + closed_at', async () => {
+    await callPost(baseBody());
+    const arg = dealUpdateSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.board_id).toBe('851c641a-ac99-404e-83d7-9712425b5fdf');
+    expect(arg.stage_id).toBe('53589d9d-d0a5-4f62-8cda-20c89828a2b3');
+    expect(arg.is_won).toBe(true);
+    expect(arg.is_lost).toBe(false);
+    expect(arg.closed_at).toBeTruthy();
+    expect(arg.last_stage_change_date).toBeTruthy();
+  });
+
+  it('perdeu → move pra Nutrição/recontato com is_lost + TASK de reabordagem', async () => {
+    await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        desfecho: 'perdeu', motivo_perda: 'concorrente', motivo_perda_detalhe: 'foi pra Amil',
+        reabordar_em: '2027-07-12T12:00:00.000Z',
+        dados_negocio: { operadora: null, vidas: null, valor: null },
+      },
+    }));
+    const arg = dealUpdateSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.board_id).toBe('4fb31290-2ab4-46ac-83b1-555fbd4908cc');
+    expect(arg.stage_id).toBe('2ee5e57e-e616-45e0-8e46-34741f64ef14');
+    expect(arg.is_lost).toBe(true);
+    expect(arg.is_won).toBe(false);
+    // lembrete de reabordagem = TASK com a data sugerida pela IA
+    const dates = activityInsertSpy.mock.calls.map((c) => (c[0] as { date: string }).date);
+    expect(dates).toContain('2027-07-12T12:00:00.000Z');
+  });
+
+  it('perdeu SEM reabordar_em → TASK de reabordagem cai no fallback por motivo', async () => {
+    await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        desfecho: 'perdeu', motivo_perda: 'decisor', motivo_perda_detalhe: null, reabordar_em: null,
+        dados_negocio: { operadora: null, vidas: null, valor: null },
+      },
+    }));
+    const tasks = activityInsertSpy.mock.calls
+      .map((c) => c[0] as { type: string; title: string; date: string })
+      .filter((a) => a.type === 'TASK' && /reabordar/i.test(a.title));
+    expect(tasks).toHaveLength(1);
+    // decisor = +2 semanas do enviado_em (não nula, no futuro)
+    expect(new Date(tasks[0].date).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('vai_pensar → move só de etapa (Negociação), sem mudar board nem flags', async () => {
+    await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        desfecho: 'vai_pensar',
+        dados_negocio: { operadora: null, vidas: null, valor: null },
+      },
+    }));
+    const arg = dealUpdateSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.stage_id).toBe('86179ae9-1d6f-40ca-aaab-9ed7f320a3cc');
+    expect(arg.board_id).toBeUndefined();
+    expect(arg.is_won).toBeUndefined();
+    expect(arg.is_lost).toBeUndefined();
+  });
+
+  it('remarcar → não move de board nem etapa', async () => {
+    await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        desfecho: 'remarcar',
+        dados_negocio: { operadora: null, vidas: null, valor: null },
+      },
+    }));
+    const arg = dealUpdateSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.board_id).toBeUndefined();
+    expect(arg.stage_id).toBeUndefined();
+    expect(arg.is_won).toBeUndefined();
+    expect(arg.is_lost).toBeUndefined();
+  });
+
   it('idempotente: já aplicado → 200 sem regravar', async () => {
     dealRow = { ...dealRow, custom_fields: { ...(dealRow.custom_fields as object), call_outcome_applied_at: '2026-07-12T00:00:00Z' } };
     const res = await callPost(baseBody());

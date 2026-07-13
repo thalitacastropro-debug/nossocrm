@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
 import { DesfechoSchema } from '@/lib/ai/call-outcome/schemas';
 import { MOTIVO_LABELS } from '@/lib/ai/taxonomy/motivos';
+import { routeForDesfecho, reabordarEmFallback } from '@/lib/ai/call-outcome/routing';
 
 export const maxDuration = 60;
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -91,6 +92,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (lossReason) dealUpdate.loss_reason = lossReason;
   }
 
+  // Roteamento por desfecho (§6): fechou→Implantação+won, perdeu→Nutrição+lost,
+  // vai_pensar→Negociação (mesmo board), remarcar/nao_atendeu não movem.
+  // is_won/is_lost são setados NO DESFECHO (registram a venda/perda na hora).
+  const route = routeForDesfecho(d.desfecho);
+  if (route.stageId) {
+    dealUpdate.stage_id = route.stageId;
+    dealUpdate.last_stage_change_date = enviadoEm;
+    if (route.boardId) dealUpdate.board_id = route.boardId;
+  }
+  if (route.mark === 'won') {
+    dealUpdate.is_won = true;
+    dealUpdate.is_lost = false;
+    dealUpdate.closed_at = enviadoEm;
+  }
+  if (route.mark === 'lost') {
+    dealUpdate.is_lost = true;
+    dealUpdate.is_won = false;
+    dealUpdate.closed_at = enviadoEm;
+  }
+
   const { error: updErr } = await supabase.from('deals').update(dealUpdate).eq('id', dealId);
   if (updErr) {
     if ((updErr as { code?: string }).code === '23505') {
@@ -116,6 +137,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       organization_id: orgId, deal_id: dealId, owner_id: ownerId,
       type: 'TASK', title: t.descricao, description: t.descricao,
       date: t.data ?? enviadoEm, completed: false,
+    });
+  }
+
+  // 2b. Perdeu → lembrete de reabordagem (§6.1): a IA sugere a data pelo sinal
+  //     da conversa (reabordar_em); sem sinal, fallback por motivo de perda.
+  if (route.reabordagem) {
+    const reabordarEm = d.reabordar_em ?? reabordarEmFallback(d.motivo_perda ?? 'outro', new Date(enviadoEm));
+    await admin.from('activities').insert({
+      organization_id: orgId, deal_id: dealId, owner_id: ownerId,
+      type: 'TASK', title: 'Reabordar lead (reativação)',
+      description: d.motivo_perda_detalhe ?? (d.motivo_perda ? MOTIVO_LABELS[d.motivo_perda] : 'Reabordagem por motivo de perda'),
+      date: reabordarEm, completed: false,
     });
   }
 
