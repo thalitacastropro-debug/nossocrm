@@ -11,6 +11,16 @@ let aiConfig: unknown;
 vi.mock('@/lib/supabase/server', () => ({ createClient: vi.fn(async () => supabaseClientMock) }));
 vi.mock('@/lib/ai/agent/agent.service', () => ({ getOrgAIConfig: vi.fn(async () => aiConfig) }));
 vi.mock('@/lib/ai/call-outcome/transcribe', () => ({ transcribeAudio: vi.fn(async () => 'texto transcrito') }));
+vi.mock('@/lib/ai/call-outcome/call-outcome.service', () => ({
+  extractCallOutcome: vi.fn(async () => ({
+    desfecho: {
+      desfecho: 'fechou', nota_resumo: 'ok', tarefas: [],
+      dados_negocio: { operadora: null, vidas: null, valor: null },
+      objecoes: [], motivo_perda: null, motivo_perda_detalhe: null, reabordar_em: null, confidence: 0.8,
+    },
+    tokens: 10,
+  })),
+}));
 vi.mock('@/lib/supabase/dealFilesServer', () => ({
   uploadDealAudioServer: vi.fn(async () => ({ filePath: `${DEAL_ID}/voice/x.webm`, error: null })),
 }));
@@ -63,11 +73,12 @@ describe('POST /api/deals/[dealId]/call-outcome', () => {
     expect((await callPost()).status).toBe(422);
   });
 
-  it('200 devolve transcrição + audioFilePath', async () => {
+  it('200 devolve transcrição + desfecho + audioFilePath', async () => {
     const res = await callPost();
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.transcricao).toBe('texto transcrito');
+    expect(body.desfecho.desfecho).toBe('fechou');
     expect(body.audioFilePath).toContain('/voice/');
   });
 });

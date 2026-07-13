@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getOrgAIConfig } from '@/lib/ai/agent/agent.service';
 import { transcribeAudio } from '@/lib/ai/call-outcome/transcribe';
+import { extractCallOutcome } from '@/lib/ai/call-outcome/call-outcome.service';
 import { uploadDealAudioServer } from '@/lib/supabase/dealFilesServer';
 
 export const maxDuration = 60;
@@ -64,9 +65,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       audioBase64: buffer.toString('base64'),
       mimeType,
     });
-    return NextResponse.json({ transcricao, audioFilePath: filePath }, { status: 200 });
+    const { desfecho } = await extractCallOutcome({ aiConfig, transcricao });
+    return NextResponse.json({ transcricao, desfecho, audioFilePath: filePath }, { status: 200 });
   } catch (err) {
-    console.error('[call-outcome] transcription failed:', err instanceof Error ? err.message : err);
+    console.error('[call-outcome] transcription/extraction failed:', err instanceof Error ? err.message : err);
     return NextResponse.json({ error: 'Transcription failed' }, { status: 502 });
   }
 }
