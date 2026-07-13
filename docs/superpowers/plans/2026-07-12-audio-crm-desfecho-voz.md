@@ -66,6 +66,8 @@ O spec cita caminhos/linhas que mudaram; use ESTES:
 
 - **Rodar 1 teste:** `pnpm vitest run <caminho> -t "<nome do it>"` (o repo usa **pnpm**; scripts: `pnpm test:run`, `pnpm typecheck`, `pnpm lint`). Se `pnpm` não estiver no PATH, use `npx vitest run …`.
 - **Idioma dos testes:** `import { describe, it, expect, vi, beforeEach } from 'vitest'`. Rota: montar `new Request('http://localhost/…')` e context `{ params: Promise.resolve({ dealId }) }`. Mockar `@/lib/supabase/server` (`createClient`) e `@/lib/supabase/staticAdminClient` (`createStaticAdminClient`) com query-builders `vi.fn().mockReturnThis()` + `single/maybeSingle` async. Ver `test/briefingApi.test.ts` como molde.
+- **⚠️ Testes de componente (RTL / `.test.tsx`) NÃO rodam neste checkout:** falta o peer `@testing-library/dom` no `node_modules` (o próprio `DealDetailModal.test.tsx` já falha com `Cannot find module '@testing-library/dom'`). É gap de ambiente, não de código. Portanto: os testes com `render()` do RTL foram **omitidos**; a UI é verificada via **preview** (browser). Se o ambiente for corrigido (`@testing-library/dom` instalado), reintroduza os `.test.tsx` deste plano. Os testes `.test.ts` (schema/routing/rotas/serviços) rodam normalmente.
+- **Mock de classe com `new`:** para mockar `@google/genai` (`new GoogleGenAI()`), use `vi.fn(function () { return {…} })` (função normal), NUNCA arrow — arrow não é constructor.
 - **UUID guard:** reusar `const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;`.
 - **`custom_fields` é REPLACE total** — SEMPRE `{ ...existingCf, … }`.
 - **Commits frequentes** (1 por task, mensagem `feat:`/`test:`). NÃO abrir PR nem tocar `main`.

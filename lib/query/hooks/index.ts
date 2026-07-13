@@ -84,6 +84,9 @@ export {
 // No-show (move-back pro board da Ana + reativa IA + msg de resgate)
 export { useMarkNoShow } from './useMarkNoShow';
 
+// Áudio → CRM (transcrição + aplicação do desfecho da call)
+export { useTranscribeCallOutcome, useApplyCallOutcome } from './useCallOutcome';
+
 // Navigation prefetch
 export { usePrefetchRoute } from './usePrefetchRoute';
 
