@@ -10,6 +10,11 @@
 
 **Spec de origem:** `docs/superpowers/specs/2026-07-11-audio-crm-desfecho-voz-design.md` (design 100% fechado). **Branch:** `feat/lead-intake-route` (NÃO `main`).
 
+> ## ✅ STATUS: EXECUTADO (F1–F6) em 12–13/07/2026
+> Commits `0564b1f`…`HEAD` na `feat/lead-intake-route`. 75 testes verdes, tsc+lint limpos.
+> **Desvios do plano (documentados inline):** (1) testes RTL `.test.tsx` omitidos — checkout sem `@testing-library/dom` (gap de ambiente, pré-existente); (2) rota `apply` em ordem **deal-first** (ver F2.5); (3) upload sem `organization_id` (tabela não tem); (4) **revisão adversarial multi-agente** entre F2 e F3 achou e corrigiu: HIGH de segurança (transcribe route sem gate RLS do deal), conversão webm/mp4→mp3 no client (docs do Gemini contraditórias p/ webm), campos de motivo de perda no card de revisão, `loss_reason = detalhe ?? rótulo`, +9 testes; (5) F5 conta no-show EXATO via `custom_fields.no_show_at` (não derivado); (6) RPC `get_funnel_report` JÁ APLICADA no banco nossocrmv2 (aditiva, inerte até o deploy).
+> **Pendente fora do código:** `pnpm install` limpo (repor `react-is`/`@testing-library/dom`), smoke manual ao vivo (gravar 30s no card de teste), decisão de deploy/cutover.
+
 ---
 
 ## Correções de âncora do spec (confirmadas lendo o código — obrigatórias)
