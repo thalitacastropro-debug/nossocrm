@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { MessageSquare, User, CheckCircle, MoreVertical, LinkIcon, Trash2, RotateCcw, Search } from 'lucide-react';
+import { MessageSquare, User, CheckCircle, MoreVertical, LinkIcon, Trash2, RotateCcw, Search, FileText } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { sanitizeUrl } from '@/lib/utils/sanitize';
@@ -27,6 +27,7 @@ import {
   removePendingDeletion,
 } from '@/lib/query/hooks/useConversationsQuery';
 import { useDealsView } from '@/lib/query/hooks/useDealsQuery';
+import { BriefingDrawer } from '@/features/deals/components/BriefingDrawer';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,6 +59,7 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [showBriefingDrawer, setShowBriefingDrawer] = useState(false);
   const [replyToMessage, setReplyToMessage] = useState<import('@/lib/messaging/types').MessagingMessage | null>(null);
 
   // Subscribe to realtime updates
@@ -69,12 +71,20 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
   // Formulário de entrada (lead_form) do deal vinculado ao contato desta conversa, pra
   // mostrar no painel direito — o operador vê CNPJ/idades/valor sem precisar abrir o deal.
   const { data: allDeals } = useDealsView();
-  const leadFormForContact = React.useMemo(() => {
+  // Deal vinculado ao contato desta conversa — usado tanto para o formulário de entrada
+  // quanto para abrir o briefing ("Preparar") sem sair do Chat ao vivo.
+  const linkedDeal = React.useMemo(() => {
     const cid = selectedConversation?.contactId;
     if (!cid || !allDeals) return null;
-    const deal = allDeals.find((d) => d.contactId === cid);
-    return (deal?.customFields?.lead_form as { fields?: Record<string, unknown> | null } | undefined) ?? null;
+    return allDeals.find((d) => d.contactId === cid) ?? null;
   }, [allDeals, selectedConversation?.contactId]);
+  const leadFormForContact = React.useMemo(
+    () =>
+      (linkedDeal?.customFields?.lead_form as
+        | { fields?: Record<string, unknown> | null }
+        | undefined) ?? null,
+    [linkedDeal]
+  );
 
   // Mutations
   const { mutate: markAsRead } = useMarkConversationRead();
@@ -136,6 +146,7 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
   const handleSelectConversation = useCallback((id: string) => {
     setSelectedConversationId(id);
     setShowSearch(false);
+    setShowBriefingDrawer(false);
     router.push(`/messaging?id=${id}`, { scroll: false });
   }, [router]);
 
@@ -236,6 +247,18 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
                   conversationId={selectedConversation.id}
                   assignedUserId={selectedConversation.assignedUserId}
                 />
+                {linkedDeal && (
+                  <button
+                    type="button"
+                    onClick={() => setShowBriefingDrawer(true)}
+                    className="px-3 py-1.5 bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
+                    title="Preparar para a conversa com este lead"
+                    aria-label="Preparar conversa com este lead"
+                  >
+                    <FileText className="w-4 h-4" aria-hidden="true" />
+                    <span className="hidden sm:inline">Preparar</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowSearch((v) => !v)}
@@ -351,6 +374,16 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
           leadForm={leadFormForContact}
         />
       </div>
+
+      {/* Briefing Drawer ("Preparar") — reutiliza o mesmo componente do DealDetailModal */}
+      {linkedDeal && (
+        <BriefingDrawer
+          dealId={linkedDeal.id}
+          dealTitle={linkedDeal.title}
+          isOpen={showBriefingDrawer}
+          onClose={() => setShowBriefingDrawer(false)}
+        />
+      )}
 
       {/* Contact Link Modal */}
       <ContactLinkModal
