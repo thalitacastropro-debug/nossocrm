@@ -201,7 +201,7 @@ export const DataStorageSettings: React.FC = () => {
                     </div>
                     <div className="p-4 bg-gray-50 dark:bg-dark-bg rounded-lg text-center">
                         <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.boards}</div>
-                        <div className="text-sm text-gray-500 dark:text-gray-400">Boards</div>
+                        <div className="text-sm text-gray-500 dark:text-gray-400">Funis</div>
                     </div>
                 </div>
             </div>

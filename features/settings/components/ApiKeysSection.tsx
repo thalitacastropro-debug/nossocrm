@@ -320,8 +320,8 @@ export const ApiKeysSection: React.FC = () => {
 
       if (action === 'create_deal') {
         if (!selectedBoardKey) {
-          addToast('Escolha um board com key (slug) para criar deal.', 'warning');
-          setActionTestResult({ ok: false, message: 'Selecione um board com key.' });
+          addToast('Escolha um funil com key (slug) para criar deal.', 'warning');
+          setActionTestResult({ ok: false, message: 'Selecione um funil com key.' });
           return;
         }
         const res = await fetch(dealsUrl, {
@@ -368,13 +368,13 @@ export const ApiKeysSection: React.FC = () => {
           return;
         }
         if (!selectedToStageLabel) {
-          addToast('Etapa inválida para este board.', 'warning');
+          addToast('Etapa inválida para este funil.', 'warning');
           setActionTestResult({ ok: false, message: 'Etapa inválida.' });
           return;
         }
         if (!selectedBoardKey && !selectedBoardId) {
-          addToast('Selecione um board.', 'warning');
-          setActionTestResult({ ok: false, message: 'Selecione um board.' });
+          addToast('Selecione um funil.', 'warning');
+          setActionTestResult({ ok: false, message: 'Selecione um funil.' });
           return;
         }
         const phone = identityPhone.trim();
@@ -616,7 +616,7 @@ export const ApiKeysSection: React.FC = () => {
           {(action === 'create_deal' || action === 'move_stage') && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Pipeline (board)</div>
+                <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Pipeline (funil)</div>
                 <select
                   value={selectedBoardId}
                   onChange={(e) => setSelectedBoardId(e.target.value)}
@@ -631,7 +631,7 @@ export const ApiKeysSection: React.FC = () => {
                 </select>
                 {selectedBoardId && !selectedBoardKey && (
                   <div className="mt-1 text-xs text-rose-600 dark:text-rose-300">
-                    Este board ainda não tem <span className="font-mono">key</span>. Para integrações, gere uma key para o board.
+                    Este funil ainda não tem <span className="font-mono">key</span>. Para integrações, gere uma key para o funil.
                   </div>
                 )}
               </div>
@@ -680,7 +680,7 @@ export const ApiKeysSection: React.FC = () => {
                     />
                   )}
                   <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                    No board deve existir só 1 deal aberto para essa identidade.
+                    No funil deve existir só 1 deal aberto para essa identidade.
                   </div>
                 </div>
               )}

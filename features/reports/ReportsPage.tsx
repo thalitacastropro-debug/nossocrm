@@ -266,7 +266,7 @@ const ReportsPage: React.FC = () => {
             <Settings className="text-amber-500" size={20} />
             <div className="flex-1">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">Meta não configurada</h3>
-              <p className="text-xs text-slate-500">Defina uma meta no board para acompanhar o forecast.</p>
+              <p className="text-xs text-slate-500">Defina uma meta no funil para acompanhar o forecast.</p>
             </div>
             <button
               onClick={() => router.push('/boards')}

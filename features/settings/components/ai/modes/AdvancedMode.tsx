@@ -49,7 +49,7 @@ export function AdvancedMode({ config }: AdvancedModeProps) {
     return (
       <Alert variant="destructive">
         <AlertCircle className="h-4 w-4" />
-        <AlertDescription>Erro ao carregar boards: {error.message}</AlertDescription>
+        <AlertDescription>Erro ao carregar funis: {error.message}</AlertDescription>
       </Alert>
     );
   }
@@ -59,7 +59,7 @@ export function AdvancedMode({ config }: AdvancedModeProps) {
       <Alert>
         <Settings2 className="h-4 w-4" />
         <AlertDescription>
-          Nenhum board encontrado. Crie um board primeiro para configurar o AI Agent.
+          Nenhum funil encontrado. Crie um funil primeiro para configurar o AI Agent.
         </AlertDescription>
       </Alert>
     );
@@ -71,7 +71,7 @@ export function AdvancedMode({ config }: AdvancedModeProps) {
       <div>
         <h4 className="font-medium text-slate-900 dark:text-white mb-1">Configuração Avançada</h4>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Configure prompts e critérios específicos para cada estágio de cada board.
+          Configure prompts e critérios específicos para cada estágio de cada funil.
           Esta é a opção mais flexível para personalizar o comportamento do AI Agent.
         </p>
       </div>
@@ -79,7 +79,7 @@ export function AdvancedMode({ config }: AdvancedModeProps) {
       {/* Board Selector */}
       <div className="space-y-2">
         <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
-          Selecione um Board
+          Selecione um Funil
         </label>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {activeBoards.map((board) => (
@@ -112,7 +112,7 @@ export function AdvancedMode({ config }: AdvancedModeProps) {
       {!selectedBoard && (
         <div className="text-center py-8 text-slate-500 dark:text-slate-400">
           <Settings2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p className="text-sm">Selecione um board acima para configurar os estágios.</p>
+          <p className="text-sm">Selecione um funil acima para configurar os estágios.</p>
         </div>
       )}
     </div>

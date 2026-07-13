@@ -91,7 +91,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                                 id={descId}
                                 className="text-xl text-white/90 mb-8 max-w-xl mx-auto"
                             >
-                                Vamos criar seu <strong>primeiro board personalizado</strong> em menos de 30 segundos?
+                                Vamos criar seu <strong>primeiro funil personalizado</strong> em menos de 30 segundos?
                             </p>
 
                             {/* Features */}
@@ -138,7 +138,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
                             {/* Small print */}
                             <p className="mt-6 text-sm text-white/60">
-                                Você pode criar quantos boards quiser depois 😊
+                                Você pode criar quantos funis quiser depois 😊
                             </p>
                         </div>
                     </div>

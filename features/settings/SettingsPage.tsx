@@ -60,7 +60,7 @@ const GeneralSettings: React.FC<GeneralSettingsProps> = ({ hash, isAdmin }) => {
               { value: '/dashboard', label: 'Dashboard' },
               { value: '/inbox-list', label: 'Inbox (Lista)' },
               { value: '/inbox-focus', label: 'Inbox (Foco)' },
-              { value: '/boards', label: 'Boards (Kanban)' },
+              { value: '/boards', label: 'Funis (Kanban)' },
               { value: '/contacts', label: 'Contatos' },
               { value: '/activities', label: 'Atividades' },
               { value: '/reports', label: 'Relatórios' },

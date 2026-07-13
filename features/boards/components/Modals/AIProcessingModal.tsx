@@ -44,7 +44,7 @@ export const AIProcessingModal: React.FC<AIProcessingModalProps> = ({ isOpen, cu
     const strategySteps = [
         {
             id: 'analyzing', // Reusing ID for simplicity in state mapping
-            label: 'Lendo Contexto do Board...',
+            label: 'Lendo Contexto do Funil...',
             icon: BookOpen,
             description: 'Analisando a estrutura final aprovada.'
         },
@@ -58,7 +58,7 @@ export const AIProcessingModal: React.FC<AIProcessingModalProps> = ({ isOpen, cu
             id: 'finalizing',
             label: 'Finalizando Criação...',
             icon: Sparkles,
-            description: 'Montando seu board personalizado.'
+            description: 'Montando seu funil personalizado.'
         }
     ];
 

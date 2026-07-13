@@ -297,14 +297,14 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             Bem-vindo ao seu CRM
           </h2>
           <p className="text-slate-500 dark:text-slate-400 max-w-md mb-8">
-            Você ainda não tem nenhum board criado. Comece criando seu primeiro fluxo de trabalho
+            Você ainda não tem nenhum funil criado. Comece criando seu primeiro fluxo de trabalho
             para organizar seus negócios.
           </p>
           <button
             onClick={() => setIsWizardOpen(true)}
             className="px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-xl transition-colors flex items-center gap-2 shadow-lg shadow-primary-600/20"
           >
-            ✨ Criar meu primeiro Board
+            ✨ Criar meu primeiro Funil
           </button>
         </div>
       ) : (

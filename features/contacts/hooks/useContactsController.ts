@@ -502,7 +502,7 @@ export const useContactsController = () => {
   // Open modal to select board for deal creation (or create directly if only 1 board)
   const convertContactToDeal = (contactId: string) => {
     if (boards.length === 0) {
-      addToast('Nenhum board disponível. Crie um board primeiro.', 'error');
+      addToast('Nenhum funil disponível. Crie um funil primeiro.', 'error');
       return;
     }
 
@@ -526,7 +526,7 @@ export const useContactsController = () => {
     }
 
     if (!board.stages?.length) {
-      addToast('Board não tem estágios configurados', 'error');
+      addToast('Funil não tem estágios configurados', 'error');
       console.error('Board sem stages:', board);
       return;
     }
@@ -554,7 +554,7 @@ export const useContactsController = () => {
       },
       {
         onSuccess: () => {
-          addToast(`Deal criado no board "${board.name}"`, 'success');
+          addToast(`Deal criado no funil "${board.name}"`, 'success');
         },
         onError: (error: Error) => {
           addToast(`Erro ao criar deal: ${error.message}`, 'error');

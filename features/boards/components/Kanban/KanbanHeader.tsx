@@ -90,7 +90,7 @@ export const KanbanHeader: React.FC<KanbanHeaderProps> = ({
                     <button
                         onClick={() => onEditBoard(activeBoard)}
                         className="p-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg transition-colors"
-                        title="Configurações do Board"
+                        title="Configurações do Funil"
                     >
                         <Settings size={20} />
                     </button>

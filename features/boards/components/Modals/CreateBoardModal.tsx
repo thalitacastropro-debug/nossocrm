@@ -320,13 +320,13 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
       // ignore
     }
 
-    addToast('Criando board...', 'info');
+    addToast('Criando funil...', 'info');
     onClose(); // close immediately for UX
 
     try {
       onSave(payload);
     } catch (e) {
-      addToast((e as Error).message || 'Erro ao criar board', 'error');
+      addToast((e as Error).message || 'Erro ao criar funil', 'error');
       onClose(); // ensure closed state is consistent
     }
   };
@@ -350,7 +350,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title={editingBoard ? 'Editar Board' : 'Criar Novo Board'}
+        title={editingBoard ? 'Editar Funil' : 'Criar Novo Funil'}
         size="lg"
         labelledById={headingId}
         className="max-w-xl"
@@ -370,7 +370,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
               {editingBoard && onSwitchEditingBoard && availableBoards.length > 1 && (
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Editando board
+                    Editando funil
                   </label>
                   <div className="relative">
                     <select
@@ -380,7 +380,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
                         if (next) onSwitchEditingBoard(next);
                       }}
                       className="w-full appearance-none px-4 py-2.5 pr-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:[color-scheme:dark]"
-                      aria-label="Selecionar board para editar"
+                      aria-label="Selecionar funil para editar"
                     >
                       {availableBoards.map(b => (
                         <option key={b.id} value={b.id}>
@@ -395,7 +395,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
                     />
                   </div>
                   <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                    Dica: troque aqui para editar outro board sem fechar este modal.
+                    Dica: troque aqui para editar outro funil sem fechar este modal.
                   </p>
                 </div>
               )}
@@ -403,7 +403,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
               {/* Name */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Nome do Board *
+                  Nome do Funil *
                 </label>
                 <input
                   type="text"
@@ -438,7 +438,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
                     type="button"
                     onClick={handleCopyKey}
                     className="shrink-0 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 hover:bg-slate-50 dark:hover:bg-white/10 text-slate-700 dark:text-slate-200"
-                    aria-label="Copiar chave do board"
+                    aria-label="Copiar chave do funil"
                     title="Copiar chave"
                   >
                     <Copy size={16} />
@@ -458,7 +458,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
                   type="text"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Breve descrição do propósito deste board"
+                  placeholder="Breve descrição do propósito deste funil"
                   className="w-full px-4 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
@@ -474,7 +474,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
                     onChange={(e) => handleTemplateSelect(e.target.value as BoardTemplateType | '')}
                     className="w-full px-4 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:[color-scheme:dark]"
                   >
-                    <option value="">Board em branco</option>
+                    <option value="">Funil em branco</option>
                     <option value="PRE_SALES">🎯 Pré-venda (Lead → MQL)</option>
                     <option value="SALES">💰 Pipeline de Vendas</option>
                     <option value="ONBOARDING">🚀 Onboarding de Clientes</option>
@@ -498,7 +498,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
                   onChange={(e) => setLinkedLifecycleStage(e.target.value)}
                   className="w-full px-4 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:[color-scheme:dark]"
                 >
-                  <option value="">Nenhum (board genérico)</option>
+                  <option value="">Nenhum (funil genérico)</option>
                   {lifecycleStages.map(stage => (
                     <option key={stage.id} value={stage.id}>{stage.name}</option>
                   ))}
@@ -550,7 +550,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
                   ))}
                 </select>
                 <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  Cria automaticamente um card no próximo board quando o negócio é ganho.
+                  Cria automaticamente um card no próximo funil quando o negócio é ganho.
                 </p>
               </div>
 
@@ -779,7 +779,7 @@ export const CreateBoardModal: React.FC<CreateBoardModalProps> = ({
                 disabled={!name.trim()}
                 className="px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors focus-visible-ring"
               >
-                {editingBoard ? 'Salvar Alterações' : 'Criar Board'}
+                {editingBoard ? 'Salvar Alterações' : 'Criar Funil'}
               </button>
           </div>
         </div>

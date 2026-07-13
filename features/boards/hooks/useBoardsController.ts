@@ -624,7 +624,7 @@ export const useBoardsController = () => {
     // Make the board feel instant: select the optimistic temp board immediately.
     setActiveBoardId(tempId);
     setBoardCreateOverlay({
-      title: 'Criando board…',
+      title: 'Criando funil…',
       subtitle: boardData?.name ? `— ${boardData.name}` : undefined,
     });
 
@@ -760,14 +760,14 @@ export const useBoardsController = () => {
         // Agora deleta o board
         deleteBoardMutation.mutate(boardToDelete.id, {
           onSuccess: () => {
-            addToast(`Board "${boardToDelete.name}" e seus negócios foram excluídos`, 'success');
+            addToast(`Funil "${boardToDelete.name}" e seus negócios foram excluídos`, 'success');
             if (boardToDelete.id === activeBoardId && defaultBoard && defaultBoard.id !== boardToDelete.id) {
               setActiveBoardId(defaultBoard.id);
             }
             setBoardToDelete(null);
           },
           onError: (error: Error) => {
-            addToast(error.message || 'Erro ao excluir board', 'error');
+            addToast(error.message || 'Erro ao excluir funil', 'error');
             setBoardToDelete(null);
           },
         });
@@ -784,14 +784,14 @@ export const useBoardsController = () => {
         { boardId: boardToDelete.id, targetBoardId },
         {
           onSuccess: () => {
-            addToast(`Board "${boardToDelete.name}" excluído! Negócios movidos com sucesso.`, 'success');
+            addToast(`Funil "${boardToDelete.name}" excluído! Negócios movidos com sucesso.`, 'success');
             if (boardToDelete.id === activeBoardId) {
               setActiveBoardId(targetBoardId);
             }
             setBoardToDelete(null);
           },
           onError: (error: Error) => {
-            addToast(error.message || 'Erro ao excluir board', 'error');
+            addToast(error.message || 'Erro ao excluir funil', 'error');
             setBoardToDelete(null);
           },
         }
@@ -802,14 +802,14 @@ export const useBoardsController = () => {
     // Caso 3: Board sem deals - delete normal
     deleteBoardMutation.mutate(boardToDelete.id, {
       onSuccess: () => {
-        addToast(`Board "${boardToDelete.name}" excluído com sucesso`, 'success');
+        addToast(`Funil "${boardToDelete.name}" excluído com sucesso`, 'success');
         if (boardToDelete.id === activeBoardId && defaultBoard) {
           setActiveBoardId(defaultBoard.id);
         }
         setBoardToDelete(null);
       },
       onError: (error: Error) => {
-        addToast(error.message || 'Erro ao excluir board', 'error');
+        addToast(error.message || 'Erro ao excluir funil', 'error');
         setBoardToDelete(null);
       },
     });

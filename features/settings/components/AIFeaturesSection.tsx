@@ -23,9 +23,9 @@ const FEATURES: FeatureItem[] = [
   { key: 'ai_deal_analyze', title: 'Análise de deal (coach)', description: 'Sugere próxima ação e urgência.', promptKey: 'task_deals_analyze' },
   { key: 'ai_email_draft', title: 'Rascunho de e-mail', description: 'Gera email profissional para o deal.', promptKey: 'task_deals_email_draft' },
   { key: 'ai_objection_responses', title: 'Objeções (3 respostas)', description: 'Gera alternativas para contornar objeções.', promptKey: 'task_deals_objection_responses' },
-  { key: 'ai_board_generate_structure', title: 'Boards: gerar estrutura', description: 'Cria estágios e automações sugeridas.', promptKey: 'task_boards_generate_structure' },
-  { key: 'ai_board_generate_strategy', title: 'Boards: gerar estratégia', description: 'Define meta/KPI/persona do board.', promptKey: 'task_boards_generate_strategy' },
-  { key: 'ai_board_refine', title: 'Boards: refinar com IA', description: 'Refina o board via chat/instruções.', promptKey: 'task_boards_refine' },
+  { key: 'ai_board_generate_structure', title: 'Funis: gerar estrutura', description: 'Cria estágios e automações sugeridas.', promptKey: 'task_boards_generate_structure' },
+  { key: 'ai_board_generate_strategy', title: 'Funis: gerar estratégia', description: 'Define meta/KPI/persona do funil.', promptKey: 'task_boards_generate_strategy' },
+  { key: 'ai_board_refine', title: 'Funis: refinar com IA', description: 'Refina o funil via chat/instruções.', promptKey: 'task_boards_refine' },
 ];
 
 /**

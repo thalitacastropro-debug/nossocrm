@@ -104,7 +104,7 @@ export const BoardSelector: React.FC<BoardSelectorProps> = ({
                           setIsOpen(false);
                         }}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-white/10 transition-colors"
-                        title="Editar board"
+                        title="Editar funil"
                       >
                         <Settings size={14} />
                       </button>
@@ -119,7 +119,7 @@ export const BoardSelector: React.FC<BoardSelectorProps> = ({
                           setIsOpen(false);
                         }}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
-                        title="Excluir board"
+                        title="Excluir funil"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -137,7 +137,7 @@ export const BoardSelector: React.FC<BoardSelectorProps> = ({
                 className="w-full flex items-center gap-2 px-4 py-3 text-sm text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
               >
                 <Plus size={16} />
-                Criar novo board
+                Criar novo funil
               </button>
             </div>
           </div>

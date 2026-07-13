@@ -63,7 +63,7 @@ export const SelectBoardModal: React.FC<SelectBoardModalProps> = ({
                 Criar Deal
               </h2>
               <p id={descriptionId} className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                Selecione o board para <strong>{contactName}</strong>
+                Selecione o funil para <strong>{contactName}</strong>
               </p>
             </div>
             <button
@@ -108,7 +108,7 @@ export const SelectBoardModal: React.FC<SelectBoardModalProps> = ({
         {/* Footer */}
         <div className="p-4 border-t border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5">
           <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
-            O deal será criado no primeiro estágio do board selecionado
+            O deal será criado no primeiro estágio do funil selecionado
           </p>
         </div>
         </div>

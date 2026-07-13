@@ -261,7 +261,7 @@ export function ExportTemplateModal(props: {
   const handleDownloadJourney = () => {
     try {
       if (!canExportJourney) {
-        addToast('Selecione ao menos 1 board para exportar a jornada.', 'error');
+        addToast('Selecione ao menos 1 funil para exportar a jornada.', 'error');
         return;
       }
       // If exporting a single board, the filename should be based on that board name.
@@ -508,7 +508,7 @@ export function ExportTemplateModal(props: {
             </div>
 
             <div className="mt-4">
-              <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2">boards da jornada (ordem importa)</div>
+              <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2">funis da jornada (ordem importa)</div>
               <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">
                 <b>Ordem que será exportada:</b> {selectedBoards.map(b => b.name).join(' → ') || '(nenhum)'}
               </div>

@@ -315,7 +315,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
         })
         .catch((err) => {
           console.error('[BoardCreationWizard] Failed to create template board:', err);
-          setError('Erro ao criar board do template.');
+          setError('Erro ao criar funil do template.');
         })
         .finally(() => {
           setIsInstalling(false);
@@ -579,7 +579,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
     } catch (err) {
       console.error(err);
       const message = (err as any)?.message;
-      setError(message || 'Erro ao gerar board. Tente novamente ou escolha um template.');
+      setError(message || 'Erro ao gerar funil. Tente novamente ou escolha um template.');
     } finally {
       setIsGenerating(false);
       setIsProcessingModalOpen(false);
@@ -617,7 +617,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
           role: 'ai',
           content:
             response.message +
-            (!hasChanges && response.board ? '\n\n*(O board não sofreu alterações visuais)*' : ''),
+            (!hasChanges && response.board ? '\n\n*(O funil não sofreu alterações visuais)*' : ''),
           proposalData,
         },
       ]);
@@ -627,7 +627,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
         ...prev,
         {
           role: 'ai',
-          content: 'Desculpe, tive um problema ao tentar ajustar o board. Pode tentar de novo?',
+          content: 'Desculpe, tive um problema ao tentar ajustar o funil. Pode tentar de novo?',
         },
       ]);
     } finally {
@@ -702,7 +702,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
 
     if (stagesToMap.length === 0) {
       console.error('Board creation failed: No stages defined', boardToCreate);
-      setError('Erro: O board gerado não possui estágios válidos. Tente gerar novamente.');
+      setError('Erro: O funil gerado não possui estágios válidos. Tente gerar novamente.');
       return;
     }
 
@@ -772,7 +772,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
       {
         role: 'ai',
         content:
-          'O que você gostaria de ajustar neste board? Posso adicionar etapas, mudar nomes ou sugerir novas automações.',
+          'O que você gostaria de ajustar neste funil? Posso adicionar etapas, mudar nomes ou sugerir novas automações.',
       },
     ]);
   };
@@ -819,17 +819,17 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
           <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" />
           <div
             className="relative z-10 w-[min(520px,calc(100vw-2rem))] rounded-2xl border border-white/10 bg-white/95 dark:bg-slate-900/95 backdrop-blur p-5 shadow-2xl"
-            aria-label={installProgress && installProgress.total === 1 ? 'Criando board' : 'Instalando funil'}
+            aria-label={installProgress && installProgress.total === 1 ? 'Criando funil' : 'Instalando funil'}
           >
             <div className="flex items-start gap-3">
               <Loader2 className="mt-0.5 animate-spin text-primary-500" size={22} />
               <div className="min-w-0 flex-1">
                 <div className="text-base font-semibold text-slate-900 dark:text-white">
-                  {installProgress && installProgress.total === 1 ? 'Criando board…' : 'Instalando funil…'}
+                  {installProgress && installProgress.total === 1 ? 'Criando funil…' : 'Instalando funil…'}
                 </div>
                 <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
                   {installProgress
-                    ? `Criando board ${installProgress.current}/${installProgress.total}${installProgress.currentBoardName ? ` — ${installProgress.currentBoardName}` : ''}`
+                    ? `Criando funil ${installProgress.current}/${installProgress.total}${installProgress.currentBoardName ? ` — ${installProgress.currentBoardName}` : ''}`
                     : 'Preparando…'}
                 </div>
               </div>
@@ -873,7 +873,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                 <MessageSquare size={24} className="text-primary-500" /> Refinar com IA
               </>
             ) : (
-              'Criar Novo Board'
+              'Criar Novo Funil'
             )}
           </h2>
           <button
@@ -1004,7 +1004,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                             Criar com IA
                           </span>
                           <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                            Em 1 frase, eu monto o board pra você.
+                            Em 1 frase, eu monto o funil pra você.
                           </span>
                         </div>
                       </div>
@@ -1052,7 +1052,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                               Usar template individual
                             </div>
                             <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                              Um board pronto (Pré-venda, Vendas, CS…).
+                              Um funil pronto (Pré-venda, Vendas, CS…).
                             </div>
                           </div>
                         </div>
@@ -1074,7 +1074,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                           <div className="min-w-0">
                             <div className="font-semibold text-slate-900 dark:text-white">Começar do zero</div>
                             <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                              Um board em branco.
+                              Um funil em branco.
                             </div>
                           </div>
                         </div>
@@ -1188,7 +1188,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                     {selectBrowseFocus === 'templates' && (
                       <div className="flex flex-col gap-3">
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider text-center">
-                          Boards Individuais
+                          Funis Individuais
                         </h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {(Object.keys(BOARD_TEMPLATES) as BoardTemplateType[])
@@ -1344,7 +1344,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                               Incluir Renovações (Assinatura)
                             </label>
                             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                              Adiciona um board opcional para controlar renovações com antecedência (180/120/90/60/30 dias).
+                              Adiciona um funil opcional para controlar renovações com antecedência (180/120/90/60/30 dias).
                             </p>
                           </div>
                         </div>
@@ -1452,7 +1452,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                   )}
 
                   <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
-                    💡 A IA vai criar um board personalizado para você!
+                    💡 A IA vai criar um funil personalizado para você!
                   </p>
                 </div>
               </div>
@@ -1464,7 +1464,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                   <div className="flex items-center gap-2 mb-4">
                     <Sparkles size={20} className="text-green-600 dark:text-green-400" />
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-                      Board Sugerido pela IA
+                      Funil Sugerido pela IA
                     </h3>
                   </div>
                 )}
@@ -1577,7 +1577,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                 ) : (
                   <>
                     <Sparkles size={16} />
-                    Gerar Board
+                    Gerar Funil
                   </>
                 )}
               </button>
@@ -1614,7 +1614,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                   onClick={handleCreateFromAI}
                   className="px-6 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors shadow-lg flex items-center gap-2"
                 >
-                  ✅ Perfeito! Criar Board
+                  ✅ Perfeito! Criar Funil
                 </button>
               </div>
             </div>

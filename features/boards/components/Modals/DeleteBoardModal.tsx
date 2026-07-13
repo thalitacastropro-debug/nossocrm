@@ -72,7 +72,7 @@ export const DeleteBoardModal: React.FC<DeleteBoardModalProps> = ({
               <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
             </div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-              Excluir Board
+              Excluir Funil
             </h2>
           </div>
           <button
@@ -89,7 +89,7 @@ export const DeleteBoardModal: React.FC<DeleteBoardModalProps> = ({
             <>
               <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
                 <p className="text-amber-800 dark:text-amber-200 text-sm">
-                  O board <strong>"{boardName}"</strong> possui{' '}
+                  O funil <strong>"{boardName}"</strong> possui{' '}
                   <strong>{dealCount} negócio{dealCount > 1 ? 's' : ''}</strong>.
                 </p>
               </div>
@@ -155,7 +155,7 @@ export const DeleteBoardModal: React.FC<DeleteBoardModalProps> = ({
 
                   {selectedTargetBoardId && selectedTargetBoardId !== '__DELETE__' && (
                     <p className="text-sm text-slate-500 dark:text-slate-400">
-                      Os negócios serão movidos para o primeiro estágio do board selecionado.
+                      Os negócios serão movidos para o primeiro estágio do funil selecionado.
                     </p>
                   )}
                   
@@ -169,7 +169,7 @@ export const DeleteBoardModal: React.FC<DeleteBoardModalProps> = ({
                 // Só tem 1 board - oferece apenas excluir os deals
                 <>
                   <p className="text-sm text-slate-600 dark:text-slate-400">
-                    Este é o único board. Para excluí-lo, os negócios também serão removidos.
+                    Este é o único funil. Para excluí-lo, os negócios também serão removidos.
                   </p>
                   <button
                     onClick={() => onSelectTargetBoard('__DELETE__')}
@@ -180,14 +180,14 @@ export const DeleteBoardModal: React.FC<DeleteBoardModalProps> = ({
                     }`}
                   >
                     <Trash2 className="w-4 h-4" />
-                    Excluir negócios junto com o board
+                    Excluir negócios junto com o funil
                   </button>
                 </>
               )}
             </>
           ) : (
             <p className="text-slate-600 dark:text-slate-400">
-              Tem certeza que deseja excluir o board <strong>"{boardName}"</strong>?
+              Tem certeza que deseja excluir o funil <strong>"{boardName}"</strong>?
               Esta ação não pode ser desfeita.
             </p>
           )}

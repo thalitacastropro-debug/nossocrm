@@ -1413,7 +1413,7 @@ export default function DealCockpitClient({ dealId }: { dealId?: string }) {
               className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-100 hover:bg-white/8"
               onClick={() => router.push('/boards')}
             >
-              Ir para Boards
+              Ir para Funis
             </button>
           </div>
         </div>
@@ -1434,7 +1434,7 @@ export default function DealCockpitClient({ dealId }: { dealId?: string }) {
             <div className="h-4 w-full rounded bg-white/10 animate-pulse" />
             <div className="h-4 w-5/6 rounded bg-white/10 animate-pulse" />
           </div>
-          <div className="mt-4 text-xs text-slate-500">Buscando deals, boards e atividades do seu workspace…</div>
+          <div className="mt-4 text-xs text-slate-500">Buscando deals, funis e atividades do seu workspace…</div>
         </div>
       </div>
     );
@@ -1450,7 +1450,7 @@ export default function DealCockpitClient({ dealId }: { dealId?: string }) {
           </div>
           <div className="mt-3 text-sm text-slate-300">Não encontrei nenhum deal carregado no contexto.</div>
           <div className="mt-2 text-xs text-slate-500">
-            Dica: abra o app normal (Boards) para carregar dados. Quando houver deals carregados, você consegue trocar aqui mesmo pelo seletor no topo.
+            Dica: abra o app normal (Funis) para carregar dados. Quando houver deals carregados, você consegue trocar aqui mesmo pelo seletor no topo.
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <button
@@ -1465,7 +1465,7 @@ export default function DealCockpitClient({ dealId }: { dealId?: string }) {
               className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-100 hover:bg-white/8"
               onClick={() => router.push('/boards')}
             >
-              Ir para Boards
+              Ir para Funis
             </button>
           </div>
         </div>

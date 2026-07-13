@@ -134,7 +134,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board 
             <Target size={16} className="text-primary-500" />
           </div>
           <span className="font-medium text-sm">
-            Definir Estratégia do Board (Meta, Agente e Gatilhos)
+            Definir Estratégia do Funil (Meta, Agente e Gatilhos)
           </span>
         </button>
       </div>
@@ -189,7 +189,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board 
                 </div>
                 <div>
                   <h3 className="font-display font-bold text-sm text-slate-900 dark:text-white">
-                    Estratégia do Board
+                    Estratégia do Funil
                   </h3>
                   <p className="text-[10px] text-slate-500 font-medium">
                     Defina como a IA deve trabalhar aqui
