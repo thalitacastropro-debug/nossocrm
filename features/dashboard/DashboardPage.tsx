@@ -13,6 +13,7 @@ import { ActivityFeedItem } from './components/ActivityFeedItem';
 import { PipelineAlertsModal } from './components/PipelineAlertsModal';
 import { AIMetricsSection } from './components/AIMetricsSection';
 import { MessagingMetricsSection } from './components/MessagingMetricsSection';
+import { ReunioesMetricsSection } from './components/ReunioesMetricsSection';
 import { useDashboardMetrics, PeriodFilter, COMPARISON_LABELS } from './hooks/useDashboardMetrics';
 import { PeriodFilterSelect } from '@/components/filters/PeriodFilterSelect';
 import { LazyFunnelChart, ChartWrapper } from '@/components/charts';
@@ -290,6 +291,9 @@ const DashboardPage: React.FC = () => {
 
       {/* Messaging Metrics Section */}
       <MessagingMetricsSection period={period} />
+
+      {/* Reuniões: Agendadas → Realizadas → No-show (funil do consultor) */}
+      <ReunioesMetricsSection period={period} />
 
       {/* AI Performance Section */}
       <AIMetricsSection />
