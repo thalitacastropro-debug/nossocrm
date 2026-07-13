@@ -14,6 +14,7 @@ import { PipelineAlertsModal } from './components/PipelineAlertsModal';
 import { AIMetricsSection } from './components/AIMetricsSection';
 import { MessagingMetricsSection } from './components/MessagingMetricsSection';
 import { ReunioesMetricsSection } from './components/ReunioesMetricsSection';
+import { FunnelReportSection } from './components/FunnelReportSection';
 import { useDashboardMetrics, PeriodFilter, COMPARISON_LABELS } from './hooks/useDashboardMetrics';
 import { PeriodFilterSelect } from '@/components/filters/PeriodFilterSelect';
 import { LazyFunnelChart, ChartWrapper } from '@/components/charts';
@@ -294,6 +295,9 @@ const DashboardPage: React.FC = () => {
 
       {/* Reuniões: Agendadas → Realizadas → No-show (funil do consultor) */}
       <ReunioesMetricsSection period={period} />
+
+      {/* Relatório do funil: conversão + receita + diagnóstico (RPC + CSV) */}
+      <FunnelReportSection period={period} />
 
       {/* AI Performance Section */}
       <AIMetricsSection />

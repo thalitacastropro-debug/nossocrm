@@ -141,6 +141,15 @@ export const queryKeys = {
     },
 
     /**
+     * Funnel report query keys (RPC get_funnel_report — grupos A-F).
+     */
+    funnelReport: {
+        all: ['funnelReport'] as const,
+        byPeriod: (orgId: string, period: string, userId?: string) =>
+            ['funnelReport', orgId, period, userId] as const,
+    },
+
+    /**
      * Organization members query keys (for filters/dropdowns).
      */
     orgMembers: {
