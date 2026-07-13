@@ -5,12 +5,13 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DEALS_VIEW_KEY, queryKeys } from '../index';
+import type { Desfecho } from '@/lib/ai/call-outcome/schemas';
 
 export interface TranscribeResult {
   transcricao: string;
   audioFilePath: string;
   /** Preenchido a partir da F2.4 (extração estruturada do desfecho). */
-  desfecho?: unknown;
+  desfecho?: Desfecho;
 }
 
 export function useTranscribeCallOutcome() {

@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Mic, Square, Trash2, Loader2 } from 'lucide-react';
+import { Mic, Square, Trash2, Loader2, Check } from 'lucide-react';
 import AudioPlayer from '@/components/ui/AudioPlayer';
-import { useTranscribeCallOutcome, type TranscribeResult } from '@/lib/query/hooks/useCallOutcome';
+import { useTranscribeCallOutcome, useApplyCallOutcome, type TranscribeResult } from '@/lib/query/hooks/useCallOutcome';
+import type { Desfecho } from '@/lib/ai/call-outcome/schemas';
 
 interface VoiceOutcomeCaptureProps {
   dealId: string;
@@ -17,6 +18,7 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
   const [review, setReview] = useState<TranscribeResult | null>(__testInitialReview ?? null);
+  const [edited, setEdited] = useState<Desfecho | null>(__testInitialReview?.desfecho ?? null);
   const [localAudioUrl, setLocalAudioUrl] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -24,6 +26,7 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const transcribe = useTranscribeCallOutcome();
+  const apply = useApplyCallOutcome();
 
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -61,6 +64,7 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
       try {
         const result = await transcribe.mutateAsync({ dealId, audio: blob });
         setReview(result);
+        if (result.desfecho) setEdited(result.desfecho);
       } catch { /* erro exposto via transcribe.isError */ }
     };
     recorder.stop();
@@ -68,25 +72,100 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
 
   const discard = useCallback(() => {
     setReview(null);
+    setEdited(null);
     if (localAudioUrl) { URL.revokeObjectURL(localAudioUrl); setLocalAudioUrl(null); }
     setDuration(0);
   }, [localAudioUrl]);
 
-  // Estado de revisão (F1: só transcrição + player; campos editáveis na F2)
-  if (review) {
+  // Estado de revisão EDITÁVEL
+  if (review && edited) {
+    const set = (patch: Partial<Desfecho>) => setEdited({ ...edited, ...patch });
+    const setDados = (patch: Partial<Desfecho['dados_negocio']>) =>
+      setEdited({ ...edited, dados_negocio: { ...edited.dados_negocio, ...patch } });
     return (
       <div className="bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl p-4 shadow-sm space-y-3">
         <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Desfecho da call (revisão)</h4>
         {localAudioUrl && <AudioPlayer src={localAudioUrl} variant="preview" />}
-        <p className="text-sm text-slate-900 dark:text-white whitespace-pre-wrap">{review.transcricao}</p>
-        <div className="flex justify-end">
-          <button
-            onClick={discard}
-            className="text-xs font-bold text-slate-500 hover:text-red-500 flex items-center gap-1.5"
+        <p className="text-[11px] text-slate-400 whitespace-pre-wrap border-l-2 border-slate-200 dark:border-white/10 pl-2">{review.transcricao}</p>
+
+        <label className="block text-xs">
+          <span className="text-slate-400">Desfecho</span>
+          <select
+            value={edited.desfecho}
+            onChange={(e) => set({ desfecho: e.target.value as Desfecho['desfecho'] })}
+            className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm"
           >
+            <option value="fechou">Fechou</option>
+            <option value="vai_pensar">Vai pensar</option>
+            <option value="perdeu">Perdeu</option>
+            <option value="remarcar">Remarcar</option>
+            <option value="nao_atendeu">Não atendeu</option>
+          </select>
+        </label>
+
+        <label className="block text-xs">
+          <span className="text-slate-400">Resumo</span>
+          <textarea
+            value={edited.nota_resumo}
+            onChange={(e) => set({ nota_resumo: e.target.value })}
+            className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm min-h-[60px]"
+          />
+        </label>
+
+        <div className="grid grid-cols-3 gap-2">
+          <label className="block text-xs">
+            <span className="text-slate-400">Operadora</span>
+            <input
+              value={edited.dados_negocio.operadora ?? ''}
+              onChange={(e) => setDados({ operadora: e.target.value || null })}
+              className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm"
+            />
+          </label>
+          <label className="block text-xs">
+            <span className="text-slate-400">Vidas</span>
+            <input
+              type="number" value={edited.dados_negocio.vidas ?? ''}
+              onChange={(e) => setDados({ vidas: e.target.value ? Number(e.target.value) : null })}
+              className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm"
+            />
+          </label>
+          <label className="block text-xs">
+            <span className="text-slate-400">Valor</span>
+            <input
+              type="number" value={edited.dados_negocio.valor ?? ''}
+              onChange={(e) => setDados({ valor: e.target.value ? Number(e.target.value) : null })}
+              className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm"
+            />
+          </label>
+        </div>
+
+        {edited.tarefas.length > 0 && (
+          <div className="text-xs">
+            <span className="text-slate-400">Tarefas ({edited.tarefas.length})</span>
+            <ul className="mt-1 space-y-1">
+              {edited.tarefas.map((t, i) => (
+                <li key={i} className="text-slate-900 dark:text-white">• {t.descricao}{t.data ? ` — ${new Date(t.data).toLocaleString('pt-BR')}` : ''}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="flex justify-between items-center pt-1">
+          <button onClick={discard} className="text-xs font-bold text-slate-500 hover:text-red-500 flex items-center gap-1.5">
             <Trash2 size={14} /> Descartar
           </button>
+          <button
+            onClick={() => apply.mutate(
+              { dealId, audioFilePath: review.audioFilePath, transcricao: review.transcricao, desfecho: edited as unknown as Record<string, unknown> },
+              { onSuccess: discard },
+            )}
+            disabled={apply.isPending}
+            className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2"
+          >
+            <Check size={14} /> {apply.isPending ? 'Salvando…' : 'Confirmar'}
+          </button>
         </div>
+        {apply.isError && <p className="text-xs text-red-500">{apply.error.message}</p>}
       </div>
     );
   }

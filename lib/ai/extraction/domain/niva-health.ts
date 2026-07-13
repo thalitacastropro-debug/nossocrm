@@ -10,6 +10,7 @@
 
 import { z } from 'zod';
 import type { DomainExtractor, DomainApplyResult, TierResult } from './types';
+import { MotivoTagSchema, type MotivoTag } from '@/lib/ai/taxonomy/motivos';
 
 /** Board SDR — IA Qualificação (inbound) da Niva. */
 export const NIVA_SDR_BOARD_ID = 'c2e36157-1b63-43cc-be35-bb1cab7a287f';
@@ -41,8 +42,8 @@ export const NivaHealthSchema = z.object({
     .describe('Preferência de dia e turno para a ligação do consultor (ex.: "terça de manhã"). null se não combinado'),
   algo_a_destacar: z.string().nullable().describe('Algo que o lead queira destacar para o consultor. null se nada'),
   objecoes: z
-    .array(z.string())
-    .describe('Objeções levantadas pelo lead (ex.: preço, cobertura, carência, desconfiança). Array vazio se nenhuma'),
+    .array(MotivoTagSchema)
+    .describe('Objeções levantadas pelo lead, cada uma como categoria da taxonomia (sem_oportunidade [inclui preço/caro], ficou_na_atual, carencia, rede, concorrente, fora_icp, sem_resposta, timing, reembolso, confianca, decisor, burocracia, outro). Array vazio se nenhuma'),
   quer_so_cotacao: z
     .boolean()
     .describe('true SOMENTE se o lead insiste em receber cotação/preço e recusa o diagnóstico/agendamento'),
@@ -60,7 +61,7 @@ REGRAS:
 - vidas: número de pessoas que entram no plano. idades: a idade de CADA vida que o lead informou.
 - valor_pago_exato: o valor EXATO da mensalidade ATUAL, apenas o número em reais (ex.: 2500). null se é o primeiro plano ou se não informou o valor.
 - quer_so_cotacao: true apenas se o lead insistir em cotação/preço e recusar o diagnóstico/agendamento.
-- objecoes: liste objeções levantadas (preço, cobertura, rede, carência, desconfiança, etc.).
+- objecoes: classifique cada objeção levantada numa categoria da taxonomia: sem_oportunidade (inclui "achou caro"/preço), ficou_na_atual, carencia, rede, concorrente, fora_icp, sem_resposta, timing, reembolso, confianca, decisor, burocracia, outro.
 - Responda em português brasileiro.`;
 
 // =============================================================================
@@ -185,10 +186,21 @@ function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): Dom
   setIf('algo_a_destacar', ext.algo_a_destacar);
   customFields.qualificacao = merged;
 
-  // 2. Objeções (acumula + dedupe)
+  // 2. Objeções (acumula estruturado {categoria,detalhe,origem} + dedupe por categoria;
+  //    tolera formato antigo string[] convertendo pra categoria 'outro').
   if (Array.isArray(ext.objecoes) && ext.objecoes.length) {
-    const prev = Array.isArray(customFields.objecoes) ? (customFields.objecoes as unknown[]).map(String) : [];
-    customFields.objecoes = Array.from(new Set([...prev, ...ext.objecoes.map(String)]));
+    const prev = Array.isArray(customFields.objecoes)
+      ? (customFields.objecoes as unknown[]).map((o) =>
+          typeof o === 'string'
+            ? { categoria: 'outro' as MotivoTag, detalhe: o, origem: 'ana' as const }
+            : (o as { categoria?: MotivoTag; detalhe?: string | null; origem?: string }),
+        )
+      : [];
+    const prevCats = new Set(prev.map((o) => o?.categoria).filter(Boolean));
+    const additions = (ext.objecoes as MotivoTag[])
+      .filter((c) => !prevCats.has(c))
+      .map((categoria) => ({ categoria, detalhe: null, origem: 'ana' as const }));
+    customFields.objecoes = [...prev, ...additions];
   }
 
   // 3. Tier determinístico — usa os dados MESCLADOS (acumulados ao longo da conversa)

@@ -124,7 +124,7 @@ const fullExt: NivaHealthExtraction = {
   cidade_uf: 'SP',
   reuniao_preferencia: 'terça de manhã',
   algo_a_destacar: null,
-  objecoes: ['preço'],
+  objecoes: ['sem_oportunidade'],
   quer_so_cotacao: false,
   overallConfidence: 0.9,
 };
@@ -158,9 +158,18 @@ describe('nivaHealthExtractor.apply', () => {
     expect(qual.operadora).toBe('Amil');
   });
 
-  it('acumula e deduplica objeções', () => {
-    const r = nivaHealthExtractor.apply({ objecoes: ['preço'] }, { ...fullExt, objecoes: ['preço', 'carência'] });
-    expect(r.customFields.objecoes).toEqual(['preço', 'carência']);
+  it('acumula e deduplica objeções por categoria (taxonomia estruturada)', () => {
+    const prev = { objecoes: [{ categoria: 'sem_oportunidade', detalhe: null, origem: 'ana' }] };
+    const r = nivaHealthExtractor.apply(prev, { ...fullExt, objecoes: ['sem_oportunidade', 'carencia'] });
+    const cats = (r.customFields.objecoes as Array<{ categoria: string }>).map((o) => o.categoria);
+    expect(cats).toEqual(['sem_oportunidade', 'carencia']); // sem_oportunidade não duplica
+  });
+
+  it('converte objeções antigas em string[] para o formato estruturado', () => {
+    const r = nivaHealthExtractor.apply({ objecoes: ['achou caro'] }, { ...fullExt, objecoes: ['carencia'] });
+    const list = r.customFields.objecoes as Array<{ categoria: string; detalhe: string | null }>;
+    expect(list[0]).toMatchObject({ categoria: 'outro', detalhe: 'achou caro' });
+    expect(list.some((o) => o.categoria === 'carencia')).toBe(true);
   });
 
   it('fora_icp grava loss_reason e priority null', () => {

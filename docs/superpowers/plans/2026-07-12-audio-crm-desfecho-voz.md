@@ -1132,6 +1132,8 @@ git commit -m "feat: extract structured outcome in call-outcome route"
 - Test: `test/callOutcomeApplyRoute.test.ts`
 
 > F2 grava: (1) NOTE resumo `completed`, `date=enviado_em`; (2) 1 TASK por tarefa (`date=tarefa.data ?? enviado_em`, `completed:false`, `owner_id=deal.owner_id`); (3) merge conservador de `custom_fields.qualificacao.{operadora,vidas,valor_pago_exato}` + `deals.value=valor` só se `>0` e `fechou`; (4) `custom_fields.objecoes` (estruturado) + no `perdeu`, `custom_fields.motivo_perda` + `deals.loss_reason`; (5) `voice_calls`. O move de board (F3) e o realizada (F4) entram depois. Idempotência via `custom_fields.call_outcome_applied_at`. Trata 23505 → 409.
+>
+> ⚠️ **Ordem shipada = DEAL-FIRST** (divergência intencional do rascunho abaixo): lê o deal → idempotência → monta `nextCf`/`dealUpdate` → **UPDATE do deal (23505→409, carimba `call_outcome_applied_at`)** → só ENTÃO escreve activities/voice_calls (best-effort). Motivo: em F3 o UPDATE move de board e pode disparar `check_deal_duplicate` (23505); com deal-first, um conflito retorna 409 ANTES de inserir activities → sem activities órfãs. Espelha o no-show (move primeiro, side-effects depois). As instruções de F3.3/F4.5 já assumem essa ordem. **O arquivo committado é a fonte de verdade.**
 
 - [ ] **Step 1: Teste que falha**
 

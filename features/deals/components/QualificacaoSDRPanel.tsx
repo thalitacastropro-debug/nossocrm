@@ -24,6 +24,7 @@ import {
   MessageSquareWarning,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { MOTIVO_LABELS, type MotivoTag } from '@/lib/ai/taxonomy/motivos';
 
 interface QualificacaoSDRPanelProps {
   customFields?: Record<string, unknown> | null;
@@ -139,7 +140,19 @@ function Row({ icon, label, value }: { icon: React.ReactNode; label: string; val
 export function QualificacaoSDRPanel({ customFields, compact, className }: QualificacaoSDRPanelProps) {
   const q = (customFields?.qualificacao ?? null) as Qualificacao | null;
   const tier = (customFields?.tier ?? null) as TierData | null;
-  const objecoes = Array.isArray(customFields?.objecoes) ? (customFields!.objecoes as unknown[]).map(String) : [];
+  // objecoes pode ser string[] (formato antigo da Ana) ou {categoria,detalhe,origem}[]
+  // (taxonomia unificada). Normaliza pra rótulos de exibição, tolerando os dois.
+  const objecoes = Array.isArray(customFields?.objecoes)
+    ? (customFields!.objecoes as unknown[]).map((o) => {
+        if (typeof o === 'string') return o;
+        if (o && typeof o === 'object') {
+          const rec = o as { categoria?: string; detalhe?: string | null };
+          const base = rec.categoria ? (MOTIVO_LABELS[rec.categoria as MotivoTag] ?? rec.categoria) : (rec.detalhe ?? '');
+          return rec.categoria && rec.detalhe ? `${base}: ${rec.detalhe}` : base;
+        }
+        return String(o);
+      }).filter(Boolean)
+    : [];
   const leadForm = customFields?.lead_form as { fields?: Record<string, unknown> } | null | undefined;
   const reuniao = customFields?.reuniao_agendada as { status?: string; label?: string } | null | undefined;
 
@@ -209,8 +222,8 @@ export function QualificacaoSDRPanel({ customFields, compact, className }: Quali
         <div className="mt-3">
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Objeções</p>
           <div className="flex flex-wrap gap-1.5">
-            {objecoes.map((o) => (
-              <span key={o} className="text-[11px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300 border border-rose-200 dark:border-rose-500/20">
+            {objecoes.map((o, i) => (
+              <span key={`${o}-${i}`} className="text-[11px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300 border border-rose-200 dark:border-rose-500/20">
                 {o}
               </span>
             ))}
