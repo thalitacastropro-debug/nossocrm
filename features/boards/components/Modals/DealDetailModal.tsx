@@ -60,6 +60,7 @@ import { formatPriorityPtBr } from '@/lib/utils/priority';
 import { BriefingDrawer } from '@/features/deals/components/BriefingDrawer';
 import { AIExtractedFields } from '@/features/deals/components/AIExtractedFields';
 import { QualificacaoSDRPanel, sdrPanelHasData } from '@/features/deals/components/QualificacaoSDRPanel';
+import { VoiceOutcomeCapture } from '@/features/deals/components/VoiceOutcomeCapture';
 
 interface DealDetailModalProps {
   dealId: string | null;
@@ -890,6 +891,8 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
               <div className="flex-1 overflow-y-auto p-6 bg-slate-50/30 dark:bg-black/10">
                 {activeTab === 'timeline' && (
                   <div className="space-y-6">
+                    {/* Microfone em destaque: grava o desfecho da call por voz (áudio→IA→CRM). */}
+                    <VoiceOutcomeCapture dealId={deal.id} />
                     <div className="bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl p-4 shadow-sm">
                       <textarea
                         ref={noteTextareaRef}
