@@ -52,6 +52,7 @@ import {
   Plus,
   MessageSquare,
   FileText,
+  CalendarCheck,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { StageProgressBar } from '../StageProgressBar';
@@ -61,6 +62,8 @@ import { BriefingDrawer } from '@/features/deals/components/BriefingDrawer';
 import { AIExtractedFields } from '@/features/deals/components/AIExtractedFields';
 import { QualificacaoSDRPanel, sdrPanelHasData } from '@/features/deals/components/QualificacaoSDRPanel';
 import { VoiceOutcomeCapture } from '@/features/deals/components/VoiceOutcomeCapture';
+import { useMarkMeetingHeld } from '@/lib/query/hooks/useMarkMeetingHeld';
+import { CONSULTOR_BOARD_ID } from '@/lib/config/boards';
 
 interface DealDetailModalProps {
   dealId: string | null;
@@ -104,6 +107,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const { data: lifecycleStages = [] } = useLifecycleStages();
 
   const createActivityMutation = useCreateActivity();
+  const markMeetingHeld = useMarkMeetingHeld();
   const updateActivityMutation = useUpdateActivity();
   const deleteActivityMutation = useDeleteActivity();
   const addActivity = (activity: Omit<import('@/types').Activity, 'id' | 'createdAt'>) => createActivityMutation.mutateAsync({ activity });
@@ -581,6 +585,22 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                       <ThumbsDown size={16} /> PERDIDO
                     </button>
                   </>
+                )}
+                {deal.boardId === CONSULTOR_BOARD_ID && !(deal.customFields as Record<string, unknown> | undefined)?.reuniao_realizada && (
+                  <button
+                    onClick={() => {
+                      if (window.confirm('Marcar reunião como realizada?')) {
+                        markMeetingHeld.mutate({ dealId: deal.id });
+                      }
+                    }}
+                    disabled={markMeetingHeld.isPending}
+                    className="ml-2 px-3 py-1.5 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    title="Marcar reunião realizada (métrica Agendadas→Realizadas)"
+                    aria-label="Marcar reunião realizada"
+                  >
+                    <CalendarCheck size={14} aria-hidden="true" />
+                    <span className="hidden sm:inline">Reunião realizada</span>
+                  </button>
                 )}
                 <button
                   onClick={() => setShowBriefingDrawer(true)}

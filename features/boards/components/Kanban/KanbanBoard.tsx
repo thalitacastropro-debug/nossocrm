@@ -7,6 +7,7 @@ import { MoveToStageModal } from '../Modals/MoveToStageModal';
 import { SkeletonDealCard } from '@/components/ui/Skeleton';
 import { useLifecycleStages } from '@/lib/query/hooks/useLifecycleStagesQuery';
 import { useMarkNoShow } from '@/lib/query/hooks/useMarkNoShow';
+import { useMarkMeetingHeld } from '@/lib/query/hooks/useMarkMeetingHeld';
 import { CONSULTOR_BOARD_ID } from '@/lib/config/boards';
 
 /**
@@ -124,6 +125,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 }) => {
   const { data: lifecycleStages = [] } = useLifecycleStages();
   const { mutate: markNoShowMutate } = useMarkNoShow();
+  const { mutate: markMeetingHeldMutate } = useMarkMeetingHeld();
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
   
   // State for move-to-stage modal (keyboard accessibility alternative to drag-and-drop)
@@ -225,6 +227,22 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       );
     },
     [markNoShowMutate]
+  );
+
+  // Handler: marca reunião realizada (par do no-show; não move o card).
+  const handleMarkMeetingHeld = useCallback(
+    (deal: DealView) => {
+      markMeetingHeldMutate(
+        { dealId: deal.id },
+        {
+          onError: (err) =>
+            window.alert(
+              err instanceof Error ? err.message : 'Não foi possível marcar a reunião.'
+            ),
+        }
+      );
+    },
+    [markMeetingHeldMutate]
   );
 
   return (
@@ -354,6 +372,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                     onMoveToStage={onMoveDealToStage ? handleOpenMoveToStage : undefined}
                     onOpenWhatsApp={handleOpenWhatsApp}
                     onMarkNoShow={boardId === CONSULTOR_BOARD_ID ? handleMarkNoShow : undefined}
+                    onMarkMeetingHeld={boardId === CONSULTOR_BOARD_ID ? handleMarkMeetingHeld : undefined}
                   />
                 </div>
               ))}

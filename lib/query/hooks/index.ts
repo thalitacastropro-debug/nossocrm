@@ -84,6 +84,9 @@ export {
 // No-show (move-back pro board da Ana + reativa IA + msg de resgate)
 export { useMarkNoShow } from './useMarkNoShow';
 
+// Reunião realizada (par positivo do no-show — métrica Agendadas→Realizadas)
+export { useMarkMeetingHeld } from './useMarkMeetingHeld';
+
 // Áudio → CRM (transcrição + aplicação do desfecho da call)
 export { useTranscribeCallOutcome, useApplyCallOutcome } from './useCallOutcome';
 

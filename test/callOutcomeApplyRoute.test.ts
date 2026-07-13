@@ -7,6 +7,7 @@ const DEAL_ID = 'c3d4e5f6-a7b8-4c9d-8e0f-a1b2c3d4e5f6';
 let dealRow: Record<string, unknown>;
 let dealUpdateSpy: ReturnType<typeof vi.fn>;
 let activityInsertSpy: ReturnType<typeof vi.fn>;
+let activityUpdateSpy: ReturnType<typeof vi.fn>;
 let voiceInsertSpy: ReturnType<typeof vi.fn>;
 let supabaseClientMock: Record<string, unknown>;
 let adminMock: Record<string, unknown>;
@@ -56,6 +57,7 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     dealRow = { id: DEAL_ID, organization_id: ORG_ID, owner_id: USER_ID, board_id: 'efbaa84e-cf4b-4465-8b50-41afd612088e', stage_id: 's1', value: 0, custom_fields: { tier: { valor: 'prata' }, qualificacao: { vidas: 2 } } };
     dealUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn(async () => ({ error: null })) });
     activityInsertSpy = vi.fn(async () => ({ error: null }));
+    activityUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn(async () => ({ error: null })) });
     voiceInsertSpy = vi.fn(async () => ({ error: null }));
     supabaseClientMock = {
       ...auth(),
@@ -66,7 +68,7 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     };
     adminMock = {
       from: vi.fn((t: string) => {
-        if (t === 'activities') return { insert: activityInsertSpy };
+        if (t === 'activities') return { insert: activityInsertSpy, update: activityUpdateSpy };
         if (t === 'voice_calls') return { insert: voiceInsertSpy };
         throw new Error('unexpected admin ' + t);
       }),
@@ -250,6 +252,27 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     expect(arg.stage_id).toBeUndefined();
     expect(arg.is_won).toBeUndefined();
     expect(arg.is_lost).toBeUndefined();
+  });
+
+  it('fechou → auto-marca reuniao_realizada + completa a CALL agendada', async () => {
+    dealRow = { ...dealRow, custom_fields: { ...(dealRow.custom_fields as object), reuniao_agendada: { activity_id: 'e5f6a7b8-c9d0-4e1f-8a2b-c3d4e5f6a7b8' } } };
+    await callPost(baseBody());
+    const cf = (dealUpdateSpy.mock.calls[0][0] as { custom_fields: Record<string, unknown> }).custom_fields;
+    expect((cf.reuniao_realizada as { realizada: boolean }).realizada).toBe(true);
+    expect(activityUpdateSpy).toHaveBeenCalledWith({ completed: true });
+  });
+
+  it('remarcar/nao_atendeu → NÃO marca reuniao_realizada', async () => {
+    await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        desfecho: 'remarcar',
+        dados_negocio: { operadora: null, vidas: null, valor: null },
+      },
+    }));
+    const cf = (dealUpdateSpy.mock.calls[0][0] as { custom_fields: Record<string, unknown> }).custom_fields;
+    expect(cf.reuniao_realizada).toBeUndefined();
+    expect(activityUpdateSpy).not.toHaveBeenCalled();
   });
 
   it('idempotente: já aplicado → 200 sem regravar', async () => {

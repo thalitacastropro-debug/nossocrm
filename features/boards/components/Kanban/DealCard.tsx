@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { DealView } from '@/types';
-import { Building2, Clock, Hourglass, MessageCircle, PhoneMissed, Trophy, XCircle } from 'lucide-react';
+import { Building2, CalendarCheck, Clock, Hourglass, MessageCircle, PhoneMissed, Trophy, XCircle } from 'lucide-react';
 import { ActivityStatusIcon } from './ActivityStatusIcon';
 import { priorityAriaLabelPtBr } from '@/lib/utils/priority';
 
@@ -34,6 +34,11 @@ interface DealCardProps {
    * a mensagem de resgate. Só é passado nos cards do board do Consultor.
    */
   onMarkNoShow?: (deal: DealView) => void;
+  /**
+   * Marca reunião realizada (par positivo do no-show — métrica Agendadas→Realizadas).
+   * Não move de board. Só é passado nos cards do board do Consultor.
+   */
+  onMarkMeetingHeld?: (deal: DealView) => void;
 }
 
 // Check if deal is closed (won or lost)
@@ -137,11 +142,14 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   onMoveToStage,
   onOpenWhatsApp,
   onMarkNoShow,
+  onMarkMeetingHeld,
 }) => {
   const [localDragging, setLocalDragging] = useState(false);
   // Trava o botão de no-show após o disparo p/ evitar duplo-envio (a ação pinga o cliente).
   // No sucesso o card some do board; o timeout é só uma rede de segurança no erro.
   const [isMarkingNoShow, setIsMarkingNoShow] = useState(false);
+  // Mesma trava pro botão de reunião realizada (não move o card; só duplo-clique).
+  const [isMarkingHeld, setIsMarkingHeld] = useState(false);
   const isClosed = isDealClosed(deal);
   const age = tempoNoCrm(deal.createdAt);
   const waPhone = telefoneWhatsApp(deal);
@@ -158,6 +166,17 @@ const DealCardComponent: React.FC<DealCardProps> = ({
     onMarkNoShow(deal);
     // Rede de segurança: se der erro e o card não sumir, reabilita o botão.
     setTimeout(() => setIsMarkingNoShow(false), 10000);
+  };
+
+  const handleMarkMeetingHeld = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onMarkMeetingHeld || isMarkingHeld) return;
+    const ok = window.confirm('Marcar reunião como realizada?');
+    if (!ok) return;
+    setIsMarkingHeld(true);
+    onMarkMeetingHeld(deal);
+    // O card NÃO some (não move de board) — reabilita após a rede de segurança.
+    setTimeout(() => setIsMarkingHeld(false), 10000);
   };
 
   const handleToggleMenu = (e: React.MouseEvent) => {
@@ -446,6 +465,19 @@ const DealCardComponent: React.FC<DealCardProps> = ({
               className="p-1 rounded-full text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <PhoneMissed size={14} aria-hidden="true" />
+            </button>
+          )}
+          {onMarkMeetingHeld && (
+            <button
+              type="button"
+              onClick={handleMarkMeetingHeld}
+              onMouseDown={e => e.stopPropagation()}
+              disabled={isMarkingHeld}
+              title="Marcar reunião realizada"
+              aria-label={`Marcar reunião realizada de ${deal.title}`}
+              className="p-1 rounded-full text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <CalendarCheck size={14} aria-hidden="true" />
             </button>
           )}
           <ActivityStatusIcon

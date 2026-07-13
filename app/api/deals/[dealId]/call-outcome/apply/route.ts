@@ -80,6 +80,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     nextCf.motivo_perda = { categoria: d.motivo_perda, detalhe: d.motivo_perda_detalhe ?? null };
   }
 
+  // Reunião realizada: todo desfecho de call ATENDIDA marca realizada
+  // (remarcar/nao_atendeu não — a reunião não aconteceu). Par do botão manual.
+  const marcaRealizada = d.desfecho !== 'remarcar' && d.desfecho !== 'nao_atendeu';
+  if (marcaRealizada && !existingCf.reuniao_realizada) {
+    nextCf.reuniao_realizada = { realizada: true, at: enviadoEm, by: user.id };
+  }
+
   const dealUpdate: Record<string, unknown> = { custom_fields: nextCf, updated_at: enviadoEm };
   if (d.desfecho === 'fechou' && typeof d.dados_negocio.valor === 'number' && d.dados_negocio.valor > 0) {
     dealUpdate.value = d.dados_negocio.valor;
@@ -123,6 +130,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   // --- Side effects (best-effort; o desfecho já valeu no deal) ----------------
   const admin = createStaticAdminClient();
+
+  // 0. Reunião realizada → completa a CALL agendada da Ana (alimenta a métrica).
+  if (marcaRealizada) {
+    const agendada = existingCf.reuniao_agendada as { activity_id?: string } | undefined;
+    if (agendada?.activity_id) {
+      await admin.from('activities').update({ completed: true }).eq('id', agendada.activity_id);
+    }
+  }
 
   // 1. Nota-resumo → activity NOTE completed.
   await admin.from('activities').insert({
