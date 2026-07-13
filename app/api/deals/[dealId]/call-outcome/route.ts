@@ -2,9 +2,12 @@
  * POST /api/deals/[dealId]/call-outcome
  *
  * Recebe o áudio da call (multipart `audio`), sobe pro bucket `deal-files`,
- * transcreve no Gemini e devolve { transcricao, audioFilePath }. NÃO grava
- * desfecho (isso é o /apply). Guard: org sem chave Google → 422.
- * (F2.4 acrescenta a extração estruturada do desfecho na resposta.)
+ * transcreve no Gemini e devolve { transcricao, desfecho, audioFilePath }.
+ * NÃO grava desfecho (isso é o /apply). Guard: org sem chave Google → 422.
+ *
+ * SEGURANÇA: o deal é lido com o client SSR (RLS) ANTES de qualquer write
+ * service-role — um dealId de outra org retorna 404 aqui, senão o upload
+ * bypassaria a policy deal_files_org_isolate (achado da revisão adversarial).
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -26,6 +29,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // Gate de autorização: a RLS de deals só devolve deals da org do caller.
+  // Sem isso, o upload service-role abaixo gravaria em deal de OUTRA org.
+  const { data: deal, error: dealErr } = await supabase
+    .from('deals')
+    .select('id, organization_id')
+    .eq('id', dealId)
+    .single();
+  if (dealErr || !deal) return NextResponse.json({ error: 'Deal not found' }, { status: 404 });
 
   const form = await request.formData();
   const audio = form.get('audio');

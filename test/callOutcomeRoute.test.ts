@@ -5,6 +5,7 @@ const ORG_ID = 'b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6';
 const DEAL_ID = 'c3d4e5f6-a7b8-4c9d-8e0f-a1b2c3d4e5f6';
 
 let profileQB: Record<string, unknown>;
+let dealQB: Record<string, unknown>;
 let supabaseClientMock: Record<string, unknown>;
 let aiConfig: unknown;
 
@@ -34,6 +35,16 @@ function buildProfileQB(orgId: string | null = ORG_ID) {
     maybeSingle: vi.fn(async () => ({ data: orgId ? { organization_id: orgId } : null, error: null })),
   };
 }
+function buildDealQB(found = true) {
+  return {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    single: vi.fn(async () => ({
+      data: found ? { id: DEAL_ID, organization_id: ORG_ID } : null,
+      error: found ? null : { message: 'not found' },
+    })),
+  };
+}
 function auth(userId: string | null = USER_ID) {
   return { auth: { getUser: vi.fn(async () => ({ data: { user: userId ? { id: userId } : null }, error: null })) } };
 }
@@ -48,10 +59,15 @@ describe('POST /api/deals/[dealId]/call-outcome', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     profileQB = buildProfileQB();
+    dealQB = buildDealQB();
     aiConfig = { structuredApiKey: 'gkey', structuredModel: 'gemini-2.5-flash-lite' };
     supabaseClientMock = {
       ...auth(),
-      from: vi.fn((t: string) => { if (t === 'profiles') return profileQB; throw new Error('unexpected ' + t); }),
+      from: vi.fn((t: string) => {
+        if (t === 'profiles') return profileQB;
+        if (t === 'deals') return dealQB;
+        throw new Error('unexpected ' + t);
+      }),
     };
   });
 
@@ -66,6 +82,14 @@ describe('POST /api/deals/[dealId]/call-outcome', () => {
 
   it('400 sem arquivo de áudio', async () => {
     expect((await callPost(DEAL_ID, false)).status).toBe(400);
+  });
+
+  it('404 quando o deal não é visível pela RLS (cross-org) — SEM upload', async () => {
+    dealQB = buildDealQB(false);
+    const { uploadDealAudioServer } = await import('@/lib/supabase/dealFilesServer');
+    const res = await callPost();
+    expect(res.status).toBe(404);
+    expect(uploadDealAudioServer).not.toHaveBeenCalled();
   });
 
   it('422 quando a org não tem chave Google (structuredApiKey vazio)', async () => {
