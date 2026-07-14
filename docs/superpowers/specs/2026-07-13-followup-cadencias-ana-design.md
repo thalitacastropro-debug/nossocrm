@@ -208,7 +208,7 @@ Aplicar a migration é seguro mesmo antes de criar os secrets (eles são lidos q
 ## 15. Riscos & mitigações
 
 - **Ban do número UAZAPI:** cadência enxuta + só horário comercial + para no 1º "não"/resposta. Leads são opt-in (deram o número no formulário).
-- **Duplo envio:** `count`/`last_sent_at` idempotentes; batch pequeno; `waitUntil` não se aplica (cron aguarda o loop). Um run só envia o toque devido uma vez.
+- **Duplo envio:** o avanço do `count` é **persistido ANTES do envio** (revert best-effort se o envio falhar). Se a função morrer ou o persist falhar, o mesmo toque nunca é reenviado — trade: no pior caso o lead perde 1 toque (aceitável) em vez de receber duplicado (risco de ban). Um run só envia o toque devido uma vez.
 - **Timezone:** offset fixo −03:00 (sem DST, sem lib) — igual ao resto do projeto; não introduzir `Intl`/tz que derive.
 - **Reengajamento fantasma:** o reset (§10) evita que um lead que voltou e sumiu de novo fique preso no `stopped`.
 

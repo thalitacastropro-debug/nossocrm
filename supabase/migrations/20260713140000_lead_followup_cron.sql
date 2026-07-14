@@ -30,6 +30,7 @@ BEGIN
       );
     $cmd$
   );
-EXCEPTION WHEN undefined_object THEN
+EXCEPTION WHEN undefined_function OR invalid_schema_name THEN
+  -- pg_cron off: o schema/função "cron" não existe. Degrada sem abortar a migration.
   RAISE NOTICE 'pg_cron indisponivel — habilite a extensao no dashboard e reaplique esta migration';
 END $$;

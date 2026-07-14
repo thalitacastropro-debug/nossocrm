@@ -53,19 +53,19 @@ export async function runLeadFollowup(deps: FollowupDeps): Promise<FollowupResul
 
   const contactIds = [...new Set(candidates.map((d) => d.contact_id as string))];
 
-  // 2. Conversa mais recente por contato (última fala nossa).
+  // 2. Conversa MAIS RECENTE de cada contato (qualquer direção). Se a mais recente for
+  //    inbound (lead respondeu) ou estiver pausada, o contato é pulado no loop — evita
+  //    seguir uma conversa antiga quando o contato tem mais de uma (ex.: 2º canal).
   const { data: convs } = await supabase
     .from('messaging_conversations')
     .select('id, contact_id, first_response_at, last_message_at, last_message_direction, metadata')
     .in('contact_id', contactIds)
-    .eq('last_message_direction', 'outbound')
     .order('last_message_at', { ascending: false });
 
   const convByContact = new Map<string, Record<string, unknown>>();
   for (const c of convs ?? []) {
     const cid = c.contact_id as string | null;
     if (!cid || convByContact.has(cid)) continue; // ordenado desc => 1º = mais recente
-    if (((c.metadata as CF | null) ?? {}).ai_paused === true) continue;
     convByContact.set(cid, c);
   }
   if (convByContact.size === 0) return res;
@@ -96,6 +96,9 @@ export async function runLeadFollowup(deps: FollowupDeps): Promise<FollowupResul
     const conv = convByContact.get(contactId);
     const contact = contactById.get(contactId);
     if (!conv || !contact || contact.ai_paused) { res.skipped++; continue; }
+    // A conversa mais recente do contato precisa ser NOSSA (outbound) e não pausada.
+    if (conv.last_message_direction !== 'outbound') { res.skipped++; continue; }
+    if (((conv.metadata as CF | null) ?? {}).ai_paused === true) { res.skipped++; continue; }
 
     const cf = (deal.custom_fields as CF | null) ?? {};
     const existing = cf.followup as FollowupState | undefined;
@@ -138,11 +141,19 @@ export async function runLeadFollowup(deps: FollowupDeps): Promise<FollowupResul
       message = ai && ai.length ? ai.join('\n\n') : renderBubbles([WARM_FALLBACK[decision.touchIndex]], name);
     }
 
-    const sent = await deps.sendResponse(convId, message);
-    if (!sent.success) { res.failed++; continue; } // não avança o estado; tenta de novo no próximo run
-
+    // Idempotência: PERSISTE o avanço ANTES de enviar. Se a função morrer ou o persist
+    // falhar, nunca reenvia o mesmo toque (risco de ban). Se o envio falhar, reverte.
     const advanced = advanceState(state, now);
-    await persistFollowup(supabase, deal.id as string, cf, advanced, advanced.stopped === true, (deal.tags as string[] | null) ?? []);
+    const tags = (deal.tags as string[] | null) ?? [];
+    const persisted = await persistFollowup(supabase, deal.id as string, cf, advanced, advanced.stopped === true, tags);
+    if (!persisted) { res.failed++; continue; } // não envia se não conseguiu registrar
+
+    const sent = await deps.sendResponse(convId, message);
+    if (!sent.success) {
+      await persistFollowup(supabase, deal.id as string, cf, state, false, tags); // reverte (best-effort)
+      res.failed++;
+      continue;
+    }
     res.processed++;
     if (wasReset) res.reset++;
   }
@@ -152,9 +163,10 @@ export async function runLeadFollowup(deps: FollowupDeps): Promise<FollowupResul
 
 async function persistFollowup(
   supabase: SupabaseClient, dealId: string, existingCf: CF, state: FollowupState, addTag: boolean, tags: string[] = []
-): Promise<void> {
+): Promise<boolean> {
   const patch: CF = { custom_fields: { ...existingCf, followup: state }, updated_at: new Date().toISOString() };
   if (addTag) patch.tags = [...new Set([...tags, FOLLOWUP_TAG])];
   const { error } = await supabase.from('deals').update(patch).eq('id', dealId);
-  if (error) console.error('[followup] persist falhou p/ deal', dealId, error);
+  if (error) { console.error('[followup] persist falhou p/ deal', dealId, error); return false; }
+  return true;
 }
