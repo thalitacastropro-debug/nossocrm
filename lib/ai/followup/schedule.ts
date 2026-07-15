@@ -51,8 +51,24 @@ export function nextDueTouch(state: FollowupState, now: Date): TouchDecision | n
   if (state.stopped) return null;
   const schedule = scheduleFor(state.cadence);
   if (state.count >= schedule.length) return null;
-  const dueMs = Date.parse(state.anchor_at) + schedule[state.count];
-  if (Number.isNaN(dueMs) || now.getTime() < dueMs) return null;
+  const anchorMs = Date.parse(state.anchor_at);
+  if (Number.isNaN(anchorMs)) return null;
+
+  // Devido pela âncora (offset fixo desde o início da cadência).
+  const anchorDueMs = anchorMs + schedule[state.count];
+
+  // Espaçamento mínimo desde o ÚLTIMO envio: evita rajada quando a âncora é antiga
+  // (backlog) ou o cron ficou parado — o toque N só sai após o gap normal entre N-1 e N.
+  let gapDueMs = Number.NEGATIVE_INFINITY;
+  if (state.count > 0 && state.last_sent_at) {
+    const lastSentMs = Date.parse(state.last_sent_at);
+    if (!Number.isNaN(lastSentMs)) {
+      gapDueMs = lastSentMs + (schedule[state.count] - schedule[state.count - 1]);
+    }
+  }
+
+  const dueMs = Math.max(anchorDueMs, gapDueMs);
+  if (now.getTime() < dueMs) return null;
   return { touchIndex: state.count, isLast: state.count + 1 >= schedule.length };
 }
 

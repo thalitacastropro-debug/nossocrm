@@ -61,6 +61,14 @@ describe('nextDueTouch', () => {
     const now = new Date(anchorMs + WARM_SCHEDULE_MS[0] + 1000);
     expect(nextDueTouch({ cadence: 'warm', anchor_at: anchor, count: 0, stopped: false }, now)).toEqual({ touchIndex: 0, isLast: false });
   });
+  it('espaça pelo último envio: âncora antiga não dispara o toque 1 em rajada', () => {
+    // toque 0 enviado agora (bem depois da âncora antiga); o toque 1 exige gap de (24h-3h)=21h
+    const sent0 = new Date(anchorMs + 100 * 3600_000).toISOString();
+    const state: FollowupState = { cadence: 'cold', anchor_at: anchor, count: 1, stopped: false, last_sent_at: sent0 };
+    expect(nextDueTouch(state, new Date(Date.parse(sent0) + 1000))).toBeNull();
+    const afterGap = new Date(Date.parse(sent0) + (24 - 3) * 3600_000 + 1000);
+    expect(nextDueTouch(state, afterGap)).toEqual({ touchIndex: 1, isLast: false });
+  });
 });
 
 describe('advanceState', () => {
