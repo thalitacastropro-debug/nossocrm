@@ -20,6 +20,8 @@ Regras:
 - Retome DE ONDE PAROU: use o que o lead já disse; refaça a última pergunta pendente.
 - Objetivo é marcar 30 min com o consultor. Nunca "cotação".
 - ${foco}
+- NUNCA escreva placeholders entre colchetes (ex.: [cidade], [estado/cidade], [nome], [valor]). Só use dados CONCRETOS que aparecem na conversa; se não tiver o dado, pergunte de forma aberta ou não cite o dado.
+- Sem diminutivos (nada de "listinha", "rapidinho", "cotaçãozinha") e não narre seu processo interno ("anoto na minha lista").
 - Bolhas curtas: uma ideia por LINHA (1 a 3 linhas). Sem emojis, sem travessão, sem markdown, sem aspas.
 - Devolva SÓ as bolhas, uma por linha.`;
 }
@@ -78,6 +80,9 @@ export async function generateWarmFollowupBubbles(opts: {
     });
 
     const bubbles = result.text.split('\n').map((s) => s.trim()).filter(Boolean);
+    // Guard anti-alucinação: se a IA vazou placeholder em colchetes, descarta o toque
+    // (o chamador usa o fallback fixo) em vez de mandar "[estado/cidade]" pro lead.
+    if (bubbles.some((b) => /[[\]]/.test(b))) return null;
     return bubbles.length >= 1 ? bubbles : null;
   } catch {
     return null;
