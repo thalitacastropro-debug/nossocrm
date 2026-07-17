@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { easterSunday, isFeriado } from '@/lib/ai/scheduling/holidays';
+import { getAvailableSlots } from '@/lib/ai/scheduling/availability';
+import { NIVA_AVAILABILITY } from '@/lib/ai/scheduling/config';
 
 describe('easterSunday', () => {
   it('calcula o Domingo de Páscoa (Meeus/Butcher)', () => {
@@ -27,5 +29,21 @@ describe('isFeriado', () => {
     expect(isFeriado(2026, 9, 8)).toBe(false);
     expect(isFeriado(2026, 7, 20)).toBe(false);
     expect(isFeriado(2026, 2, 18)).toBe(false); // quarta de cinzas não é feriado nacional
+  });
+});
+
+describe('getAvailableSlots x feriado', () => {
+  it('NÃO oferta 07/09/2026 (Independência, uma segunda-feira) — regressão do bug real', () => {
+    // quinta 03/09/2026 14h SP. Sem este fix, a lista traz "segunda, 07/09, às 9h".
+    const now = new Date('2026-09-03T17:00:00.000Z');
+    const slots = getAvailableSlots({ now, busy: [], config: NIVA_AVAILABILITY });
+    expect(slots.length).toBeGreaterThan(0);
+    expect(slots.some((s) => s.label.includes('07/09'))).toBe(false);
+  });
+
+  it('o horizonte PULA o feriado em vez de encurtar (08/09 continua ofertável)', () => {
+    const now = new Date('2026-09-03T17:00:00.000Z');
+    const slots = getAvailableSlots({ now, busy: [], config: NIVA_AVAILABILITY });
+    expect(slots.some((s) => s.label.includes('08/09'))).toBe(true);
   });
 });

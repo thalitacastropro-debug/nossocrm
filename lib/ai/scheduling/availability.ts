@@ -6,6 +6,7 @@
  */
 
 import type { AvailabilityConfig, BusyInterval, Slot } from './types';
+import { isFeriado } from './holidays';
 
 const WEEKDAYS_PT = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
 
@@ -53,7 +54,9 @@ export function getAvailableSlots(params: GetAvailableSlotsParams): Slot[] {
   while (businessDaysSeen < config.horizonBusinessDays && slots.length < config.maxSlots) {
     const { year, month, day } = spParts(cursor.getTime());
     const dow = weekdaySp(year, month, day, config.utcOffset);
-    const isBusinessDay = dow >= 1 && dow <= 5;
+    // Feriado nacional não é dia útil. Como `businessDaysSeen++` só roda quando isBusinessDay,
+    // o horizonte PULA o feriado em vez de encurtar.
+    const isBusinessDay = dow >= 1 && dow <= 5 && !isFeriado(year, month, day);
 
     if (isBusinessDay) {
       businessDaysSeen++;
