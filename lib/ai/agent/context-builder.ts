@@ -479,7 +479,7 @@ export function formatContextForPrompt(
   // Agenda real: horários disponíveis + status da reunião
   if (context.available_slots && context.available_slots.length > 0) {
     lines.push('## Horários disponíveis para a ligação do consultor');
-    lines.push('Ofereça SOMENTE estes horários. NUNCA invente outro. Ofereça 2–3 por vez, não a lista toda.');
+    lines.push('Ofereça SOMENTE estes horários. NUNCA invente outro. Ofereça EXATAMENTE 2 por vez, nunca 3 ou mais, e nunca a lista toda.');
     lines.push('Se nenhum servir, diga que vai confirmar a melhor data com o consultor (não prometa fora da lista).');
     context.available_slots.forEach((s) => lines.push(`- ${s.label}`));
     lines.push('');
