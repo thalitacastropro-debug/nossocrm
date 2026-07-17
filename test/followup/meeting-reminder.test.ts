@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   ultimoDiaUtilAntes, dueVespera, dueAtivacao, deveEnviar, VESPERA_MIN_GAP_MS,
 } from '@/lib/ai/followup/meeting-reminder-schedule';
-import { renderReminder, TOQUES_COPY } from '@/lib/ai/followup/meeting-reminder';
+import {
+  renderReminder, TOQUES_COPY, runMeetingReminder, type MeetingReminderDeps,
+} from '@/lib/ai/followup/meeting-reminder';
 
 // Referência: sexta 17/07/2026, segunda = 20/07/2026.
 const SEG_15H = '2026-07-20T18:00:00.000Z'; // segunda 20/07 15h SP
@@ -174,5 +176,155 @@ describe('renderReminder', () => {
   it('separa as bolhas com linha em branco (o splitIntoBubbles do sendAIResponse)', () => {
     const out = renderReminder(['Uma.', 'Duas.'], { nome: 'X', label: 'Y', consultor: 'Z' });
     expect(out).toBe('Uma.\n\nDuas.');
+  });
+});
+
+/**
+ * Supabase fake: thenable que resolve com as linhas no await, qualquer que seja o
+ * encadeamento de filtros (mesmo padrão de test/followup/run.test.ts). O mock NÃO filtra —
+ * passe já filtrado; os testes de filtro SQL ficam pra validação ao vivo.
+ */
+function makeSupabaseMR(cfg: {
+  activities: unknown[]; deals: unknown[]; conversations: unknown[]; contacts: unknown[]; profiles?: unknown[];
+}) {
+  const dealUpdates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+  function thenable(rows: unknown[]) {
+    const b: Record<string, unknown> = {};
+    for (const m of ['select', 'eq', 'in', 'is', 'not', 'gte', 'lte', 'order', 'limit']) b[m] = () => b;
+    b.then = (res: (v: { data: unknown[]; error: null }) => void) => res({ data: rows, error: null });
+    return b;
+  }
+  const client = {
+    from(table: string) {
+      if (table === 'deals') {
+        return {
+          ...thenable(cfg.deals),
+          update: (patch: Record<string, unknown>) => ({
+            eq: async (_c: string, id: string) => { dealUpdates.push({ id, patch }); return { error: null }; },
+          }),
+        };
+      }
+      if (table === 'activities') return thenable(cfg.activities);
+      if (table === 'messaging_conversations') return thenable(cfg.conversations);
+      if (table === 'contacts') return thenable(cfg.contacts);
+      if (table === 'profiles') return thenable(cfg.profiles ?? []);
+      throw new Error('tabela inesperada: ' + table);
+    },
+  };
+  return { client: client as never, dealUpdates };
+}
+
+const AGORA = new Date('2026-07-20T17:35:00.000Z'); // segunda 14h35 SP = janela da ativação das 15h
+
+function cenarioBase(over: { deal?: Record<string, unknown>; activity?: Record<string, unknown> } = {}) {
+  const activity = {
+    id: 'act-1', deal_id: 'deal-1', date: '2026-07-20T18:00:00.000Z',
+    created_at: '2026-07-17T11:22:53.113Z', owner_id: 'u-den', ...over.activity,
+  };
+  const deal = { id: 'deal-1', organization_id: 'org-1', contact_id: 'c-1', custom_fields: {}, ...over.deal };
+  return {
+    activities: [activity], deals: [deal],
+    conversations: [{ id: 'conv-1', contact_id: 'c-1', last_message_at: '2026-07-17T11:24:41.150Z', metadata: {} }],
+    contacts: [{ id: 'c-1', name: 'Nathalia Quintero Ruiz', ai_paused: true }], // pausado DE PROPÓSITO
+    profiles: [{ id: 'u-den', name: 'Denilson Silva' }],
+  };
+}
+
+function deps(supa: unknown, over: Partial<MeetingReminderDeps> = {}): MeetingReminderDeps {
+  return {
+    supabase: supa as never,
+    now: AGORA,
+    sendResponse: vi.fn(async () => ({ success: true })),
+    ...over,
+  };
+}
+
+describe('runMeetingReminder', () => {
+  it('envia a ativação com o nome do consultor e persiste ANTES de enviar', async () => {
+    const { client, dealUpdates } = makeSupabaseMR(cenarioBase());
+    const send = vi.fn(async () => ({ success: true }));
+    const r = await runMeetingReminder(deps(client, { sendResponse: send }));
+
+    expect(r.processed).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    const [convId, msg] = send.mock.calls[0];
+    expect(convId).toBe('conv-1');
+    expect(msg).toContain('Nathalia');
+    expect(msg).toContain('Denilson');
+    expect(msg).not.toMatch(/\{|\}/);
+    // persistiu o estado
+    expect(dealUpdates[0].patch.custom_fields).toMatchObject({
+      meeting_reminder: expect.objectContaining({ activity_id: 'act-1', date: '2026-07-20T18:00:00.000Z' }),
+    });
+  });
+
+  it('IGNORA ai_paused (decisão do spec §2.3): o contato do cenário base está pausado e recebe', async () => {
+    const { client } = makeSupabaseMR(cenarioBase());
+    const send = vi.fn(async () => ({ success: true }));
+    await runMeetingReminder(deps(client, { sendResponse: send }));
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('não reenvia o toque já enviado', async () => {
+    const { client } = makeSupabaseMR(cenarioBase({
+      deal: { custom_fields: { meeting_reminder: {
+        activity_id: 'act-1', date: '2026-07-20T18:00:00.000Z', ativacao_sent_at: '2026-07-20T17:31:00.000Z',
+      } } },
+    }));
+    const send = vi.fn(async () => ({ success: true }));
+    const r = await runMeetingReminder(deps(client, { sendResponse: send }));
+    expect(send).not.toHaveBeenCalled();
+    expect(r.processed).toBe(0);
+  });
+
+  it('REMARCAÇÃO: date mudou → estado antigo é descartado e o toque sai de novo', async () => {
+    const { client } = makeSupabaseMR(cenarioBase({
+      deal: { custom_fields: { meeting_reminder: {
+        activity_id: 'act-1', date: '2026-07-17T20:00:00.000Z', // sexta 17h — a reunião ANTIGA
+        vespera_sent_at: '2026-07-16T20:00:00.000Z', ativacao_sent_at: '2026-07-17T19:30:00.000Z',
+      } } },
+    }));
+    const send = vi.fn(async () => ({ success: true }));
+    const r = await runMeetingReminder(deps(client, { sendResponse: send }));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(r.processed).toBe(1);
+  });
+
+  it('no-show marcado DEPOIS da marcação → pula os dois toques', async () => {
+    const { client } = makeSupabaseMR(cenarioBase({
+      deal: { custom_fields: { no_show_at: '2026-07-20T17:00:00.000Z' } }, // depois do created_at
+    }));
+    const send = vi.fn(async () => ({ success: true }));
+    const r = await runMeetingReminder(deps(client, { sendResponse: send }));
+    expect(send).not.toHaveBeenCalled();
+    expect(r.skipped).toBe(1);
+  });
+
+  it('no-show ANTES da marcação (deu no-show e remarcou) → envia normal', async () => {
+    const { client } = makeSupabaseMR(cenarioBase({
+      deal: { custom_fields: { no_show_at: '2026-07-10T14:00:00.000Z' } }, // antes do created_at
+    }));
+    const send = vi.fn(async () => ({ success: true }));
+    await runMeetingReminder(deps(client, { sendResponse: send }));
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('sem owner_id, cai em "o consultor" e não vaza chave', async () => {
+    const { client } = makeSupabaseMR({ ...cenarioBase({ activity: { owner_id: null } }), profiles: [] });
+    const send = vi.fn(async () => ({ success: true }));
+    await runMeetingReminder(deps(client, { sendResponse: send }));
+    const msg = send.mock.calls[0][1];
+    expect(msg).toContain('o consultor');
+    expect(msg).not.toMatch(/\{|\}/);
+  });
+
+  it('envio falhou → reverte o estado e conta failed', async () => {
+    const { client, dealUpdates } = makeSupabaseMR(cenarioBase());
+    const send = vi.fn(async () => ({ success: false }));
+    const r = await runMeetingReminder(deps(client, { sendResponse: send }));
+    expect(r.failed).toBe(1);
+    expect(dealUpdates).toHaveLength(2); // gravou, depois reverteu
+    expect((dealUpdates[1].patch.custom_fields as Record<string, unknown>).meeting_reminder)
+      .not.toHaveProperty('ativacao_sent_at');
   });
 });

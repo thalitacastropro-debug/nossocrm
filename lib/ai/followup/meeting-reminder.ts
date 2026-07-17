@@ -44,3 +44,161 @@ export function renderReminder(bolhas: string[], vars: ReminderVars): string {
 }
 
 export { firstName };
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { slotLabelFromIso } from '../scheduling/availability';
+import { deveEnviar, type Toque } from './meeting-reminder-schedule';
+
+/** Horizonte da query: a véspera mais distante é a de uma reunião de segunda (sexta 17h = 3d). */
+const HORIZONTE_DIAS = 4;
+const SP_UTC_OFFSET = '-03:00';
+
+export interface MeetingReminderDeps {
+  supabase: SupabaseClient;
+  now: Date;
+  sendResponse: (conversationId: string, message: string) => Promise<{ success: boolean }>;
+}
+
+export interface MeetingReminderResult { processed: number; failed: number; skipped: number; }
+
+interface EstadoLembrete {
+  activity_id: string;
+  date: string;
+  vespera_sent_at?: string | null;
+  ativacao_sent_at?: string | null;
+}
+
+type CF = Record<string, unknown>;
+
+export async function runMeetingReminder(deps: MeetingReminderDeps): Promise<MeetingReminderResult> {
+  const { supabase, now } = deps;
+  const res: MeetingReminderResult = { processed: 0, failed: 0, skipped: 0 };
+
+  // 1. FONTE DA VERDADE = activities. O JSON reuniao_agendada é podre (status terminal,
+  //    schema divergente quando agendado por SQL, dessincronizado do calendário). Ver spec §3.
+  const ateIso = new Date(now.getTime() + HORIZONTE_DIAS * 24 * 60 * 60 * 1000).toISOString();
+  const { data: acts } = await supabase
+    .from('activities')
+    .select('id, deal_id, date, created_at, owner_id')
+    .eq('type', 'CALL')
+    .is('deleted_at', null)
+    .eq('completed', false)
+    .gte('date', now.toISOString())
+    .lte('date', ateIso)
+    .not('deal_id', 'is', null);
+
+  if (!acts || acts.length === 0) return res;
+
+  const dealIds = [...new Set(acts.map((a) => a.deal_id as string))];
+  const { data: deals } = await supabase
+    .from('deals')
+    .select('id, organization_id, contact_id, custom_fields')
+    .in('id', dealIds)
+    .eq('is_won', false)
+    .eq('is_lost', false)
+    .is('deleted_at', null);
+  const dealById = new Map((deals ?? []).map((d) => [d.id as string, d]));
+
+  const contactIds = [...new Set((deals ?? []).map((d) => d.contact_id as string).filter(Boolean))];
+  if (contactIds.length === 0) return res;
+
+  // Conversa MAIS RECENTE do contato (achado #3 da revisão do B1: contato multi-canal).
+  const { data: convs } = await supabase
+    .from('messaging_conversations')
+    .select('id, contact_id, last_message_at')
+    .in('contact_id', contactIds)
+    .order('last_message_at', { ascending: false });
+  const convByContact = new Map<string, Record<string, unknown>>();
+  for (const c of convs ?? []) {
+    const cid = c.contact_id as string | null;
+    if (!cid || convByContact.has(cid)) continue;
+    convByContact.set(cid, c);
+  }
+
+  const { data: contacts } = await supabase.from('contacts').select('id, name').in('id', contactIds);
+  const contactById = new Map((contacts ?? []).map((c) => [c.id as string, c]));
+
+  const ownerIds = [...new Set(acts.map((a) => a.owner_id as string).filter(Boolean))];
+  const { data: profiles } = ownerIds.length
+    ? await supabase.from('profiles').select('id, name').in('id', ownerIds)
+    : { data: [] as Array<{ id: string; name: string }> };
+  const profileById = new Map((profiles ?? []).map((p) => [p.id as string, p]));
+
+  for (const act of acts) {
+    const deal = dealById.get(act.deal_id as string);
+    if (!deal) { res.skipped++; continue; }
+    const contactId = deal.contact_id as string | null;
+    const conv = contactId ? convByContact.get(contactId) : null;
+    const contact = contactId ? contactById.get(contactId) : null;
+    if (!conv || !contact) { res.skipped++; continue; }
+
+    // NÃO checamos contact.ai_paused: o lembrete é aviso operacional de hora marcada, não
+    // conversa (spec §2, decisão 3). Nem last_message_direction: o gatilho aqui é hora
+    // marcada, não silêncio (decisão 4).
+
+    const cf = (deal.custom_fields as CF | null) ?? {};
+
+    // Guard do no-show — o único que a activities não resolve (a rota de no-show não toca na
+    // activity, só grava no JSON). Comparar com created_at e NUNCA `no_show === true` flat:
+    // ninguém limpa no_show, então o flat mataria o lembrete de todo lead que remarcou.
+    const noShowAt = Date.parse(String(cf.no_show_at ?? ''));
+    const criadaEmMs = Date.parse(act.created_at as string);
+    if (Number.isFinite(noShowAt) && Number.isFinite(criadaEmMs) && noShowAt > criadaEmMs) {
+      res.skipped++; continue;
+    }
+
+    const dataHora = act.date as string;
+    const anterior = cf.meeting_reminder as EstadoLembrete | undefined;
+    // Estado só vale pra ESTA reunião: activity_id novo (remarcação pelo booker) ou date novo
+    // (edição manual na página de Atividades) ⇒ descarta e recomeça.
+    const estado: EstadoLembrete =
+      anterior && anterior.activity_id === act.id && anterior.date === dataHora
+        ? anterior
+        : { activity_id: act.id as string, date: dataHora };
+
+    const toque: Toque | null =
+      deveEnviar({ toque: 'ativacao', dataHora, criadaEm: act.created_at as string, agora: now, enviadoEm: estado.ativacao_sent_at })
+        ? 'ativacao'
+        : deveEnviar({ toque: 'vespera', dataHora, criadaEm: act.created_at as string, agora: now, enviadoEm: estado.vespera_sent_at })
+          ? 'vespera'
+          : null;
+    if (!toque) { res.skipped++; continue; }
+
+    const owner = act.owner_id ? profileById.get(act.owner_id as string) : null;
+    const consultor = owner?.name ? firstName(owner.name as string) : 'o consultor';
+    const msg = renderReminder(TOQUES_COPY[toque], {
+      nome: firstName((contact.name as string | null) ?? ''),
+      label: slotLabelFromIso(dataHora, SP_UTC_OFFSET),
+      consultor,
+    });
+
+    // Idempotência: PERSISTE ANTES de enviar (lição do B1). Se morrer entre gravar e mandar, o
+    // lead perde um lembrete; ao contrário, levaria o mesmo a cada 15min — em canal com risco
+    // de ban, erra pro lado do silêncio.
+    const avancado: EstadoLembrete = { ...estado, [`${toque}_sent_at`]: now.toISOString() };
+    const okPersist = await persistir(supabase, deal.id as string, cf, avancado);
+    if (!okPersist) { res.failed++; continue; }
+
+    const sent = await deps.sendResponse(conv.id as string, msg);
+    if (!sent.success) {
+      await persistir(supabase, deal.id as string, cf, estado); // reverte (best-effort)
+      res.failed++;
+      continue;
+    }
+    res.processed++;
+  }
+
+  return res;
+}
+
+async function persistir(
+  supabase: SupabaseClient, dealId: string, cfExistente: CF, estado: EstadoLembrete,
+): Promise<boolean> {
+  // custom_fields é REPLACE TOTAL no update ⇒ sempre spread do existente.
+  const { error } = await supabase
+    .from('deals')
+    .update({ custom_fields: { ...cfExistente, meeting_reminder: estado }, updated_at: new Date().toISOString() })
+    .eq('id', dealId);
+  if (error) { console.error('[meeting-reminder] persist falhou p/ deal', dealId, error); return false; }
+  return true;
+}
