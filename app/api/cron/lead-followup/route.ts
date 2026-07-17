@@ -12,6 +12,7 @@ import { createStaticAdminClient } from '@/lib/supabase/server';
 import { sendAIResponse } from '@/lib/ai/agent/agent.service';
 import { runLeadFollowup } from '@/lib/ai/followup/run';
 import { generateWarmFollowupBubbles } from '@/lib/ai/followup/generate';
+import { runMeetingReminder } from '@/lib/ai/followup/meeting-reminder';
 
 export const maxDuration = 60;
 
@@ -41,14 +42,20 @@ export async function GET(req: Request): Promise<Response> {
   if (!isWithinBusinessHours(now)) return json({ skipped: true, reason: 'Fora do horário comercial' });
 
   const supabase = createStaticAdminClient();
-  const result = await runLeadFollowup({
+  const sendResponse = (conversationId: string, message: string) =>
+    sendAIResponse({ supabase, conversationId, response: message }).then((r) => ({ success: r.success }));
+
+  const followup = await runLeadFollowup({
     supabase,
     now,
-    sendResponse: (conversationId, message) =>
-      sendAIResponse({ supabase, conversationId, response: message }).then((r) => ({ success: r.success })),
+    sendResponse,
     generateWarm: (args) => generateWarmFollowupBubbles({ supabase, ...args }),
   });
 
-  console.log('[Cron:lead-followup]', JSON.stringify(result));
-  return json(result);
+  // Cadência 3 (lembrete anti-no-show). Módulo separado: seleção, matemática e parada são
+  // outras — e ela ignora de propósito dois `if` que são a espinha do runLeadFollowup.
+  const reminder = await runMeetingReminder({ supabase, now, sendResponse });
+
+  console.log('[Cron:lead-followup]', JSON.stringify({ followup, reminder }));
+  return json({ followup, reminder });
 }
