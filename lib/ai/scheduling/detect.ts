@@ -28,6 +28,20 @@ export function validateDetectedSlot(slotIso: string | null, offered: Slot[]): S
   return offered.find((s) => Math.floor(new Date(s.startIso).getTime() / 60000) === minute) ?? null;
 }
 
+/**
+ * Dois instantes são o MESMO horário? (compara no minuto, igual ao validateDetectedSlot).
+ * Usado pelo scheduling.service pra distinguir "o lead está reconfirmando a reunião que já
+ * está marcada" de "o lead aceitou um horário NOVO" — o detector rotula pela frase ("15"),
+ * não pelo estado do deal, então a intenção sozinha não basta.
+ */
+export function mesmoSlot(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const ta = new Date(a).getTime();
+  const tb = new Date(b).getTime();
+  if (Number.isNaN(ta) || Number.isNaN(tb)) return false;
+  return Math.floor(ta / 60000) === Math.floor(tb / 60000);
+}
+
 export interface DetectParams {
   supabase: SupabaseClient;
   conversationId: string;
@@ -66,7 +80,8 @@ export async function detectSchedulingIntent(params: DetectParams): Promise<Dete
     model,
     output: Output.object({ schema: DetectSchema, name: 'SchedulingIntent', description: 'Intenção de agendamento' }),
     system:
-      'Você lê uma conversa de WhatsApp entre atendente e lead e detecta a intenção de agendamento da ÚLTIMA mensagem do lead. Só marque accept/reschedule/cancel se o lead foi claro. slotIso DEVE ser exatamente um dos horários oferecidos (copie o ISO). Se o lead foi vago ("qualquer um", "pode ser"), use none.',
+      'Você lê uma conversa de WhatsApp entre atendente e lead e detecta a intenção de agendamento da ÚLTIMA mensagem do lead. Só marque accept/reschedule/cancel se o lead foi claro. slotIso DEVE ser exatamente um dos horários oferecidos (copie o ISO). Se o lead foi vago ("qualquer um", "pode ser"), use none. ' +
+      'Se o lead expressa apenas uma RESTRIÇÃO ou PREFERÊNCIA de período ("só de tarde", "só depois das 15h", "de manhã", "pode ser na segunda?", "essa semana não") SEM escolher um horário concreto da lista, use none — MESMO QUE só um dos horários oferecidos caiba na restrição. Escolher por ele é erro: quem escolhe o horário é o lead. accept exige que o lead aponte um horário.',
     prompt: `Horários oferecidos:\n${offeredList}\n\nConversa:\n${convo}`,
     maxRetries: 2,
   });
