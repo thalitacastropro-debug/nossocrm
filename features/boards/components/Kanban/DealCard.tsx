@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { DealView } from '@/types';
-import { Building2, CalendarCheck, Clock, Hourglass, MessageCircle, PhoneMissed, Trophy, XCircle } from 'lucide-react';
+import { Building2, CalendarCheck, CalendarX, Clock, Hourglass, MessageCircle, PhoneMissed, Trophy, XCircle } from 'lucide-react';
 import { ActivityStatusIcon } from './ActivityStatusIcon';
 import { priorityAriaLabelPtBr } from '@/lib/utils/priority';
 
@@ -39,6 +39,12 @@ interface DealCardProps {
    * Não move de board. Só é passado nos cards do board do Consultor.
    */
   onMarkMeetingHeld?: (deal: DealView) => void;
+  /**
+   * Cancela a reunião marcada (soft-delete da activity + status='cancelada'). Não move de board
+   * nem marca perdido. Só é passado nos cards do board do Consultor; o botão só aparece quando
+   * há reunião marcada. Antes disto NÃO existia caminho de cancelamento no CRM.
+   */
+  onCancelMeeting?: (deal: DealView) => void;
 }
 
 // Check if deal is closed (won or lost)
@@ -144,6 +150,7 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   onOpenWhatsApp,
   onMarkNoShow,
   onMarkMeetingHeld,
+  onCancelMeeting,
 }) => {
   const [localDragging, setLocalDragging] = useState(false);
   // Trava o botão de no-show após o disparo p/ evitar duplo-envio (a ação pinga o cliente).
@@ -151,6 +158,12 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   const [isMarkingNoShow, setIsMarkingNoShow] = useState(false);
   // Mesma trava pro botão de reunião realizada (não move o card; só duplo-clique).
   const [isMarkingHeld, setIsMarkingHeld] = useState(false);
+  // Trava do botão de cancelar reunião (o card não some — a activity é soft-deletada).
+  const [isCancelling, setIsCancelling] = useState(false);
+  // Há reunião marcada pra cancelar? Lê o status do JSON (tolera 'confirmada' e o 'confirmed'
+  // legado da Josiane). O botão só aparece nesse caso — cancelar sem reunião não faz sentido.
+  const reuniaoStatus = (deal.customFields?.reuniao_agendada as { status?: string } | undefined)?.status;
+  const temReuniaoMarcada = reuniaoStatus === 'confirmada' || reuniaoStatus === 'confirmed';
   const isClosed = isDealClosed(deal);
   const age = tempoNoCrm(deal.createdAt);
   const waPhone = telefoneWhatsApp(deal);
@@ -178,6 +191,19 @@ const DealCardComponent: React.FC<DealCardProps> = ({
     onMarkMeetingHeld(deal);
     // O card NÃO some (não move de board) — reabilita após a rede de segurança.
     setTimeout(() => setIsMarkingHeld(false), 10000);
+  };
+
+  const handleCancelMeeting = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onCancelMeeting || isCancelling) return;
+    const ok = window.confirm(
+      'Cancelar a reunião marcada? A ligação sai da agenda do consultor e o lead para de receber lembretes.'
+    );
+    if (!ok) return;
+    setIsCancelling(true);
+    onCancelMeeting(deal);
+    // O card NÃO some (não move de board) — reabilita após a rede de segurança.
+    setTimeout(() => setIsCancelling(false), 10000);
   };
 
   const handleToggleMenu = (e: React.MouseEvent) => {
@@ -479,6 +505,19 @@ const DealCardComponent: React.FC<DealCardProps> = ({
               className="p-1 rounded-full text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <CalendarCheck size={14} aria-hidden="true" />
+            </button>
+          )}
+          {onCancelMeeting && temReuniaoMarcada && (
+            <button
+              type="button"
+              onClick={handleCancelMeeting}
+              onMouseDown={e => e.stopPropagation()}
+              disabled={isCancelling}
+              title="Cancelar reunião"
+              aria-label={`Cancelar reunião de ${deal.title}`}
+              className="p-1 rounded-full text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <CalendarX size={14} aria-hidden="true" />
             </button>
           )}
           <ActivityStatusIcon

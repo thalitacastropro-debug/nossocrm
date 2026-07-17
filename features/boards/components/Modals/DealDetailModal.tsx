@@ -53,6 +53,7 @@ import {
   MessageSquare,
   FileText,
   CalendarCheck,
+  CalendarX,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { StageProgressBar } from '../StageProgressBar';
@@ -63,6 +64,7 @@ import { AIExtractedFields } from '@/features/deals/components/AIExtractedFields
 import { QualificacaoSDRPanel, sdrPanelHasData } from '@/features/deals/components/QualificacaoSDRPanel';
 import { VoiceOutcomeCapture } from '@/features/deals/components/VoiceOutcomeCapture';
 import { useMarkMeetingHeld } from '@/lib/query/hooks/useMarkMeetingHeld';
+import { useCancelMeeting } from '@/lib/query/hooks/useCancelMeeting';
 import { CONSULTOR_BOARD_ID } from '@/lib/config/boards';
 
 interface DealDetailModalProps {
@@ -108,6 +110,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
 
   const createActivityMutation = useCreateActivity();
   const markMeetingHeld = useMarkMeetingHeld();
+  const cancelMeeting = useCancelMeeting();
   const updateActivityMutation = useUpdateActivity();
   const deleteActivityMutation = useDeleteActivity();
   const addActivity = (activity: Omit<import('@/types').Activity, 'id' | 'createdAt'>) => createActivityMutation.mutateAsync({ activity });
@@ -602,6 +605,27 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                     <span className="hidden sm:inline">Reunião realizada</span>
                   </button>
                 )}
+                {deal.boardId === CONSULTOR_BOARD_ID && (() => {
+                  const raStatus = (deal.customFields as Record<string, unknown> | undefined)
+                    ?.reuniao_agendada as { status?: string } | undefined;
+                  const temReuniao = raStatus?.status === 'confirmada' || raStatus?.status === 'confirmed';
+                  return temReuniao ? (
+                    <button
+                      onClick={() => {
+                        if (window.confirm('Cancelar a reunião marcada? A ligação sai da agenda do consultor e o lead para de receber lembretes.')) {
+                          cancelMeeting.mutate({ dealId: deal.id });
+                        }
+                      }}
+                      disabled={cancelMeeting.isPending}
+                      className="ml-2 px-3 py-1.5 bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300 hover:bg-rose-200 dark:hover:bg-rose-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                      title="Cancelar a reunião marcada"
+                      aria-label="Cancelar reunião"
+                    >
+                      <CalendarX size={14} aria-hidden="true" />
+                      <span className="hidden sm:inline">Cancelar reunião</span>
+                    </button>
+                  ) : null;
+                })()}
                 <button
                   onClick={() => setShowBriefingDrawer(true)}
                   className="ml-2 px-3 py-1.5 bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"

@@ -8,6 +8,7 @@ import { SkeletonDealCard } from '@/components/ui/Skeleton';
 import { useLifecycleStages } from '@/lib/query/hooks/useLifecycleStagesQuery';
 import { useMarkNoShow } from '@/lib/query/hooks/useMarkNoShow';
 import { useMarkMeetingHeld } from '@/lib/query/hooks/useMarkMeetingHeld';
+import { useCancelMeeting } from '@/lib/query/hooks/useCancelMeeting';
 import { CONSULTOR_BOARD_ID } from '@/lib/config/boards';
 
 /**
@@ -126,6 +127,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const { data: lifecycleStages = [] } = useLifecycleStages();
   const { mutate: markNoShowMutate } = useMarkNoShow();
   const { mutate: markMeetingHeldMutate } = useMarkMeetingHeld();
+  const { mutate: cancelMeetingMutate } = useCancelMeeting();
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
   
   // State for move-to-stage modal (keyboard accessibility alternative to drag-and-drop)
@@ -243,6 +245,22 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       );
     },
     [markMeetingHeldMutate]
+  );
+
+  // Handler: cancela a reunião marcada (soft-delete da activity; não move o card).
+  const handleCancelMeeting = useCallback(
+    (deal: DealView) => {
+      cancelMeetingMutate(
+        { dealId: deal.id },
+        {
+          onError: (err) =>
+            window.alert(
+              err instanceof Error ? err.message : 'Não foi possível cancelar a reunião.'
+            ),
+        }
+      );
+    },
+    [cancelMeetingMutate]
   );
 
   return (
@@ -373,6 +391,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                     onOpenWhatsApp={handleOpenWhatsApp}
                     onMarkNoShow={boardId === CONSULTOR_BOARD_ID ? handleMarkNoShow : undefined}
                     onMarkMeetingHeld={boardId === CONSULTOR_BOARD_ID ? handleMarkMeetingHeld : undefined}
+                    onCancelMeeting={boardId === CONSULTOR_BOARD_ID ? handleCancelMeeting : undefined}
                   />
                 </div>
               ))}
