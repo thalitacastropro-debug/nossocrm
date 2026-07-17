@@ -69,9 +69,12 @@ export async function runScheduling(params: RunSchedulingParams): Promise<RunSch
     alreadyBooked && params.reuniaoAgendada?.data_hora
       ? {
           startIso: params.reuniaoAgendada.data_hora,
-          endIso: new Date(
-            new Date(params.reuniaoAgendada.data_hora).getTime() + cfg.availability.slotMinutes * 60_000,
-          ).toISOString(),
+          // endIso é IGNORADO no caminho da detecção (o detector só usa startIso/label). Não o
+          // computamos via new Date(...).getTime(): se data_hora vier presente-mas-inválido (o
+          // JSON de custom_fields não é validado), new Date(NaN).toISOString() LANÇA RangeError e
+          // derrubaria o runScheduling inteiro — e agora esse cálculo roda antes do guard
+          // offeredBefore, atingindo mais caminhos. Reusar o próprio ISO de entrada não lança.
+          endIso: params.reuniaoAgendada.data_hora,
           label:
             params.reuniaoAgendada.label ??
             slotLabelFromIso(params.reuniaoAgendada.data_hora, cfg.availability.utcOffset),

@@ -101,4 +101,18 @@ describe('runScheduling — reconfirmação vs remarcação', () => {
 
     expect(vi.mocked(bookSlot).mock.calls[0][0].previousActivityId).toBeNull();
   });
+
+  it('OBSERVE (dryRun): com reunião marcada, não marca nem reafirma — só devolve detected', async () => {
+    const marcado = '2026-07-17T20:00:00.000Z';
+    vi.mocked(detectSchedulingIntent).mockResolvedValue({ intent: 'accept', slotIso: marcado });
+
+    const r = await runScheduling(baseParams({
+      dryRun: true,
+      reuniaoAgendada: { status: 'confirmada', data_hora: marcado, activity_id: 'act-velha', label: 'sexta, 17/07, às 17h' },
+    }));
+
+    expect(bookSlot).not.toHaveBeenCalled();
+    expect(r.status).toEqual({ kind: 'none' });
+    expect(r.detected).toEqual({ intent: 'accept', slotIso: marcado });
+  });
 });
