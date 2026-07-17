@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ultimoDiaUtilAntes, dueVespera, dueAtivacao, deveEnviar, VESPERA_MIN_GAP_MS,
 } from '@/lib/ai/followup/meeting-reminder-schedule';
+import { renderReminder, TOQUES_COPY } from '@/lib/ai/followup/meeting-reminder';
 
 // Referência: sexta 17/07/2026, segunda = 20/07/2026.
 const SEG_15H = '2026-07-20T18:00:00.000Z'; // segunda 20/07 15h SP
@@ -129,5 +130,49 @@ describe('ultimoDiaUtilAntes x feriado', () => {
 describe('dueVespera', () => {
   it('espelha ultimoDiaUtilAntes', () => {
     expect(dueVespera(SEG_9H)).toBe(ultimoDiaUtilAntes(SEG_9H));
+  });
+});
+
+describe('renderReminder', () => {
+  it('interpola nome, label e consultor', () => {
+    const out = renderReminder(TOQUES_COPY.ativacao, {
+      nome: 'Nathalia', label: 'segunda, 20/07, às 15h', consultor: 'Denilson',
+    });
+    expect(out).toContain('Nathalia');
+    expect(out).toContain('Denilson');
+    expect(out).not.toContain('{');
+  });
+
+  it('NENHUM toque deixa placeholder por resolver (o {label} não existia no renderBubbles)', () => {
+    for (const toque of Object.values(TOQUES_COPY)) {
+      const out = renderReminder(toque, {
+        nome: 'Maria', label: 'segunda, 20/07, às 15h', consultor: 'Denilson',
+      });
+      expect(out).not.toMatch(/\{|\}/);
+    }
+  });
+
+  it('fallback: sem nome e sem consultor, não sobra chave nem pontuação órfã', () => {
+    for (const toque of Object.values(TOQUES_COPY)) {
+      const out = renderReminder(toque, { nome: '', label: 'segunda, 20/07, às 15h', consultor: 'o consultor' });
+      expect(out).not.toMatch(/\{|\}/);
+      expect(out).not.toMatch(/\s,|^,|\s\./m);
+    }
+  });
+
+  it('guard-rail: toda chave usada na copy existe no objeto de vars', () => {
+    const vars = new Set(['nome', 'label', 'consultor']);
+    for (const toque of Object.values(TOQUES_COPY)) {
+      for (const bolha of toque) {
+        for (const m of bolha.matchAll(/\{(\w+)\}/g)) {
+          expect(vars.has(m[1])).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('separa as bolhas com linha em branco (o splitIntoBubbles do sendAIResponse)', () => {
+    const out = renderReminder(['Uma.', 'Duas.'], { nome: 'X', label: 'Y', consultor: 'Z' });
+    expect(out).toBe('Uma.\n\nDuas.');
   });
 });
