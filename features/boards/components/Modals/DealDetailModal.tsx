@@ -54,6 +54,7 @@ import {
   FileText,
   CalendarCheck,
   CalendarX,
+  CalendarClock,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { StageProgressBar } from '../StageProgressBar';
@@ -498,6 +499,32 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                     ${deal.value.toLocaleString()}
                   </p>
                 )}
+                {/* Data/hora da reunião em DESTAQUE — o consultor bate o olho e vê quando é a
+                    ligação, sem caçar na timeline. Some depois de realizada. */}
+                {(() => {
+                  const ra = deal.customFields?.reuniao_agendada as
+                    | { status?: string; label?: string; data_hora?: string; datetime?: string }
+                    | undefined;
+                  const confirmada = ra?.status === 'confirmada' || ra?.status === 'confirmed';
+                  const jaRealizada = !!(deal.customFields as Record<string, unknown> | undefined)?.reuniao_realizada;
+                  if (!confirmada || jaRealizada) return null;
+                  const iso = ra?.data_hora || ra?.datetime;
+                  const label =
+                    ra?.label ||
+                    (iso
+                      ? new Date(iso).toLocaleString('pt-BR', {
+                          weekday: 'long', day: '2-digit', month: '2-digit',
+                          hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
+                        })
+                      : null);
+                  if (!label) return null;
+                  return (
+                    <div className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300 border border-primary-200 dark:border-primary-500/30">
+                      <CalendarClock size={16} aria-hidden="true" />
+                      <span className="text-sm font-bold">Reunião: {label}</span>
+                    </div>
+                  );
+                })()}
               </div>
               <div className="flex gap-3 items-center">
                 {/* Se fechado: mostra badge + botão Reabrir */}

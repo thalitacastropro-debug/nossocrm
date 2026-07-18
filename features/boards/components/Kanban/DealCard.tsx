@@ -265,10 +265,10 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   const getBorderLeftClass = () => {
     if (deal.isWon) return '!border-l-green-500';
     if (deal.isLost) return '!border-l-red-500';
-    // Card com selo de tier: a cor do tier já é comunicada pelo SELO colorido.
-    // Repetir na borda (com paleta diferente: prata→âmbar, bronze→azul) só
-    // competiria e confundiria. Deixa a borda neutra — o selo é o único sinal.
-    if (tier) return '';
+    // Card com selo (tier de medalha OU selo neutro "Agendado"): a cor competiria com o selo.
+    // Deixa a borda neutra — o selo é o único sinal. Sem isto, o agendado-sem-tier caía na
+    // borda colorida por prioridade e parecia "layout antigo".
+    if (tier || temReuniaoMarcada) return '';
     // Priority-based colors para os demais (sem tier: outros boards, não-qualificado)
     if (deal.priority === 'high') return '!border-l-red-500';
     if (deal.priority === 'medium') return '!border-l-amber-500';
@@ -377,6 +377,17 @@ const DealCardComponent: React.FC<DealCardProps> = ({
             }
           >
             {tier.provisorio ? `~${tier.label}` : tier.label}
+          </span>
+        )}
+        {/* Selo NEUTRO "Agendado": garante um selo em todo card com reunião marcada, mesmo quando
+            a Ana ainda não classificou o tier (ex.: indicação/orgânico sem formulário). NÃO é uma
+            medalha (não inventa ouro/prata/bronze) — só sinaliza o agendamento. */}
+        {!tier && temReuniaoMarcada && (
+          <span
+            className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 ring-1 ring-black/5 dark:ring-white/10"
+            title="Reunião agendada"
+          >
+            Agendado
           </span>
         )}
         {/* Won/Lost status badge */}
