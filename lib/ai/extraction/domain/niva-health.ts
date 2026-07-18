@@ -164,6 +164,27 @@ function isMeaningful(v: unknown): boolean {
   return true;
 }
 
+/**
+ * Deriva `tem_cnpj` do FORMULÁRIO do lead (Meta Lead Ads), como FALLBACK de quando a conversa
+ * não estabeleceu o CNPJ. O lead responde "Você possuí CNPJ" no form; se disse "sim" (ou já
+ * preencheu o número), ele TEM empresa → 'pme'. Foi o buraco da Nathalia: ela desviou da
+ * pergunta na conversa ("mando depois") → a extração ficou 'desconhecido' → tier indefinido
+ * apesar do form dizer "sim". A extração da CONVERSA, quando existe, tem precedência (só caímos
+ * aqui com `merged.tem_cnpj == null`). NÃO inferimos 'nao_tem' do form: um "não" ali pode virar
+ * 'vai_abrir_mei' na conversa — deixamos indefinido, mais seguro.
+ */
+export function cnpjFromLeadForm(current: Record<string, unknown> | null | undefined): 'pme' | null {
+  const raw = (current?.lead_form as { raw?: Record<string, unknown> } | undefined)?.raw;
+  if (!raw) return null;
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v !== 'string') continue;
+    const key = k.toLowerCase();
+    if (/possu.*cnpj/.test(key) && /^\s*sim/i.test(v)) return 'pme';
+    if (/n[uú]mero.*cnpj/.test(key) && v.replace(/\D/g, '').length >= 8) return 'pme';
+  }
+  return null;
+}
+
 function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): DomainApplyResult {
   const customFields: Record<string, unknown> = { ...(current || {}) };
 
@@ -184,6 +205,13 @@ function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): Dom
   setIf('cidade_uf', ext.cidade_uf);
   setIf('reuniao_preferencia', ext.reuniao_preferencia);
   setIf('algo_a_destacar', ext.algo_a_destacar);
+  // Fallback: se a CONVERSA não estabeleceu o CNPJ, usa o que o lead respondeu no formulário.
+  // (A conversa tem precedência — só caímos aqui com tem_cnpj ainda nulo.) Persiste no merged
+  // pra ficar consistente no painel e "grudar" na próxima extração.
+  if (merged.tem_cnpj == null) {
+    const fromForm = cnpjFromLeadForm(current);
+    if (fromForm) merged.tem_cnpj = fromForm;
+  }
   customFields.qualificacao = merged;
 
   // 2. Objeções (acumula estruturado {categoria,detalhe,origem} + dedupe por categoria;

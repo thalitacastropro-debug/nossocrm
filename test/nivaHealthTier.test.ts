@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyTier,
+  cnpjFromLeadForm,
   nivaHealthExtractor,
   type NivaHealthExtraction,
 } from '@/lib/ai/extraction/domain/niva-health';
@@ -183,5 +184,62 @@ describe('nivaHealthExtractor.apply', () => {
     const prev = { lead_form: { mapped: { name: 'Maria' } } };
     const r = nivaHealthExtractor.apply(prev, fullExt);
     expect((r.customFields.lead_form as { mapped: { name: string } }).mapped.name).toBe('Maria');
+  });
+});
+
+describe('cnpjFromLeadForm (fallback do CNPJ pelo formulário)', () => {
+  const withForm = (raw: Record<string, unknown>) => ({ lead_form: { raw } });
+
+  it('"Você possuí CNPJ": "sim" → pme', () => {
+    expect(cnpjFromLeadForm(withForm({ 'Você possuí CNPJ': 'sim' }))).toBe('pme');
+  });
+  it('número do CNPJ preenchido → pme', () => {
+    expect(cnpjFromLeadForm(withForm({ 'Qual o número do seu CNPJ': '12.345.678/0001-99' }))).toBe('pme');
+  });
+  it('resposta "não" NÃO infere nao_tem (pode virar vai_abrir_mei na conversa) → null', () => {
+    expect(cnpjFromLeadForm(withForm({ 'Você possuí CNPJ': 'não' }))).toBeNull();
+  });
+  it('sem form / sem chave de CNPJ → null', () => {
+    expect(cnpjFromLeadForm(withForm({ 'Quanto você paga': '2250' }))).toBeNull();
+    expect(cnpjFromLeadForm({})).toBeNull();
+    expect(cnpjFromLeadForm(undefined)).toBeNull();
+  });
+  it('número em branco não conta (só "sim" explícito ou dígitos suficientes)', () => {
+    expect(cnpjFromLeadForm(withForm({ 'Qual o número do seu CNPJ': '' }))).toBeNull();
+  });
+});
+
+describe('apply: fallback do CNPJ pelo formulário (o buraco da Nathalia)', () => {
+  // A Nathalia desviou da pergunta do CNPJ na conversa ("mando depois") → extração 'desconhecido',
+  // MAS o formulário dela diz "Você possuí CNPJ: sim" e ela deu 2 vidas. Sem o fallback ela ficava
+  // indefinida (= sem selo + borda colorida). Com o fallback → bronze (2 vidas).
+  const nathaliaExt: NivaHealthExtraction = {
+    ...fullExt,
+    tem_cnpj: 'desconhecido',
+    vidas: 2,
+    idades: [40, 45],
+    operadora: 'Alice',
+    valor_pago_exato: 2250,
+    objecoes: [],
+  };
+
+  it('conversa silenciosa sobre CNPJ + form "sim" + 2 vidas → bronze (não indefinido)', () => {
+    const current = { lead_form: { raw: { 'Você possuí CNPJ': 'sim' } } };
+    const r = nivaHealthExtractor.apply(current, nathaliaExt);
+    expect((r.customFields.tier as { value: string }).value).toBe('bronze');
+    expect((r.customFields.qualificacao as { tem_cnpj: string }).tem_cnpj).toBe('pme');
+  });
+
+  it('sem form e conversa silenciosa → segue indefinido (nada pra inferir)', () => {
+    const r = nivaHealthExtractor.apply({}, nathaliaExt);
+    expect((r.customFields.tier as { value: string }).value).toBe('indefinido');
+  });
+
+  it('a CONVERSA tem precedência: extração "vai_abrir_mei" NÃO é sobrescrita pelo form (caso Clara)', () => {
+    const current = { lead_form: { raw: { 'Você possuí CNPJ': 'sim' } } };
+    const claraExt: NivaHealthExtraction = { ...fullExt, tem_cnpj: 'vai_abrir_mei', vidas: 4, idades: [30, 35, 40, 45], valor_pago_exato: 3000 };
+    const r = nivaHealthExtractor.apply(current, claraExt);
+    expect((r.customFields.qualificacao as { tem_cnpj: string }).tem_cnpj).toBe('vai_abrir_mei');
+    expect((r.customFields.tier as { value: string }).value).toBe('prata');
   });
 });
