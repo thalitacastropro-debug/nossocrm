@@ -252,10 +252,9 @@ describe('runMeetingReminder', () => {
     expect(msg).toContain('Nathalia');
     expect(msg).toContain('Denilson');
     expect(msg).not.toMatch(/\{|\}/);
-    // persistiu o estado
-    expect(dealUpdates[0].patch.custom_fields).toMatchObject({
-      meeting_reminder: expect.objectContaining({ activity_id: 'act-1', date: '2026-07-20T18:00:00.000Z' }),
-    });
+    // persistiu o estado no MAP chaveado por activity_id
+    expect((dealUpdates[0].patch.custom_fields as Record<string, unknown>).meeting_reminder)
+      .toMatchObject({ 'act-1': expect.objectContaining({ date: '2026-07-20T18:00:00.000Z', ativacao_sent_at: expect.any(String) }) });
   });
 
   it('IGNORA ai_paused (decisão do spec §2.3): o contato do cenário base está pausado e recebe', async () => {
@@ -268,7 +267,7 @@ describe('runMeetingReminder', () => {
   it('não reenvia o toque já enviado', async () => {
     const { client } = makeSupabaseMR(cenarioBase({
       deal: { custom_fields: { meeting_reminder: {
-        activity_id: 'act-1', date: '2026-07-20T18:00:00.000Z', ativacao_sent_at: '2026-07-20T17:31:00.000Z',
+        'act-1': { date: '2026-07-20T18:00:00.000Z', ativacao_sent_at: '2026-07-20T17:31:00.000Z' },
       } } },
     }));
     const send = vi.fn(async () => ({ success: true }));
@@ -277,11 +276,13 @@ describe('runMeetingReminder', () => {
     expect(r.processed).toBe(0);
   });
 
-  it('REMARCAÇÃO: date mudou → estado antigo é descartado e o toque sai de novo', async () => {
+  it('REMARCAÇÃO: date mudou (mesma activity, edição manual) → sub-estado antigo descartado e o toque sai de novo', async () => {
     const { client } = makeSupabaseMR(cenarioBase({
       deal: { custom_fields: { meeting_reminder: {
-        activity_id: 'act-1', date: '2026-07-17T20:00:00.000Z', // sexta 17h — a reunião ANTIGA
-        vespera_sent_at: '2026-07-16T20:00:00.000Z', ativacao_sent_at: '2026-07-17T19:30:00.000Z',
+        'act-1': {
+          date: '2026-07-17T20:00:00.000Z', // sexta 17h — a data ANTIGA (activity agora aponta segunda 15h)
+          vespera_sent_at: '2026-07-16T20:00:00.000Z', ativacao_sent_at: '2026-07-17T19:30:00.000Z',
+        },
       } } },
     }));
     const send = vi.fn(async () => ({ success: true }));
@@ -324,7 +325,35 @@ describe('runMeetingReminder', () => {
     const r = await runMeetingReminder(deps(client, { sendResponse: send }));
     expect(r.failed).toBe(1);
     expect(dealUpdates).toHaveLength(2); // gravou, depois reverteu
-    expect((dealUpdates[1].patch.custom_fields as Record<string, unknown>).meeting_reminder)
-      .not.toHaveProperty('ativacao_sent_at');
+    // o revert deixa o sub-estado de act-1 SEM ativacao_sent_at
+    const revertMap = (dealUpdates[1].patch.custom_fields as Record<string, unknown>).meeting_reminder as Record<string, Record<string, unknown>>;
+    expect(revertMap['act-1']).not.toHaveProperty('ativacao_sent_at');
+  });
+
+  it('HIGH regressão: deal com 2 reuniões abertas no mesmo tick → cada uma persiste seu próprio sub-estado (o mapa preserva a irmã, sem reenvio)', async () => {
+    // Sexta 17h05 SP: as vésperas de DUAS reuniões de segunda (9h e 15h) caem na mesma janela
+    // [17h00, 17h30]. Com registro único por deal, a 2ª persistência apagava o _sent_at da 1ª e
+    // o lembrete reenviava no tick seguinte (risco de ban). O mapa por activity_id isola cada uma.
+    const AGORA_SEXTA_1705 = new Date('2026-07-17T20:05:00.000Z');
+    const cfg = {
+      activities: [
+        { id: 'act-A', deal_id: 'deal-1', date: '2026-07-20T12:00:00.000Z', created_at: '2026-07-15T12:00:00.000Z', owner_id: 'u-den' }, // seg 9h
+        { id: 'act-B', deal_id: 'deal-1', date: '2026-07-20T18:00:00.000Z', created_at: '2026-07-15T12:00:00.000Z', owner_id: 'u-den' }, // seg 15h
+      ],
+      deals: [{ id: 'deal-1', organization_id: 'org-1', contact_id: 'c-1', custom_fields: {} }],
+      conversations: [{ id: 'conv-1', contact_id: 'c-1', last_message_at: '2026-07-16T12:00:00.000Z', metadata: {} }],
+      contacts: [{ id: 'c-1', name: 'Maria Silva', ai_paused: false }],
+      profiles: [{ id: 'u-den', name: 'Denilson Silva' }],
+    };
+    const { client, dealUpdates } = makeSupabaseMR(cfg);
+    const send = vi.fn(async () => ({ success: true }));
+    const r = await runMeetingReminder(deps(client, { now: AGORA_SEXTA_1705, sendResponse: send }));
+
+    expect(r.processed).toBe(2);
+    expect(send).toHaveBeenCalledTimes(2);
+    // A ÚLTIMA persistência tem AS DUAS reuniões com vespera_sent_at — a irmã não foi apagada.
+    const mapaFinal = (dealUpdates[dealUpdates.length - 1].patch.custom_fields as Record<string, unknown>).meeting_reminder as Record<string, Record<string, unknown>>;
+    expect(mapaFinal['act-A']).toHaveProperty('vespera_sent_at');
+    expect(mapaFinal['act-B']).toHaveProperty('vespera_sent_at');
   });
 });

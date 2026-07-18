@@ -61,12 +61,20 @@ export interface MeetingReminderDeps {
 
 export interface MeetingReminderResult { processed: number; failed: number; skipped: number; }
 
-interface EstadoLembrete {
-  activity_id: string;
+/**
+ * Estado por REUNIÃO (uma sub-entrada por activity). Fica dentro do MAP
+ * custom_fields.meeting_reminder chaveado por activity_id — NÃO um registro único por deal.
+ * Um deal pode ter 2 ligações abertas (ex.: Josiane, com JSON de schema divergente que o guard
+ * do booker não pega, + uma marcada pela Ana): com registro único, processar a 2ª no mesmo tick
+ * apagava o _sent_at da 1ª e o lembrete reenviava (risco de ban). O mapa isola cada reunião.
+ */
+interface SubEstado {
   date: string;
   vespera_sent_at?: string | null;
   ativacao_sent_at?: string | null;
 }
+
+type EstadoMap = Record<string, SubEstado>;
 
 type CF = Record<string, unknown>;
 
@@ -148,18 +156,20 @@ export async function runMeetingReminder(deps: MeetingReminderDeps): Promise<Mee
     }
 
     const dataHora = act.date as string;
-    const anterior = cf.meeting_reminder as EstadoLembrete | undefined;
-    // Estado só vale pra ESTA reunião: activity_id novo (remarcação pelo booker) ou date novo
-    // (edição manual na página de Atividades) ⇒ descarta e recomeça.
-    const estado: EstadoLembrete =
-      anterior && anterior.activity_id === act.id && anterior.date === dataHora
-        ? anterior
-        : { activity_id: act.id as string, date: dataHora };
+    const actId = act.id as string;
+    // O mapa é lido do custom_fields ATUAL do deal — que pode ter sido atualizado em memória
+    // por uma activity IRMÃ já processada neste mesmo tick (write-back abaixo). Sem isso, a 2ª
+    // reunião do mesmo deal leria o snapshot pré-tick e apagaria o _sent_at da 1ª.
+    const mapa = (cf.meeting_reminder as EstadoMap | undefined) ?? {};
+    const anterior = mapa[actId];
+    // Sub-estado só vale pra ESTA data: date novo na MESMA activity (edição manual na página de
+    // Atividades) ⇒ recomeça. Remarcação pelo booker cria activity nova ⇒ chave nova, fresca.
+    const sub: SubEstado = anterior && anterior.date === dataHora ? anterior : { date: dataHora };
 
     const toque: Toque | null =
-      deveEnviar({ toque: 'ativacao', dataHora, criadaEm: act.created_at as string, agora: now, enviadoEm: estado.ativacao_sent_at })
+      deveEnviar({ toque: 'ativacao', dataHora, criadaEm: act.created_at as string, agora: now, enviadoEm: sub.ativacao_sent_at })
         ? 'ativacao'
-        : deveEnviar({ toque: 'vespera', dataHora, criadaEm: act.created_at as string, agora: now, enviadoEm: estado.vespera_sent_at })
+        : deveEnviar({ toque: 'vespera', dataHora, criadaEm: act.created_at as string, agora: now, enviadoEm: sub.vespera_sent_at })
           ? 'vespera'
           : null;
     if (!toque) { res.skipped++; continue; }
@@ -174,14 +184,21 @@ export async function runMeetingReminder(deps: MeetingReminderDeps): Promise<Mee
 
     // Idempotência: PERSISTE ANTES de enviar (lição do B1). Se morrer entre gravar e mandar, o
     // lead perde um lembrete; ao contrário, levaria o mesmo a cada 15min — em canal com risco
-    // de ban, erra pro lado do silêncio.
-    const avancado: EstadoLembrete = { ...estado, [`${toque}_sent_at`]: now.toISOString() };
-    const okPersist = await persistir(supabase, deal.id as string, cf, avancado);
+    // de ban, erra pro lado do silêncio. Merge preservando as OUTRAS reuniões do deal.
+    const avancado: SubEstado = { ...sub, [`${toque}_sent_at`]: now.toISOString() };
+    const novoCf: CF = { ...cf, meeting_reminder: { ...mapa, [actId]: avancado } };
+    const okPersist = await persistir(supabase, deal.id as string, novoCf);
     if (!okPersist) { res.failed++; continue; }
+    // Write-back em memória: uma activity irmã do MESMO deal, mais adiante neste tick, vê a
+    // gravação (o objeto `deal` é o mesmo do dealById).
+    deal.custom_fields = novoCf;
 
     const sent = await deps.sendResponse(conv.id as string, msg);
     if (!sent.success) {
-      await persistir(supabase, deal.id as string, cf, estado); // reverte (best-effort)
+      // Reverte SÓ esta reunião, mantendo as irmãs já avançadas neste tick (best-effort).
+      const revertCf: CF = { ...cf, meeting_reminder: { ...mapa, [actId]: sub } };
+      await persistir(supabase, deal.id as string, revertCf);
+      deal.custom_fields = revertCf;
       res.failed++;
       continue;
     }
@@ -191,13 +208,12 @@ export async function runMeetingReminder(deps: MeetingReminderDeps): Promise<Mee
   return res;
 }
 
-async function persistir(
-  supabase: SupabaseClient, dealId: string, cfExistente: CF, estado: EstadoLembrete,
-): Promise<boolean> {
-  // custom_fields é REPLACE TOTAL no update ⇒ sempre spread do existente.
+async function persistir(supabase: SupabaseClient, dealId: string, novoCf: CF): Promise<boolean> {
+  // novoCf já vem com o spread do existente + meeting_reminder mesclado. custom_fields é REPLACE
+  // TOTAL no update, então gravamos o objeto inteiro.
   const { error } = await supabase
     .from('deals')
-    .update({ custom_fields: { ...cfExistente, meeting_reminder: estado }, updated_at: new Date().toISOString() })
+    .update({ custom_fields: novoCf, updated_at: new Date().toISOString() })
     .eq('id', dealId);
   if (error) { console.error('[meeting-reminder] persist falhou p/ deal', dealId, error); return false; }
   return true;

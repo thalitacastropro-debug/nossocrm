@@ -606,9 +606,11 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                   </button>
                 )}
                 {deal.boardId === CONSULTOR_BOARD_ID && (() => {
-                  const raStatus = (deal.customFields as Record<string, unknown> | undefined)
-                    ?.reuniao_agendada as { status?: string } | undefined;
-                  const temReuniao = raStatus?.status === 'confirmada' || raStatus?.status === 'confirmed';
+                  const cf = deal.customFields as Record<string, unknown> | undefined;
+                  const raStatus = (cf?.reuniao_agendada as { status?: string } | undefined)?.status;
+                  // Some depois de "Reunião realizada" — cancelar o que já aconteceu corromperia a métrica.
+                  const temReuniao =
+                    (raStatus === 'confirmada' || raStatus === 'confirmed') && !cf?.reuniao_realizada;
                   return temReuniao ? (
                     <button
                       onClick={() => {

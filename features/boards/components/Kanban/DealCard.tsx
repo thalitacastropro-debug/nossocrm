@@ -162,8 +162,11 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   const [isCancelling, setIsCancelling] = useState(false);
   // Há reunião marcada pra cancelar? Lê o status do JSON (tolera 'confirmada' e o 'confirmed'
   // legado da Josiane). O botão só aparece nesse caso — cancelar sem reunião não faz sentido.
+  // E some depois de "Reunião realizada": cancelar uma reunião que aconteceu soft-deletaria a
+  // activity completed e a tiraria das métricas Agendadas/Realizadas.
   const reuniaoStatus = (deal.customFields?.reuniao_agendada as { status?: string } | undefined)?.status;
-  const temReuniaoMarcada = reuniaoStatus === 'confirmada' || reuniaoStatus === 'confirmed';
+  const temReuniaoMarcada =
+    (reuniaoStatus === 'confirmada' || reuniaoStatus === 'confirmed') && !deal.customFields?.reuniao_realizada;
   const isClosed = isDealClosed(deal);
   const age = tempoNoCrm(deal.createdAt);
   const waPhone = telefoneWhatsApp(deal);

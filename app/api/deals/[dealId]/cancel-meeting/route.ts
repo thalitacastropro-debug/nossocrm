@@ -69,10 +69,26 @@ export async function POST(
     // Admin client (service role) pro write de sistema — cancelMeeting mexe em activities e deals.
     const admin = createStaticAdminClient();
 
-    // 3. Resolve o activity_id. Preferência: o do JSON. Fallback (deal legado / agendado à mão,
-    //    ex.: Josiane): a activity CALL aberta do deal.
-    let activityId = (ra?.activity_id as string | undefined) ?? undefined;
-    if (!activityId) {
+    // 3. Resolve o activity_id. Preferência: o do JSON.
+    let activityId: string | undefined;
+    const jsonActivityId = ra?.activity_id as string | undefined;
+    if (jsonActivityId) {
+      // Confere o estado real da activity: se já sumiu, nada a cancelar; se já foi REALIZADA,
+      // NÃO cancelar (soft-deletar uma CALL completed a tira das métricas Agendadas/Realizadas).
+      const { data: act } = await admin
+        .from('activities')
+        .select('id, completed, deleted_at')
+        .eq('id', jsonActivityId)
+        .maybeSingle();
+      if (!act || act.deleted_at) {
+        return NextResponse.json({ dealId, already_cancelled: true, note: 'activity gone' }, { status: 200 });
+      }
+      if (act.completed === true) {
+        return NextResponse.json({ dealId, already_held: true }, { status: 200 });
+      }
+      activityId = act.id as string;
+    } else {
+      // Fallback (deal legado / agendado à mão): a activity CALL aberta e não realizada do deal.
       const { data: call } = await admin
         .from('activities')
         .select('id')
@@ -84,11 +100,9 @@ export async function POST(
         .limit(1)
         .maybeSingle();
       activityId = (call?.id as string | undefined) ?? undefined;
-    }
-
-    // Nada pra cancelar (sem activity nem status confirmado) → idempotente.
-    if (!activityId) {
-      return NextResponse.json({ dealId, already_cancelled: true, note: 'no activity' }, { status: 200 });
+      if (!activityId) {
+        return NextResponse.json({ dealId, already_cancelled: true, note: 'no activity' }, { status: 200 });
+      }
     }
 
     // 4. cancelMeeting (booker.ts:164) faz soft-delete da activity + status='cancelada' + remove
