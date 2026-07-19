@@ -168,7 +168,7 @@ describe('SettingsPage RBAC', () => {
     expect(await screen.findByRole('heading', { name: /^MCP$/i })).toBeInTheDocument()
   })
 
-  it('trafego vê só Webhooks + Canais (intake) e preferências pessoais', async () => {
+  it('trafego vê só Webhooks (intake) e preferências pessoais — nada de Canais/API/MCP', async () => {
     useAuthMock.mockReturnValue({
       profile: { role: 'trafego' },
     } as any)
@@ -193,26 +193,22 @@ describe('SettingsPage RBAC', () => {
     expect(screen.queryByRole('button', { name: /Produtos\/Serviços/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Unidades$/i })).not.toBeInTheDocument()
 
-    // Vê a aba Integrações (onde ficam Webhooks + Canais)
+    // Vê a aba Integrações (onde fica Webhooks)
     const integrationsTab = screen.getByRole('button', { name: /integrações/i })
     fireEvent.click(integrationsTab)
 
-    // Sub-abas: SÓ Canais + Webhooks (NÃO API, NÃO MCP)
-    const channelsSubTab = await screen.findByRole('button', { name: /Canais/i })
+    // Sub-abas: SÓ Webhooks (NÃO Canais, NÃO API, NÃO MCP)
     const webhooksSubTab = await screen.findByRole('button', { name: /^Webhooks$/i })
-    expect(channelsSubTab).toBeInTheDocument()
     expect(webhooksSubTab).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Canais/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^API$/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^MCP$/i })).not.toBeInTheDocument()
 
-    // Default é Canais (Messaging) e a seção monta
-    expect(
-      await screen.findByRole('heading', { name: /^Canais de Comunicação$/i })
-    ).toBeInTheDocument()
-
-    // Webhooks acessível; API/MCP nunca montam
-    fireEvent.click(webhooksSubTab)
+    // Default (e único) é Webhooks e a seção monta; Canais/API/MCP nunca montam
     expect(await screen.findByRole('heading', { name: /^Webhooks$/i })).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: /^Canais de Comunicação$/i })
+    ).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /^API \(Integrações\)$/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /^MCP$/i })).not.toBeInTheDocument()
   })

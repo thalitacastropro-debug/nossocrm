@@ -114,14 +114,15 @@ export function canSeeSettingsTab(role: Role | undefined, tab: SettingsTabId): b
 
 /**
  * Dentro de Integrações, um papel pode ver a sub-aba informada?
- * `trafego`: só `channels` (Canais) e `webhooks` — o intake do Meta. Nunca API/MCP.
+ * `trafego`: SÓ `webhooks` — a entrada de leads do Meta (webhook-in). Nunca Canais/API/MCP
+ *   (decisão da Thalita 07-19: Canais é gestão de WhatsApp/admin; o intake dele vive no Webhooks).
  * Demais papéis que enxergam Integrações (hoje só `admin`) veem tudo.
  */
 export function canSeeIntegrationsSubTab(
   role: Role | undefined,
   sub: IntegrationsSubTabId,
 ): boolean {
-  if (role === 'trafego') return sub === 'channels' || sub === 'webhooks';
+  if (role === 'trafego') return sub === 'webhooks';
   return true;
 }
 
