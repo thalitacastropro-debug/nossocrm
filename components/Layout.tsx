@@ -47,6 +47,7 @@ import {
   PanelLeftOpen
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { canAccessRoute } from '@/lib/rbac';
 import { useTheme } from '../context/ThemeContext';
 import { useUIState } from '@/store/uiState';
 import { prefetchRoute, RouteName } from '@/lib/prefetch';
@@ -172,6 +173,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { darkMode, toggleDarkMode } = useTheme();
   const { isGlobalAIOpen, setIsGlobalAIOpen, sidebarCollapsed, setSidebarCollapsed } = useUIState();
   const { user, loading, profile, signOut } = useAuth();
+  const role = profile?.role;
   const router = useRouter();
   const pathname = usePathname();
   const { mode } = useResponsiveMode();
@@ -308,7 +310,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             { to: '/activities', icon: CheckSquare, label: 'Atividades', prefetch: 'activities' as const, badge: undefined },
             { to: '/reports', icon: BarChart3, label: 'Relatórios', prefetch: 'reports' as const, badge: undefined },
             { to: '/settings', icon: Settings, label: 'Configurações', prefetch: 'settings' as const, badge: undefined },
-          ].map((item) => {
+          ]
+            // Default-deny por papel: 'trafego' só enxerga o que rbac libera (ex.: Configurações).
+            .filter((item) => !role || canAccessRoute(role, item.to))
+            .map((item) => {
             if (sidebarCollapsed) {
               return (
                 <TooltipProvider key={item.to} delayDuration={200}>

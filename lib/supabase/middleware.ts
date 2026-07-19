@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { canAccessRoute, isRole } from '@/lib/rbac'
 
 /**
  * Função pública `updateSession` do projeto.
@@ -101,6 +102,33 @@ export async function updateSession(request: NextRequest) {
         const url = request.nextUrl.clone()
         url.pathname = '/dashboard'
         return NextResponse.redirect(url)
+    }
+
+    // ---------------------------------------------------------------------
+    // RBAC guard — default-DENY para papéis limitados (ex.: 'trafego').
+    // ---------------------------------------------------------------------
+    // Este é o PONTO CENTRAL de proteção de rota no servidor. Como as rotas
+    // liberadas ao papel mais restrito (trafego) valem para todos os papéis,
+    // usamos fast-path: se a rota já é liberada ao trafego, ninguém precisa ser
+    // barrado e evitamos a consulta de papel. Só quando a rota NÃO é liberada ao
+    // trafego é que consultamos o papel real e, se ele não puder acessar,
+    // redirecionamos para /settings (única área do trafego). admin/vendedor
+    // passam livremente (canAccessRoute retorna true para eles).
+    if (user && !canAccessRoute('trafego', pathname)) {
+        const { data: me } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single()
+
+        const role = me?.role
+        if (isRole(role) && !canAccessRoute(role, pathname)) {
+            const url = request.nextUrl.clone()
+            url.pathname = '/settings'
+            url.search = ''
+            url.hash = ''
+            return NextResponse.redirect(url)
+        }
     }
 
     return supabaseResponse

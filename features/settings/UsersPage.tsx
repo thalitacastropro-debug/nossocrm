@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { ConfirmDialog as ConfirmModal } from '@/components/ui/confirm-dialog';
-import { Loader2, UserPlus, Crown, Briefcase, KeyRound, Mail, Check, X, Sparkles, Clock, RefreshCw, Trash2, Link, Copy, CheckCircle2 } from 'lucide-react';
+import { Loader2, UserPlus, Crown, Briefcase, Megaphone, KeyRound, Mail, Check, X, Sparkles, Clock, RefreshCw, Trash2, Link, Copy, CheckCircle2 } from 'lucide-react';
 
 interface Profile {
     id: string;
@@ -272,6 +272,7 @@ export const UsersPage: React.FC = () => {
 
     const admins = users.filter(u => u.role === 'admin');
     const vendedores = users.filter(u => u.role === 'vendedor');
+    const trafego = users.filter(u => u.role === 'trafego');
 
     return (
         <div className="max-w-4xl mx-auto pb-10">
@@ -283,7 +284,7 @@ export const UsersPage: React.FC = () => {
                             Sua Equipe
                         </h1>
                         <p className="text-slate-500 dark:text-slate-400 mt-2 text-lg">
-                            {users.length} {users.length === 1 ? 'membro' : 'membros'} • {admins.length} admin{admins.length !== 1 && 's'}, {vendedores.length} vendedor{vendedores.length !== 1 && 'es'}
+                            {users.length} {users.length === 1 ? 'membro' : 'membros'} • {admins.length} admin{admins.length !== 1 && 's'}, {vendedores.length} vendedor{vendedores.length !== 1 && 'es'}{trafego.length > 0 && `, ${trafego.length} tráfego`}
                         </p>
                     </div>
                     <button
@@ -342,12 +343,19 @@ export const UsersPage: React.FC = () => {
                                     <div className="flex items-center gap-3 mt-1.5">
                                         <span className={`inline-flex items-center gap-1.5 text-sm ${user.role === 'admin'
                                             ? 'text-amber-600 dark:text-amber-400'
-                                            : 'text-slate-500 dark:text-slate-400'
+                                            : user.role === 'trafego'
+                                                ? 'text-sky-600 dark:text-sky-400'
+                                                : 'text-slate-500 dark:text-slate-400'
                                             }`}>
                                             {user.role === 'admin' ? (
                                                 <>
                                                     <Crown className="h-3.5 w-3.5" />
                                                     Administrador
+                                                </>
+                                            ) : user.role === 'trafego' ? (
+                                                <>
+                                                    <Megaphone className="h-3.5 w-3.5" />
+                                                    Tráfego
                                                 </>
                                             ) : (
                                                 <>
@@ -507,7 +515,7 @@ export const UsersPage: React.FC = () => {
                                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">
                                         Cargo
                                     </label>
-                                    <div className="grid grid-cols-2 gap-3">
+                                    <div className="grid grid-cols-3 gap-3">
                                         <button
                                             type="button"
                                             onClick={() => setNewUserRole('vendedor')}
@@ -544,7 +552,30 @@ export const UsersPage: React.FC = () => {
                                                 <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-amber-500" />
                                             )}
                                         </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setNewUserRole('trafego')}
+                                            className={`relative p-3 rounded-xl border-2 text-left transition-all ${newUserRole === 'trafego'
+                                                ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20'
+                                                : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                                                }`}
+                                        >
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <Megaphone className={`h-4 w-4 ${newUserRole === 'trafego' ? 'text-sky-600 dark:text-sky-400' : 'text-slate-400'}`} />
+                                                <span className={`font-medium text-sm ${newUserRole === 'trafego' ? 'text-sky-900 dark:text-sky-100' : 'text-slate-700 dark:text-slate-300'}`}>
+                                                    Tráfego
+                                                </span>
+                                            </div>
+                                            {newUserRole === 'trafego' && (
+                                                <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-sky-500" />
+                                            )}
+                                        </button>
                                     </div>
+                                    {newUserRole === 'trafego' && (
+                                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                                            Acesso restrito: só configura o intake do Meta em Configurações (Webhooks e Canais).
+                                        </p>
+                                    )}
                                 </div>
 
                                 {/* Expiration Selection */}

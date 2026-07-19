@@ -19,8 +19,14 @@ import { useAuth } from '@/context/AuthContext';
 import { Settings as SettingsIcon, Users, Database, Sparkles, Plug, Package, Building2 } from 'lucide-react';
 import { SelectField } from '@/components/ui/FormField';
 import { Button } from '@/components/ui/button';
+import {
+  canSeeSettingsTab,
+  visibleIntegrationsSubTabs,
+  type SettingsTabId,
+  type IntegrationsSubTabId,
+} from '@/lib/rbac';
 
-type SettingsTab = 'general' | 'products' | 'business-units' | 'integrations' | 'ai' | 'data' | 'users';
+type SettingsTab = SettingsTabId;
 
 interface GeneralSettingsProps {
   hash?: string;
@@ -111,14 +117,25 @@ const ProductsSettings: React.FC = () => {
   );
 };
 
-const IntegrationsSettings: React.FC = () => {
-  type IntegrationsSubTab = 'channels' | 'webhooks' | 'api' | 'mcp';
-  const [subTab, setSubTab] = useState<IntegrationsSubTab>('channels');
+const INTEGRATIONS_SUBTAB_LABELS: Record<IntegrationsSubTabId, string> = {
+  channels: 'Canais (Messaging)',
+  webhooks: 'Webhooks',
+  api: 'API',
+  mcp: 'MCP',
+};
+
+/**
+ * @param allowed Sub-abas que o papel atual pode ver (default-deny). Para 'trafego'
+ *   é só ['channels','webhooks'] — as seções API/MCP nem chegam a montar.
+ */
+const IntegrationsSettings: React.FC<{ allowed: IntegrationsSubTabId[] }> = ({ allowed }) => {
+  const [subTab, setSubTab] = useState<IntegrationsSubTabId>(allowed[0] ?? 'channels');
 
   useEffect(() => {
     const syncFromHash = () => {
-    const h = typeof window !== 'undefined' ? (window.location.hash || '').replace('#', '') : '';
-    if (h === 'channels' || h === 'webhooks' || h === 'api' || h === 'mcp') setSubTab(h as IntegrationsSubTab);
+      const h = typeof window !== 'undefined' ? (window.location.hash || '').replace('#', '') : '';
+      // Só aceita hash de sub-aba permitida ao papel (bloqueia deep-link p/ #api / #mcp).
+      if ((allowed as string[]).includes(h)) setSubTab(h as IntegrationsSubTabId);
     };
 
     syncFromHash();
@@ -127,9 +144,9 @@ const IntegrationsSettings: React.FC = () => {
       window.addEventListener('hashchange', syncFromHash);
       return () => window.removeEventListener('hashchange', syncFromHash);
     }
-  }, []);
+  }, [allowed]);
 
-  const setSubTabAndHash = (t: IntegrationsSubTab) => {
+  const setSubTabAndHash = (t: IntegrationsSubTabId) => {
     setSubTab(t);
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
@@ -141,31 +158,28 @@ const IntegrationsSettings: React.FC = () => {
   return (
     <div className="pb-10">
       <div className="flex items-center gap-2 mb-6">
-        {([
-          { id: 'channels' as const, label: 'Canais (Messaging)' },
-          { id: 'webhooks' as const, label: 'Webhooks' },
-          { id: 'api' as const, label: 'API' },
-          { id: 'mcp' as const, label: 'MCP' },
-        ] as const).map((t) => {
-          const active = subTab === t.id;
+        {allowed.map((id) => {
+          const active = subTab === id;
           return (
             <Button
-              key={t.id}
+              key={id}
               type="button"
               variant={active ? 'default' : 'outline'}
               size="sm"
-              onClick={() => setSubTabAndHash(t.id)}
+              onClick={() => setSubTabAndHash(id)}
             >
-              {t.label}
+              {INTEGRATIONS_SUBTAB_LABELS[id]}
             </Button>
           );
         })}
       </div>
 
-      {subTab === 'channels' && <ChannelsSection />}
-      {subTab === 'api' && <ApiKeysSection />}
-      {subTab === 'webhooks' && <WebhooksSection />}
-      {subTab === 'mcp' && <McpSection />}
+      {/* Guarda dupla: além do subTab, exige que a sub-aba esteja liberada ao papel,
+          garantindo que ApiKeysSection/McpSection NUNCA montem para 'trafego'. */}
+      {subTab === 'channels' && allowed.includes('channels') && <ChannelsSection />}
+      {subTab === 'api' && allowed.includes('api') && <ApiKeysSection />}
+      {subTab === 'webhooks' && allowed.includes('webhooks') && <WebhooksSection />}
+      {subTab === 'mcp' && allowed.includes('mcp') && <McpSection />}
     </div>
   );
 };
@@ -207,17 +221,29 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ tab: initialTab }) => {
     }
   }, [pathname]);
 
-  const tabs = [
-    { id: 'general' as SettingsTab, name: 'Geral', icon: SettingsIcon },
-    ...(profile?.role === 'admin' ? [{ id: 'products' as SettingsTab, name: 'Produtos/Serviços', icon: Package }] : []),
-    ...(profile?.role === 'admin' ? [{ id: 'business-units' as SettingsTab, name: 'Unidades', icon: Building2 }] : []),
-    ...(profile?.role === 'admin' ? [{ id: 'integrations' as SettingsTab, name: 'Integrações', icon: Plug }] : []),
-    { id: 'ai' as SettingsTab, name: 'Central de I.A', icon: Sparkles },
-    { id: 'data' as SettingsTab, name: 'Dados', icon: Database },
-    ...(profile?.role === 'admin' ? [{ id: 'users' as SettingsTab, name: 'Equipe', icon: Users }] : []),
+  const role = profile?.role;
+  const isAdmin = role === 'admin';
+
+  // Fonte única das abas; a visibilidade por papel vem do rbac (default-deny p/ 'trafego').
+  const allTabs: { id: SettingsTab; name: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { id: 'general', name: 'Geral', icon: SettingsIcon },
+    { id: 'products', name: 'Produtos/Serviços', icon: Package },
+    { id: 'business-units', name: 'Unidades', icon: Building2 },
+    { id: 'integrations', name: 'Integrações', icon: Plug },
+    { id: 'ai', name: 'Central de I.A', icon: Sparkles },
+    { id: 'data', name: 'Dados', icon: Database },
+    { id: 'users', name: 'Equipe', icon: Users },
   ];
+  const tabs = allTabs.filter((t) => canSeeSettingsTab(role, t.id));
 
   const renderContent = () => {
+    // Default-deny: se o papel não pode ver a aba ativa (ex.: deep-link), cai na Geral.
+    // Garante que AICenterSettings/DataStorageSettings/UsersPage/BusinessUnits NÃO montem
+    // para papéis sem permissão (ex.: 'trafego').
+    if (!canSeeSettingsTab(role, activeTab)) {
+      return <GeneralSettings hash={hash} isAdmin={isAdmin} />;
+    }
+
     switch (activeTab) {
       case 'products':
         return <ProductsSettings />;
@@ -228,7 +254,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ tab: initialTab }) => {
           </div>
         );
       case 'integrations':
-        return <IntegrationsSettings />;
+        return <IntegrationsSettings allowed={visibleIntegrationsSubTabs(role)} />;
       case 'ai':
         return <AICenterSettings />;
       case 'data':
@@ -236,7 +262,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ tab: initialTab }) => {
       case 'users':
         return <UsersPage />;
       default:
-        return <GeneralSettings hash={hash} isAdmin={profile?.role === 'admin'} />;
+        return <GeneralSettings hash={hash} isAdmin={isAdmin} />;
     }
   };
 

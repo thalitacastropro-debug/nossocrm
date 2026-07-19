@@ -11,6 +11,7 @@ import {
   Settings,
   User,
 } from 'lucide-react';
+import { canAccessRoute, type Role } from '@/lib/rbac';
 
 export type PrimaryNavId = 'inbox' | 'messaging' | 'boards' | 'contacts' | 'activities' | 'more';
 
@@ -47,3 +48,20 @@ export const SECONDARY_NAV: SecondaryNavItem[] = [
   { id: 'settings', label: 'Configurações', href: '/settings', icon: Settings },
   { id: 'profile', label: 'Perfil', href: '/profile', icon: User },
 ];
+
+/**
+ * Itens de navegação primários visíveis para o papel (default-deny p/ 'trafego').
+ * Itens sem `href` (ex.: "Mais") são sempre exibidos — o conteúdo do menu que
+ * eles abrem é filtrado à parte por {@link visibleSecondaryNav}.
+ * Sem papel (carregando), devolve tudo para evitar flicker do usuário comum.
+ */
+export function visiblePrimaryNav(role: Role | undefined): PrimaryNavItem[] {
+  if (!role) return PRIMARY_NAV;
+  return PRIMARY_NAV.filter((item) => !item.href || canAccessRoute(role, item.href));
+}
+
+/** Itens de navegação secundários visíveis para o papel (default-deny p/ 'trafego'). */
+export function visibleSecondaryNav(role: Role | undefined): SecondaryNavItem[] {
+  if (!role) return SECONDARY_NAV;
+  return SECONDARY_NAV.filter((item) => canAccessRoute(role, item.href));
+}

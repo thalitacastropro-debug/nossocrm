@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
+import { ROLE_VALUES, type Role } from '@/lib/rbac';
 
 // =============================================================================
 // Schemas
@@ -9,7 +10,8 @@ import { createClient } from '@/lib/supabase/server';
 
 const CreateInviteSchema = z
   .object({
-    role: z.enum(['admin', 'vendedor']).default('vendedor'),
+    // Papéis válidos vêm do rbac (inclui 'trafego').
+    role: z.enum(ROLE_VALUES).default('vendedor'),
     expiresAt: z.union([z.string().datetime(), z.null()]).optional(),
     email: z.string().email().optional(),
   })
@@ -22,8 +24,6 @@ const CreateInviteSchema = z
 type ActionResult<T = void> =
   | { ok: true; data: T }
   | { ok: false; error: string; status?: number };
-
-type Role = 'admin' | 'vendedor';
 
 interface Invite {
   id: string;

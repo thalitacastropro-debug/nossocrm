@@ -32,6 +32,7 @@ import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { queryClient } from '../lib/query';
 import type { OrganizationId } from '../types';
+import type { Role } from '../lib/rbac';
 
 /**
  * Perfil do usuário no sistema
@@ -40,7 +41,7 @@ import type { OrganizationId } from '../types';
  * @property {string} id - UUID do usuário (= auth.users.id)
  * @property {string} email - Email do usuário
  * @property {OrganizationId} organization_id - ID da organização (tenant)
- * @property {'admin' | 'vendedor'} role - Papel do usuário
+ * @property {Role} role - Papel do usuário ('admin' | 'vendedor' | 'trafego')
  * @property {string | null} [first_name] - Primeiro nome
  * @property {string | null} [last_name] - Sobrenome
  * @property {string | null} [nickname] - Apelido
@@ -52,7 +53,7 @@ interface Profile {
     id: string;
     email: string;
     organization_id: OrganizationId;
-    role: 'admin' | 'vendedor';
+    role: Role;
     first_name?: string | null;
     last_name?: string | null;
     nickname?: string | null;

@@ -167,4 +167,53 @@ describe('SettingsPage RBAC', () => {
     fireEvent.click(mcpSubTab)
     expect(await screen.findByRole('heading', { name: /^MCP$/i })).toBeInTheDocument()
   })
+
+  it('trafego vê só Webhooks + Canais (intake) e preferências pessoais', async () => {
+    useAuthMock.mockReturnValue({
+      profile: { role: 'trafego' },
+    } as any)
+
+    render(<SettingsPage />)
+
+    // Preferências pessoais seguem visíveis (aba Geral)
+    expect(screen.getByRole('heading', { name: /página inicial/i })).toBeInTheDocument()
+
+    // NÃO vê Tags/Campos (admin-only) dentro de Geral
+    expect(
+      screen.queryByRole('heading', { name: /^Gerenciamento de Tags$/i })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: /^Campos Personalizados$/i })
+    ).not.toBeInTheDocument()
+
+    // NÃO vê abas sensíveis (IA, Dados, Equipe, Produtos, Unidades)
+    expect(screen.queryByRole('button', { name: /central de i\.a/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Dados$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Equipe$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Produtos\/Serviços/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Unidades$/i })).not.toBeInTheDocument()
+
+    // Vê a aba Integrações (onde ficam Webhooks + Canais)
+    const integrationsTab = screen.getByRole('button', { name: /integrações/i })
+    fireEvent.click(integrationsTab)
+
+    // Sub-abas: SÓ Canais + Webhooks (NÃO API, NÃO MCP)
+    const channelsSubTab = await screen.findByRole('button', { name: /Canais/i })
+    const webhooksSubTab = await screen.findByRole('button', { name: /^Webhooks$/i })
+    expect(channelsSubTab).toBeInTheDocument()
+    expect(webhooksSubTab).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^API$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^MCP$/i })).not.toBeInTheDocument()
+
+    // Default é Canais (Messaging) e a seção monta
+    expect(
+      await screen.findByRole('heading', { name: /^Canais de Comunicação$/i })
+    ).toBeInTheDocument()
+
+    // Webhooks acessível; API/MCP nunca montam
+    fireEvent.click(webhooksSubTab)
+    expect(await screen.findByRole('heading', { name: /^Webhooks$/i })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /^API \(Integrações\)$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /^MCP$/i })).not.toBeInTheDocument()
+  })
 })

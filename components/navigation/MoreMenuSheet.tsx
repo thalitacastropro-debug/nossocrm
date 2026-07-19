@@ -2,7 +2,8 @@ import React from 'react';
 import Link from 'next/link';
 import { ActionSheet } from '@/components/ui/ActionSheet';
 import { cn } from '@/lib/utils/cn';
-import { SECONDARY_NAV } from './navConfig';
+import { useAuth } from '@/context/AuthContext';
+import { visibleSecondaryNav } from './navConfig';
 
 export interface MoreMenuSheetProps {
   isOpen: boolean;
@@ -10,10 +11,12 @@ export interface MoreMenuSheetProps {
 }
 
 export function MoreMenuSheet({ isOpen, onClose }: MoreMenuSheetProps) {
+  const { profile } = useAuth();
+  const secondaryNav = visibleSecondaryNav(profile?.role);
   return (
     <ActionSheet isOpen={isOpen} onClose={onClose} title="Mais" description="Acesse outras áreas do CRM">
       <div className="space-y-2">
-        {SECONDARY_NAV.map((item) => {
+        {secondaryNav.map((item) => {
           const Icon = item.icon;
           return (
             <Link

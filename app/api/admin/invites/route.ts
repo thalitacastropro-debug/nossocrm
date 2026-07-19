@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { isAllowedOrigin } from '@/lib/security/sameOrigin';
+import { ROLE_VALUES, type Role } from '@/lib/rbac';
 
 function json<T>(body: T, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -9,11 +10,10 @@ function json<T>(body: T, status = 200): Response {
   });
 }
 
-type Role = 'admin' | 'vendedor';
-
 const CreateInviteSchema = z
   .object({
-    role: z.enum(['admin', 'vendedor']).default('vendedor'),
+    // Papéis válidos vêm do rbac (inclui 'trafego'). Server-side valida o valor.
+    role: z.enum(ROLE_VALUES).default('vendedor'),
     expiresAt: z.union([z.string().datetime(), z.null()]).optional(),
     email: z.string().email().optional(),
   })
