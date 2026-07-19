@@ -82,6 +82,18 @@ export function probabilityForStage(stageName: string | null | undefined): numbe
   return map[stageName.trim().toLowerCase()] ?? null;
 }
 
+/**
+ * A etapa "agendado" (funil SDR) SÓ é válida com uma reunião REAL confirmada pelo booker
+ * (`custom_fields.reuniao_agendada.status='confirmada'`). O critério de avanço "reunião marcada
+ * em horário real" é julgado pelo LLM lendo a conversa — e ele ALUCINA (bug do Cleysson: entrou
+ * em "agendado" com a conversa ainda no hospital, sem booking → como "agendado" tem
+ * notify_team=true, a Ana fez handoff e PAROU de responder). Este gate determinístico cruza o
+ * julgamento do LLM com o estado real do booking. Mesmo espírito do anti-corrida do booker.
+ */
+export function requiresConfirmedBooking(nextStageName: string | null | undefined): boolean {
+  return (nextStageName ?? '').trim().toLowerCase() === 'agendado';
+}
+
 // =============================================================================
 // Evaluator Function
 // =============================================================================
@@ -245,6 +257,28 @@ Avalie cada critério de avanço e decida se o lead deve avançar para o próxim
     if (!nextStageResult.nextStageId) {
       console.log('[StageEvaluator] No next stage available');
       return { success: true, evaluation, advanced: false, tokensUsed };
+    }
+
+    // GATE DETERMINÍSTICO — não avançar p/ "agendado" sem reunião REAL confirmada pelo booker.
+    // O LLM alucina o critério "reunião marcada em horário real" (bug do Cleysson: entrou em
+    // "agendado" sem booking → notify_team=true → handoff → Ana calou). Releitura FRESCA: o
+    // booking pode ter acontecido neste turno (scheduling roda antes deste passo), então o
+    // context.reuniao_agendada (montado no início do turno) estaria desatualizado.
+    if (requiresConfirmedBooking(nextStageResult.nextStageName)) {
+      const { data: fresh } = await supabase
+        .from('deals')
+        .select('custom_fields')
+        .eq('id', context.deal.id)
+        .maybeSingle();
+      const ra = ((fresh?.custom_fields as Record<string, unknown> | null)?.reuniao_agendada ?? null) as
+        | { status?: string }
+        | null;
+      if (ra?.status !== 'confirmada') {
+        console.log(
+          '[StageEvaluator] Avanço p/ "agendado" BLOQUEADO: sem reunião confirmada no booking (evita mis-advancement + silêncio da Ana).'
+        );
+        return { success: true, evaluation, advanced: false, tokensUsed };
+      }
     }
 
     // Usar HITL config para decidir — valores vêm do banco via agent.service
