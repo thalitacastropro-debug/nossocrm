@@ -314,7 +314,8 @@ export interface BoardGoal {
   // - 'count': contagem de fechamentos (deals ganhos / is_won), ex. "Fechamentos / mês".
   // - 'conversion_rate': taxa (ex. agendados ÷ recebidos) — hoje sem tracking histórico
   //   confiável, tratada como placeholder na UI (ver BoardStrategyHeader).
-  type?: 'currency' | 'number' | 'percentage' | 'count' | 'conversion_rate'; // Explicit type for calculation
+  // - 'meetings_scheduled': agendamentos do mês (atividades CALL) — meta da SDR "39/mês".
+  type?: 'currency' | 'number' | 'percentage' | 'count' | 'conversion_rate' | 'meetings_scheduled'; // Explicit type for calculation
 }
 
 // Persona do Agente (Quem opera o board)

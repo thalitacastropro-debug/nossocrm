@@ -13,6 +13,8 @@ import {
 import { Board } from '@/types';
 import { useUpdateBoard } from '@/lib/query/hooks/useBoardsQuery';
 import { useDealsByBoard } from '@/lib/query/hooks/useDealsQuery';
+import { useActivities } from '@/lib/query/hooks';
+import { getCurrentMonthRange, countScheduledMeetings } from '@/lib/boards/goalMetrics';
 import { useUIState } from '@/store/uiState';
 
 // Performance: reuse formatter instances.
@@ -31,6 +33,14 @@ interface BoardStrategyHeaderProps {
 export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board }) => {
   const updateBoardMutation = useUpdateBoard();
   const { data: deals = [] } = useDealsByBoard(board.id);
+  // Meta 'meetings_scheduled' (agendamentos/mês): conta atividades CALL do mês, igual ao
+  // dashboard. Só busca quando o board usa essa meta (gate `enabled`) — não onera os demais.
+  const isMeetingsGoal = board.goal?.type === 'meetings_scheduled';
+  const monthRange = React.useMemo(() => getCurrentMonthRange(new Date()), []);
+  const { data: monthActivities = [] } = useActivities(
+    { dateFrom: monthRange.start, dateTo: monthRange.end },
+    { enabled: isMeetingsGoal },
+  );
   const { setIsGlobalAIOpen } = useUIState();
   const [isEditing, setIsEditing] = useState(false);
   const [editedBoard, setEditedBoard] = useState(board);
@@ -51,6 +61,14 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board 
       dealCount += 1;
       totalValue += d.value || 0;
       if (d.isWon) wonCount += 1;
+    }
+
+    // 'meetings_scheduled': agendamentos do mês (atividades CALL) — meta da SDR "39/mês".
+    // Não deriva dos cards (que saem do board / podem estar em 'agendado' sem reunião real):
+    // conta o evento de agendamento no mês, board-agnóstico. Ver lib/boards/goalMetrics.
+    if (type === 'meetings_scheduled') {
+      const count = countScheduledMeetings(monthActivities);
+      return { value: count, display: count.toString(), label: 'este mês' };
     }
 
     if (type === 'currency') {
@@ -101,7 +119,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board 
       value: dealCount,
       display: dealCount.toString(),
     };
-  }, [deals, board.id, board.goal?.type]);
+  }, [deals, board.id, board.goal?.type, monthActivities]);
 
   // Performance: parse target once per goal change (instead of per render).
   // Hook must live before any early returns (rules-of-hooks).
