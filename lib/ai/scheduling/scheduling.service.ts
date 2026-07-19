@@ -12,7 +12,6 @@ import { loadBusyIntervals } from './busy';
 import { getAvailableSlots, slotLabelFromIso } from './availability';
 import { detectSchedulingIntent, validateDetectedSlot, mesmoSlot } from './detect';
 import { bookSlot, cancelMeeting } from './booker';
-import { handoffToNextBoard } from './handoff';
 
 export interface RunSchedulingParams {
   supabase: SupabaseClient;
@@ -117,7 +116,6 @@ export async function runScheduling(params: RunSchedulingParams): Promise<RunSch
       const label =
         params.reuniaoAgendada?.label ??
         slotLabelFromIso(params.reuniaoAgendada?.data_hora, cfg.availability.utcOffset);
-      await runHandoffToConsultor(params); // self-heal: garante o card no consultor mesmo se o 1º handoff falhou
       return { available, status: { kind: 'confirmed', label }, detected: detect };
     }
 
@@ -138,17 +136,12 @@ export async function runScheduling(params: RunSchedulingParams): Promise<RunSch
       // na agenda do consultor.
       previousActivityId: alreadyBooked ? (params.reuniaoAgendada?.activity_id ?? null) : null,
     });
-    if (result.ok) {
-      // Reunião REAL marcada agora → entrega o card no funil do Consultor (handoff que faltava).
-      await runHandoffToConsultor(params);
-      return { available, status: { kind: 'confirmed', label: slot.label }, detected: detect };
-    }
+    if (result.ok) return { available, status: { kind: 'confirmed', label: slot.label }, detected: detect };
     // Corrida: outro processamento (mensagem quase simultânea) já confirmou a reunião. Reafirma
     // o horário REAL que ficou marcado — nunca cria uma 2ª ligação nem desliza o horário.
     if (result.reason === 'already_confirmed') {
       const label =
         result.confirmedLabel ?? slotLabelFromIso(result.confirmedIso, cfg.availability.utcOffset);
-      await runHandoffToConsultor(params); // idempotente: o handoff da execução vencedora já rodou; aqui só cobre falha
       return { available, status: { kind: 'confirmed', label }, detected: detect };
     }
     if (result.reason === 'taken') {
@@ -167,22 +160,4 @@ export async function runScheduling(params: RunSchedulingParams): Promise<RunSch
   }
 
   return { available, status: { kind: 'none' }, detected: detect };
-}
-
-/**
- * Dispara o handoff Ana→Consultor (cópia do deal pro próximo board da jornada) sempre que uma
- * reunião é confirmada. Best-effort e idempotente: NUNCA bloqueia nem derruba a confirmação ao
- * lead — se falhar, loga e segue (a próxima confirmação recobre via índice único/fast-path).
- */
-async function runHandoffToConsultor(params: RunSchedulingParams): Promise<void> {
-  try {
-    await handoffToNextBoard({
-      supabase: params.supabase,
-      dealId: params.dealId,
-      sourceBoardId: params.boardId,
-      organizationId: params.organizationId,
-    });
-  } catch (err) {
-    console.error('[Scheduling] handoff Ana→Consultor falhou (não bloqueia a confirmação):', err);
-  }
 }

@@ -10,7 +10,7 @@ import {
   ChevronRight,
   MessageSquare,
 } from 'lucide-react';
-import { Board } from '@/types';
+import { Board, Activity } from '@/types';
 import { useUpdateBoard } from '@/lib/query/hooks/useBoardsQuery';
 import { useDealsByBoard } from '@/lib/query/hooks/useDealsQuery';
 import { useActivities } from '@/lib/query/hooks';
@@ -19,6 +19,8 @@ import { useUIState } from '@/store/uiState';
 
 // Performance: reuse formatter instances.
 const BRL_CURRENCY_FORMATTER = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+// Ref estável p/ fallback vazio: evita um novo [] por render (que derrotaria o memo do progresso).
+const EMPTY_ACTIVITIES: Activity[] = [];
 
 interface BoardStrategyHeaderProps {
   board: Board;
@@ -36,11 +38,21 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board 
   // Meta 'meetings_scheduled' (agendamentos/mês): conta atividades CALL do mês, igual ao
   // dashboard. Só busca quando o board usa essa meta (gate `enabled`) — não onera os demais.
   const isMeetingsGoal = board.goal?.type === 'meetings_scheduled';
-  const monthRange = React.useMemo(() => getCurrentMonthRange(new Date()), []);
-  const { data: monthActivities = [] } = useActivities(
+  // nowTick avança de minuto em minuto (só no board de meta de agendamentos): sem isto o range do
+  // mês congela no mount e a barra não rola pro mês novo enquanto o board fica aberto.
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  React.useEffect(() => {
+    if (!isMeetingsGoal) return;
+    const id = setInterval(() => setNowTick(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, [isMeetingsGoal]);
+  const monthRange = React.useMemo(() => getCurrentMonthRange(new Date(nowTick)), [nowTick]);
+  const { data: monthActivitiesData } = useActivities(
     { dateFrom: monthRange.start, dateTo: monthRange.end },
     { enabled: isMeetingsGoal },
   );
+  // Fallback com ref ESTÁVEL (não `= []` na destruturação) p/ preservar o memo nos outros boards.
+  const monthActivities = monthActivitiesData ?? EMPTY_ACTIVITIES;
   const { setIsGlobalAIOpen } = useUIState();
   const [isEditing, setIsEditing] = useState(false);
   const [editedBoard, setEditedBoard] = useState(board);

@@ -1,33 +1,29 @@
 /**
- * @fileoverview Handoff server-side Ana->Consultor. Quando o booker confirma uma reunião
- * REAL, cria uma cópia do deal no próximo board da jornada (`boards.next_board_id`, ex.:
- * SDR — IA Qualificação → Comercial — Consultor) para o consultor receber o lead agendado.
+ * @fileoverview Handoff server-side Ana->Consultor. Quando uma reunião REAL é confirmada, MOVE
+ * o deal para o próximo board da jornada (`boards.next_board_id`, ex.: SDR — IA Qualificação →
+ * Comercial — Consultor) para o consultor assumir o lead agendado.
  *
- * Por que existe: `next_board_id` só era consumido pela automação "NextBoard" do
- * `useMoveDeal` (client-side), que roda apenas quando um humano ARRASTA o card na UI. A Ana
- * agenda 100% no servidor (booker + avaliador inline), então o deal ficava preso no funil
- * dela e o Denilson nunca recebia o card. Este módulo é o gatilho server-side que faltava.
+ * MOVE, não copia (decisão da Thalita 2026-07-19, após revisão adversarial): uma cópia deixava
+ * DUAS fontes de verdade — a activity CALL e as mutações (remarcação/cancelamento) ficam sempre
+ * no deal, então o card copiado congelava (horário velho, "reunião realizada"/"cancelar" agindo
+ * na activity errada, anti-no-show caçando reunião já feita). Movendo o PRÓPRIO deal, a CALL, o
+ * `reuniao_agendada`, o lead_form/tier/qualificacao viajam juntos → o consultor trabalha o card
+ * real, uma fonte de verdade só. A cadência anti-no-show é board-agnóstica (ancora em activities),
+ * então segue disparando após o move; a barra de agendamentos conta CALL (também board-agnóstica).
  *
- * Gatilho = BOOKING REAL (`reuniao_agendada.status='confirmada'`), NÃO "chegou na etapa
- * agendado" — o avaliador de IA pode alcançar a etapa "agendado" sem reunião marcada (bug do
- * Cleysson), e esses não devem ir pro consultor.
- *
- * Idempotência em 2 camadas (espelha a filosofia do booker):
- *   1. índice único parcial `deals_handoff_origin_uniq` em (custom_fields->>'originDealId')
- *      WHERE originAutomation='NEXT_BOARD_SCHEDULING' — a trava ATÔMICA real (23505 na corrida);
- *   2. flag `custom_fields.handoff_consultor` no deal de origem — fast-path que evita o INSERT.
+ * Gatilho = reunião REAL confirmada (chamado pelo agent.service DEPOIS do avanço de etapa, quando
+ * `scheduling_status.kind==='confirmed'`), NÃO "chegou na etapa agendado" (o avaliador de IA pode
+ * alcançar "agendado" sem booking — bug do Cleysson). Idempotente: flag `custom_fields.handoff_consultor`
+ * no deal (uma vez movido/flagado, nunca re-move — cobre remarcação e re-runs).
  *
  * @module lib/ai/scheduling/handoff
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-/** Namespace da automação — distinto do 'NEXT_BOARD' do useMoveDeal (cópias manuais). */
-export const HANDOFF_AUTOMATION = 'NEXT_BOARD_SCHEDULING';
-
 export interface HandoffToNextBoardParams {
   supabase: SupabaseClient;
-  /** Deal de origem (o card no funil da Ana). */
+  /** Deal a mover (o card no funil da Ana). */
   dealId: string;
   /** Board de origem. Se null/sem `next_board_id` → no-op. */
   sourceBoardId: string | null | undefined;
@@ -37,8 +33,6 @@ export interface HandoffToNextBoardParams {
 export interface HandoffResult {
   handedOff: boolean;
   reason?: 'no_next_board' | 'already_done' | 'source_missing' | 'no_target_stage' | 'db_error';
-  /** ID do deal criado no board destino (quando handedOff=true). */
-  newDealId?: string;
   targetBoardId?: string;
 }
 
@@ -55,17 +49,19 @@ export async function handoffToNextBoard(params: HandoffToNextBoardParams): Prom
   const nextBoardId = ((srcBoard?.next_board_id as string | null | undefined) ?? null) as string | null;
   if (!nextBoardId) return { handedOff: false, reason: 'no_next_board' };
 
-  // 2. Deal de origem + fast-path de idempotência (evita o INSERT quando já entregue).
+  // 2. Deal + guard de idempotência. A flag `handoff_consultor` (uma vez movido) impede re-move —
+  //    cobre remarcação/re-run. Defensivo: se o deal já saiu do board de origem, também não mexe.
   const { data: srcDeal } = await supabase
     .from('deals')
-    .select('title, value, contact_id, owner_id, priority, tags, custom_fields')
+    .select('board_id, custom_fields')
     .eq('id', dealId)
     .maybeSingle();
   if (!srcDeal) return { handedOff: false, reason: 'source_missing' };
   const srcCustom = (srcDeal.custom_fields as Record<string, unknown>) || {};
   if (srcCustom.handoff_consultor) return { handedOff: false, reason: 'already_done' };
+  if (srcDeal.board_id && srcDeal.board_id !== sourceBoardId) return { handedOff: false, reason: 'already_done' };
 
-  // 3. Etapa de entrada do board destino (menor order) — mesmo critério do useMoveDeal (stages[0]).
+  // 3. Etapa de entrada do board destino (menor order).
   const { data: stages } = await supabase
     .from('board_stages')
     .select('id')
@@ -77,68 +73,41 @@ export async function handoffToNextBoard(params: HandoffToNextBoardParams): Prom
     | undefined;
   if (!entryStageId) return { handedOff: false, reason: 'no_target_stage' };
 
-  // 4. Cria a cópia no board destino, preservando os dados do card de origem
-  //    (lead_form/qualificacao/tier/reuniao_agendada) + rastreio de origem.
+  // 4. MOVE o deal (mesmo id): board_id + stage_id + carimbo de origem/idempotência. A activity CALL
+  //    (owner=consultor) e o custom_fields (reuniao_agendada/lead_form/tier/qualificacao) ficam no
+  //    MESMO deal — o consultor abre o card real, com o horário e o histórico. Sem cópia congelada.
   const now = new Date().toISOString();
-  const { data: newDeal, error: insErr } = await supabase
+  const { error: updErr } = await supabase
     .from('deals')
-    .insert({
-      organization_id: organizationId,
-      title: srcDeal.title,
-      value: (srcDeal.value as number | null) ?? 0,
+    .update({
       board_id: nextBoardId,
       stage_id: entryStageId,
-      contact_id: (srcDeal.contact_id as string | null) ?? null,
-      owner_id: (srcDeal.owner_id as string | null) ?? null,
-      priority: (srcDeal.priority as string | null) ?? null,
-      tags: Array.isArray(srcDeal.tags) ? srcDeal.tags : [],
-      probability: 0,
-      is_won: false,
-      is_lost: false,
+      last_stage_change_date: now,
+      updated_at: now,
       custom_fields: {
         ...srcCustom,
-        originDealId: dealId,
         originBoardId: sourceBoardId,
-        originAutomation: HANDOFF_AUTOMATION,
+        handoff_consultor: { board_id: nextBoardId, from: sourceBoardId, at: now },
       },
-      created_at: now,
-      updated_at: now,
     })
-    .select('id')
-    .single();
+    .eq('id', dealId);
 
-  if (insErr) {
-    // 23505 = colidiu com o índice único parcial → outra execução (corrida/re-run) já entregou.
-    if ((insErr as { code?: string }).code === '23505') return { handedOff: false, reason: 'already_done' };
-    console.error('[Handoff] falha ao criar deal no board destino:', insErr);
+  if (updErr) {
+    console.error('[Handoff] falha ao mover deal p/ o board destino:', updErr);
     return { handedOff: false, reason: 'db_error' };
   }
 
-  // 5. Carimba a idempotência no deal de ORIGEM. Best-effort: o índice único já garante
-  //    não-duplicação; se o stamp falhar, a próxima execução colide no 23505 → already_done.
-  const { error: stampErr } = await supabase
-    .from('deals')
-    .update({
-      custom_fields: {
-        ...srcCustom,
-        handoff_consultor: { deal_id: newDeal!.id, board_id: nextBoardId, at: now },
-      },
-      updated_at: now,
-    })
-    .eq('id', dealId);
-  if (stampErr) console.error('[Handoff] stamp de idempotência falhou (não-fatal, índice cobre):', stampErr);
-
-  // 6. Log de atividade no deal de origem (best-effort, pra rastreabilidade na timeline).
+  // 5. Log de atividade (best-effort, pra rastreabilidade na timeline).
   const { error: actErr } = await supabase.from('activities').insert({
     deal_id: dealId,
     organization_id: organizationId,
     type: 'STATUS_CHANGE',
-    title: 'Enviado para o funil do Consultor',
-    description: 'Automação: reunião agendada → card criado no board Comercial — Consultor',
+    title: 'Movido para o funil do Consultor',
+    description: 'Automação: reunião agendada → card movido para o board Comercial — Consultor',
     date: now,
     completed: true,
   });
   if (actErr) console.error('[Handoff] log de atividade falhou (não-fatal):', actErr);
 
-  return { handedOff: true, newDealId: newDeal!.id, targetBoardId: nextBoardId };
+  return { handedOff: true, targetBoardId: nextBoardId };
 }

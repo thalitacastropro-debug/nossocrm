@@ -18,6 +18,7 @@ import { getChannelRouter } from '@/lib/messaging/channel-router.service';
 import { extractAndUpdateBANT } from '../extraction/extraction.service';
 import { runDomainExtraction } from '../extraction/domain-extraction.service';
 import { runScheduling } from '../scheduling/scheduling.service';
+import { handoffToNextBoard } from '../scheduling/handoff';
 import { evaluateStageAdvancement } from './stage-evaluator';
 import {
   buildConversationalPromptFromPatterns,
@@ -561,6 +562,8 @@ export async function processIncomingMessage(
   // 8.7. Agenda real (só board da Niva; marca só em respond). Anexa horários livres + status
   // da reunião ao contexto ANTES de gerar a resposta, pra a confirmação da Ana ser sempre
   // verdadeira (ela só diz "fechado" se o booker realmente marcou). Falha = segue sem agenda.
+  // justConfirmedMeeting: reunião confirmada neste turno → dispara o handoff pro consultor no fim.
+  let justConfirmedMeeting = false;
   try {
     const sched = await runScheduling({
       supabase,
@@ -580,6 +583,7 @@ export async function processIncomingMessage(
     });
     context.available_slots = sched.available;
     context.scheduling_status = sched.status;
+    justConfirmedMeeting = !isDryRun && sched.status.kind === 'confirmed';
     if (isDryRun) {
       console.log(
         '[Scheduling][observe] status=%s slots=%d intent=%s slot=%s deal=%s',
@@ -798,6 +802,17 @@ export async function processIncomingMessage(
         });
       } catch (err) {
         console.error('[AIAgent] Inline stage evaluation failed (non-fatal):', err);
+      }
+    }
+
+    // 13.5. Handoff Ana->Consultor: reunião REAL confirmada neste turno → MOVE o deal pro board do
+    // consultor (DEPOIS do avanço de etapa, senão o stage_id do move seria sobrescrito). Best-effort
+    // + idempotente (flag handoff_consultor). A resposta ao lead já foi enviada; o move nunca a afeta.
+    if (justConfirmedMeeting) {
+      try {
+        await handoffToNextBoard({ supabase, dealId, sourceBoardId: deal.board_id, organizationId });
+      } catch (err) {
+        console.error('[AIAgent] Handoff Ana->Consultor falhou (não-fatal):', err);
       }
     }
 

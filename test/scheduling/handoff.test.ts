@@ -2,39 +2,31 @@ import { describe, it, expect } from 'vitest';
 import { handoffToNextBoard } from '@/lib/ai/scheduling/handoff';
 
 /**
- * Supabase fake encadeável para o handoff Ana->Consultor:
- * - boards.select('next_board_id').eq().maybeSingle()            → next_board_id do board de origem
- * - deals.select(...).eq().maybeSingle()                          → deal de origem (+ guard de idempotência)
- * - board_stages.select('id').eq().order().limit()               → etapa de entrada do board destino
- * - deals.insert(row).select('id').single()                      → cria a cópia (insertError configurável)
- * - deals.update(patch).eq()                                     → carimba handoff_consultor no origem
- * - activities.insert(row)                                       → log (best-effort)
+ * Supabase fake para o handoff Ana->Consultor (MOVE, não copia):
+ * - boards.select('next_board_id').eq().maybeSingle()   → next_board_id do board de origem
+ * - deals.select('board_id, custom_fields').eq().maybeSingle() → deal (board atual + guard)
+ * - board_stages.select('id').eq().order().limit()      → etapa de entrada do board destino
+ * - deals.update(patch).eq()                            → MOVE (registra o patch)
+ * - activities.insert(row)                              → log (best-effort)
  */
 function makeSupabase(
   opts: {
     nextBoardId?: string | null;
     srcDeal?: Record<string, unknown> | null;
     entryStageId?: string | null;
-    insertError?: { code: string } | null;
-    stampError?: { code: string } | null;
+    updateError?: { code: string } | null;
   } = {},
 ) {
-  const state: any = { insertedDeal: null, dealUpdate: null, insertedActivity: null };
+  const state: any = { updatePatch: null, insertedActivity: null };
   const nextBoardId = opts.nextBoardId === undefined ? 'board-consultor' : opts.nextBoardId;
   const srcDeal =
     opts.srcDeal === undefined
       ? {
-          title: 'João — Lead Meta Ads',
-          value: 2100,
-          contact_id: 'c-1',
-          owner_id: null,
-          priority: 'low',
-          tags: ['reuniao:agendada'],
+          board_id: 'board-ana',
           custom_fields: {
             lead_form: { mapped: { name: 'João' } },
-            qualificacao: { vidas: 3 },
             tier: { value: 'ouro' },
-            reuniao_agendada: { status: 'confirmada', data_hora: '2026-07-20T18:00:00.000Z' },
+            reuniao_agendada: { status: 'confirmada', activity_id: 'call-1', data_hora: '2026-07-20T18:00:00.000Z' },
           },
         }
       : opts.srcDeal;
@@ -43,48 +35,26 @@ function makeSupabase(
   const client: any = {
     from(table: string) {
       if (table === 'boards') {
-        return {
-          select: () => ({
-            eq: () => ({ maybeSingle: async () => ({ data: { next_board_id: nextBoardId }, error: null }) }),
-          }),
-        };
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { next_board_id: nextBoardId }, error: null }) }) }) };
       }
       if (table === 'board_stages') {
         return {
-          select: () => ({
-            eq: () => ({
-              order: () => ({ limit: async () => ({ data: entryStageId ? [{ id: entryStageId }] : [], error: null }) }),
-            }),
-          }),
+          select: () => ({ eq: () => ({ order: () => ({ limit: async () => ({ data: entryStageId ? [{ id: entryStageId }] : [], error: null }) }) }) }),
         };
       }
       if (table === 'deals') {
         return {
           select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: srcDeal, error: null }) }) }),
-          insert: (row: any) => ({
-            select: () => ({
-              single: async () => {
-                if (opts.insertError) return { data: null, error: opts.insertError };
-                state.insertedDeal = { id: 'new-deal-1', ...row };
-                return { data: { id: 'new-deal-1' }, error: null };
-              },
-            }),
-          }),
           update: (patch: any) => ({
             eq: async () => {
-              state.dealUpdate = patch;
-              return { error: opts.stampError ?? null };
+              state.updatePatch = patch;
+              return { error: opts.updateError ?? null };
             },
           }),
         };
       }
       if (table === 'activities') {
-        return {
-          insert: async (row: any) => {
-            state.insertedActivity = row;
-            return { error: null };
-          },
-        };
+        return { insert: async (row: any) => { state.insertedActivity = row; return { error: null }; } };
       }
       throw new Error('tabela inesperada: ' + table);
     },
@@ -94,96 +64,71 @@ function makeSupabase(
 
 const base = { dealId: 'deal-1', sourceBoardId: 'board-ana', organizationId: 'org-1' };
 
-describe('handoffToNextBoard', () => {
-  it('sucesso: cria cópia no board destino na etapa de entrada, preservando dados + rastreio', async () => {
+describe('handoffToNextBoard (MOVE)', () => {
+  it('sucesso: MOVE o deal pro board destino (board_id + stage de entrada) preservando dados + carimbo', async () => {
     const { client, state } = makeSupabase();
     const r = await handoffToNextBoard({ supabase: client, ...base });
     expect(r.handedOff).toBe(true);
-    expect(r.newDealId).toBe('new-deal-1');
     expect(r.targetBoardId).toBe('board-consultor');
-    // Copiou pro board destino, na etapa de entrada
-    expect(state.insertedDeal.board_id).toBe('board-consultor');
-    expect(state.insertedDeal.stage_id).toBe('stage-call-agendada');
-    expect(state.insertedDeal.is_won).toBe(false);
-    // Preservou os dados do card de origem
-    expect(state.insertedDeal.custom_fields.lead_form.mapped.name).toBe('João');
-    expect(state.insertedDeal.custom_fields.qualificacao.vidas).toBe(3);
-    expect(state.insertedDeal.custom_fields.tier.value).toBe('ouro');
-    // Carimbou o rastreio de origem
-    expect(state.insertedDeal.custom_fields.originDealId).toBe('deal-1');
-    expect(state.insertedDeal.custom_fields.originBoardId).toBe('board-ana');
-    expect(state.insertedDeal.custom_fields.originAutomation).toBe('NEXT_BOARD_SCHEDULING');
-    // Estampou a idempotência no deal de ORIGEM
-    expect(state.dealUpdate.custom_fields.handoff_consultor.deal_id).toBe('new-deal-1');
-    // Logou a atividade
+    // Move o MESMO deal (update, não insert de cópia)
+    expect(state.updatePatch.board_id).toBe('board-consultor');
+    expect(state.updatePatch.stage_id).toBe('stage-call-agendada');
+    // Preserva os dados do card (mesmo deal, custom_fields intacto) + carimbo de origem/idempotência
+    expect(state.updatePatch.custom_fields.lead_form.mapped.name).toBe('João');
+    expect(state.updatePatch.custom_fields.reuniao_agendada.activity_id).toBe('call-1');
+    expect(state.updatePatch.custom_fields.originBoardId).toBe('board-ana');
+    expect(state.updatePatch.custom_fields.handoff_consultor.board_id).toBe('board-consultor');
     expect(state.insertedActivity.type).toBe('STATUS_CHANGE');
   });
 
-  it('board de origem sem sourceBoardId => no-op', async () => {
+  it('sem sourceBoardId => no-op', async () => {
     const { client, state } = makeSupabase();
     const r = await handoffToNextBoard({ supabase: client, ...base, sourceBoardId: null });
     expect(r.handedOff).toBe(false);
     expect(r.reason).toBe('no_next_board');
-    expect(state.insertedDeal).toBeNull();
+    expect(state.updatePatch).toBeNull();
   });
 
-  it('board sem next_board_id => no-op (não cria cópia)', async () => {
+  it('board sem next_board_id => no-op', async () => {
     const { client, state } = makeSupabase({ nextBoardId: null });
     const r = await handoffToNextBoard({ supabase: client, ...base });
-    expect(r.handedOff).toBe(false);
     expect(r.reason).toBe('no_next_board');
-    expect(state.insertedDeal).toBeNull();
+    expect(state.updatePatch).toBeNull();
   });
 
-  it('idempotência: deal já tem handoff_consultor => no-op, NÃO cria 2ª cópia', async () => {
+  it('idempotência: deal já tem handoff_consultor => no-op, NÃO move de novo', async () => {
     const { client, state } = makeSupabase({
-      srcDeal: {
-        title: 'Já feito',
-        value: 0,
-        tags: [],
-        custom_fields: { handoff_consultor: { deal_id: 'existente', at: '2026-07-18T00:00:00Z' } },
-      },
+      srcDeal: { board_id: 'board-ana', custom_fields: { handoff_consultor: { board_id: 'board-consultor', at: 'x' } } },
     });
     const r = await handoffToNextBoard({ supabase: client, ...base });
-    expect(r.handedOff).toBe(false);
     expect(r.reason).toBe('already_done');
-    expect(state.insertedDeal).toBeNull();
+    expect(state.updatePatch).toBeNull();
   });
 
-  it('corrida: unique violation (23505) na cópia => already_done, sem estampar', async () => {
-    const { client, state } = makeSupabase({ insertError: { code: '23505' } });
+  it('deal já saiu do board de origem => no-op (defensivo)', async () => {
+    const { client, state } = makeSupabase({ srcDeal: { board_id: 'outro-board', custom_fields: {} } });
     const r = await handoffToNextBoard({ supabase: client, ...base });
-    expect(r.handedOff).toBe(false);
     expect(r.reason).toBe('already_done');
-    expect(state.dealUpdate).toBeNull();
+    expect(state.updatePatch).toBeNull();
   });
 
-  it('erro genérico no insert => db_error', async () => {
-    const { client } = makeSupabase({ insertError: { code: '55000' } });
-    const r = await handoffToNextBoard({ supabase: client, ...base });
-    expect(r.handedOff).toBe(false);
-    expect(r.reason).toBe('db_error');
-  });
-
-  it('deal de origem sumiu => source_missing', async () => {
+  it('deal sumiu => source_missing', async () => {
     const { client } = makeSupabase({ srcDeal: null });
     const r = await handoffToNextBoard({ supabase: client, ...base });
-    expect(r.handedOff).toBe(false);
     expect(r.reason).toBe('source_missing');
   });
 
   it('board destino sem etapas => no_target_stage', async () => {
     const { client, state } = makeSupabase({ entryStageId: null });
     const r = await handoffToNextBoard({ supabase: client, ...base });
-    expect(r.handedOff).toBe(false);
     expect(r.reason).toBe('no_target_stage');
-    expect(state.insertedDeal).toBeNull();
+    expect(state.updatePatch).toBeNull();
   });
 
-  it('falha no stamp de idempotência é não-fatal (índice único já cobre): ainda handedOff=true', async () => {
-    const { client } = makeSupabase({ stampError: { code: '55000' } });
+  it('erro no update => db_error', async () => {
+    const { client } = makeSupabase({ updateError: { code: '55000' } });
     const r = await handoffToNextBoard({ supabase: client, ...base });
-    expect(r.handedOff).toBe(true);
-    expect(r.newDealId).toBe('new-deal-1');
+    expect(r.handedOff).toBe(false);
+    expect(r.reason).toBe('db_error');
   });
 });
