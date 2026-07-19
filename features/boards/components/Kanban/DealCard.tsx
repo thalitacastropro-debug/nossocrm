@@ -263,16 +263,13 @@ const DealCardComponent: React.FC<DealCardProps> = ({
 
   // Get border-left color class based on status
   const getBorderLeftClass = () => {
+    // Ganho/perda mantêm a cor (status real do negócio, não "layout").
     if (deal.isWon) return '!border-l-green-500';
     if (deal.isLost) return '!border-l-red-500';
-    // Card com selo (tier de medalha OU selo neutro "Agendado"): a cor competiria com o selo.
-    // Deixa a borda neutra — o selo é o único sinal. Sem isto, o agendado-sem-tier caía na
-    // borda colorida por prioridade e parecia "layout antigo".
-    if (tier || temReuniaoMarcada) return '';
-    // Priority-based colors para os demais (sem tier: outros boards, não-qualificado)
-    if (deal.priority === 'high') return '!border-l-red-500';
-    if (deal.priority === 'medium') return '!border-l-amber-500';
-    return '!border-l-blue-500';
+    // TODOS os demais cards: borda NEUTRA (sem cor por prioridade na lateral). O selo (tier de
+    // medalha ou "Agendado") é o único sinal de cor. Padroniza todo card na "versão nova" — antes,
+    // card sem tier caía na cor por prioridade e parecia "layout antigo" (pedido da Thalita 07-19).
+    return '';
   };
 
   // Build accessible label including visible text (tags)
