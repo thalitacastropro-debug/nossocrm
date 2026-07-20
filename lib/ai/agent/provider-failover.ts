@@ -54,13 +54,45 @@ export async function generateWithFailover(
         config.model
       );
 
-      const result = await generateText({
-        model,
-        system,
-        prompt,
-        maxRetries,
-        ...(temperature !== undefined ? { temperature } : {}),
-      });
+      // Prompt caching (Anthropic/Claude): o `system` (persona + goal + business) é ESTÁVEL
+      // entre leads — só muda o `prompt` (mensagem/contexto do lead). Marcamos a system-message
+      // com cacheControl ephemeral pra reusar o prefixo a cada request e cortar custo (~90% no
+      // trecho cacheado). Só no provider anthropic (o Google ignora o namespace, mas mantemos o
+      // caminho antigo INTACTO nele = zero risco no fallback). Persona ~4k+ tokens (> mínimo de
+      // 4096 do Haiku); se ficar abaixo, o cache é no-op silencioso (sem erro).
+      const result =
+        config.provider === 'anthropic'
+          ? await generateText({
+              model,
+              messages: [
+                {
+                  role: 'system',
+                  content: system,
+                  providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+                },
+                { role: 'user', content: prompt },
+              ],
+              maxRetries,
+              ...(temperature !== undefined ? { temperature } : {}),
+            })
+          : await generateText({
+              model,
+              system,
+              prompt,
+              maxRetries,
+              ...(temperature !== undefined ? { temperature } : {}),
+            });
+
+      // Métricas de cache (best-effort) pra validar ao vivo nos logs da Vercel. cache_read>0 =
+      // o prefixo bateu; se ficar sempre 0, a persona está abaixo do mínimo de 4096 tokens.
+      if (config.provider === 'anthropic') {
+        const meta = (result.providerMetadata?.anthropic ?? {}) as Record<string, unknown>;
+        const read = meta.cacheReadInputTokens;
+        const created = meta.cacheCreationInputTokens;
+        if (typeof read === 'number' || typeof created === 'number') {
+          console.log(`[AIAgent] prompt-cache anthropic: read=${read ?? 0} created=${created ?? 0}`);
+        }
+      }
 
       if (errors.length > 0) {
         console.warn(
