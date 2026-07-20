@@ -7,7 +7,8 @@
  *  1. Grava no_show em deals.custom_fields.
  *  2. Move o deal de volta pro board da Ana, etapa "Resgate No-show".
  *  3. Reativa a IA (Ana) pro contato (ai_paused=false) + reseta o circuit breaker.
- *  4. Dispara UMA mensagem proativa de resgate na hora.
+ *  4. Dispara UMA mensagem proativa de resgate na hora, já oferecendo até 2 horários
+ *     livres reais do consultor (encaixe mesmo-dia); sem agenda → texto genérico.
  *
  * Body: { conversationId?: string, contactId?: string }
  *
@@ -20,6 +21,13 @@ import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
 import { sendAIResponse } from '@/lib/ai/agent/agent.service';
 import { resetCircuitBreaker } from '@/lib/ai/messaging/circuit-breaker';
 import { ANA_SDR_BOARD_ID, RESGATE_NOSHOW_STAGE_ID } from '@/lib/config/boards';
+import { getSchedulingConfig } from '@/lib/ai/scheduling/config';
+import { loadBusyIntervals } from '@/lib/ai/scheduling/busy';
+import { getAvailableSlots } from '@/lib/ai/scheduling/availability';
+import { getBoardAIConfig } from '@/lib/ai/messaging/board-config';
+import { buildRescueMessage } from '@/lib/ai/scheduling/no-show-message';
+import type { Slot } from '@/lib/ai/scheduling/types';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export const maxDuration = 60;
 
@@ -38,13 +46,31 @@ function primeiroNome(nome?: string | null): string | null {
 }
 
 /**
- * Mensagem de resgate (UMA linha só = UMA bolha, sem emoji, voz da Ana).
- * Sem nome: omite a saudação e começa em "O consultor tentou...".
+ * Calcula até 2 horários livres reais do consultor pra oferecer na mensagem de resgate (encaixe
+ * mesmo-dia incluso: o motor parte de hoje respeitando a antecedência mínima). Reusa a MESMA
+ * cadeia da Ana (config→busy→available) do board da SDR. Best-effort: qualquer falha → [] (a
+ * mensagem cai no texto genérico). Quando o lead responder, a própria Ana reagenda de verdade
+ * (o board de Resgate roda o mesmo motor de agendamento).
  */
-function mensagemResgate(nome: string | null): string {
-  return nome
-    ? `Oi ${nome}, o consultor tentou te ligar agora no horário e não conseguiu completar. Aconteceu algum imprevisto? Consigo reagendar pra gente não perder essa conversa.`
-    : `O consultor tentou te ligar agora no horário e não conseguiu completar. Aconteceu algum imprevisto? Consigo reagendar pra gente não perder essa conversa.`;
+async function computeRescueSlots(admin: SupabaseClient, organizationId: string, now: Date): Promise<Slot[]> {
+  try {
+    const cfg = getSchedulingConfig(ANA_SDR_BOARD_ID);
+    if (!cfg) return [];
+    const boardCfg = await getBoardAIConfig(admin, ANA_SDR_BOARD_ID);
+    const consultantUserId = boardCfg?.consultant_user_id;
+    if (!consultantUserId) return [];
+    const busy = await loadBusyIntervals({
+      supabase: admin,
+      organizationId,
+      consultantUserId,
+      now,
+      config: cfg.availability,
+    });
+    return getAvailableSlots({ now, busy, config: cfg.availability }).slice(0, 2);
+  } catch (err) {
+    console.error('[no-show] falha ao calcular horários de resgate (usando texto genérico):', err instanceof Error ? err.message : err);
+    return [];
+  }
 }
 
 export async function POST(
@@ -80,7 +106,7 @@ export async function POST(
     // 2. Fetch do deal — a RLS é o gate de autorização (só vê o que pode agir).
     const { data: deal, error: dealError } = await supabase
       .from('deals')
-      .select('id, board_id, contact_id, custom_fields')
+      .select('id, board_id, contact_id, organization_id, custom_fields')
       .eq('id', dealId)
       .single();
 
@@ -180,11 +206,16 @@ export async function POST(
         nome = primeiroNome(contato?.name as string | undefined);
       }
 
+      // Horários livres reais pra oferecer no resgate (best-effort; [] → texto genérico).
+      const slots = deal.organization_id
+        ? await computeRescueSlots(admin, deal.organization_id as string, new Date())
+        : [];
+
       try {
         const result = await sendAIResponse({
           supabase: admin,
           conversationId,
-          response: mensagemResgate(nome),
+          response: buildRescueMessage(nome, slots),
         });
         messageSent = result.success;
 
