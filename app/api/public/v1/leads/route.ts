@@ -7,6 +7,7 @@ import { resolveBoardIdFromKey, resolveFirstStageId } from '@/lib/public-api/res
 import { sanitizeUUID } from '@/lib/supabase/utils';
 import { getChannelRouter } from '@/lib/messaging/channel-router.service';
 import { generateFirstTouchBubbles } from '@/lib/ai/lead-intake/first-touch';
+import { seedTierFromLeadForm } from '@/lib/ai/extraction/domain/niva-health';
 
 export const runtime = 'nodejs';
 // O envio em bolhas com pequeno stagger pode levar alguns segundos — dá folga ao limite serverless.
@@ -345,6 +346,12 @@ export async function POST(request: Request) {
       .eq('id', dealId);
   } else {
     const title = normalizeText(body.title ?? null) || `${name || phone} — Lead Meta Ads`;
+    // Tier PROVISÓRIO já na criação (CNPJ + idades + valor do formulário) → o card nasce com selo
+    // em vez de "layout antigo sem tier". Só grava quando dá pra cravar ouro/prata/bronze; sem
+    // dados suficientes, não grava (a Ana recomputa na conversa). Ver seedTierFromLeadForm.
+    const seededTier = seedTierFromLeadForm({ lead_form: leadFormBase });
+    const initialCustomFields: Record<string, unknown> = { lead_form: leadFormBase };
+    if (seededTier) initialCustomFields.tier = seededTier;
     const { data: newDeal, error: dealErr } = await sb
       .from('deals')
       .insert({
@@ -354,7 +361,7 @@ export async function POST(request: Request) {
         board_id: boardId,
         stage_id: stageId,
         contact_id: contactId,
-        custom_fields: { lead_form: leadFormBase },
+        custom_fields: initialCustomFields,
         is_won: false,
         is_lost: false,
         created_at: now,

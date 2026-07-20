@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import type { DomainExtractor, DomainApplyResult, TierResult } from './types';
+import type { DomainExtractor, DomainApplyResult, TierResult, Tier } from './types';
 import { MotivoTagSchema, type MotivoTag } from '@/lib/ai/taxonomy/motivos';
 
 /** Board SDR — IA Qualificação (inbound) da Niva. */
@@ -183,6 +183,88 @@ export function cnpjFromLeadForm(current: Record<string, unknown> | null | undef
     if (/n[uú]mero.*cnpj/.test(key) && v.replace(/\D/g, '').length >= 8) return 'pme';
   }
   return null;
+}
+
+/** Campos do lead_form (Meta Lead Ads). Prefere `raw` (todos os campos), cai em `fields`. */
+function leadFormSource(current: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  const lf = current?.lead_form as { raw?: Record<string, unknown>; fields?: Record<string, unknown> } | undefined;
+  const src = lf?.raw ?? lf?.fields;
+  return src && typeof src === 'object' ? src : null;
+}
+
+/**
+ * Idades a partir do FORMULÁRIO (campo "Quais as idades das pessoas": "41,30,17,13 e 1 ano").
+ * Extrai todos os inteiros plausíveis (0–120). O nº de idades informadas é o proxy do nº de vidas
+ * a cobrir. Vazio se o campo não existe ou não tem números.
+ */
+export function idadesFromLeadForm(current: Record<string, unknown> | null | undefined): number[] {
+  const src = leadFormSource(current);
+  if (!src) return [];
+  for (const [k, v] of Object.entries(src)) {
+    if (typeof v !== 'string' || !/idade/i.test(k)) continue;
+    const nums = (v.match(/\d+/g) ?? []).map((n) => parseInt(n, 10)).filter((n) => n > 0 && n <= 120);
+    if (nums.length) return nums;
+  }
+  return [];
+}
+
+/**
+ * Valor da mensalidade ATUAL a partir do formulário (campo "Quanto você paga atualmente no seu
+ * plano": "1200 p 2 vidas" / "2250" / "R$ 2.500,00"). Pega o primeiro número em reais, tolerando
+ * separador de milhar (.) e decimal (,). null se não houver número. NÃO casa "Você possuí plano de
+ * saúde" (sem "quanto"/"paga").
+ */
+export function valorFromLeadForm(current: Record<string, unknown> | null | undefined): number | null {
+  const src = leadFormSource(current);
+  if (!src) return null;
+  for (const [k, v] of Object.entries(src)) {
+    if (typeof v !== 'string') continue;
+    const key = k.toLowerCase();
+    if (!(/quanto.*paga/.test(key) || /mensalidade/.test(key) || /valor.*plano/.test(key))) continue;
+    const m = v.match(/\d[\d.,]*/);
+    if (!m) return null;
+    let tok = m[0];
+    if (tok.includes(',')) tok = tok.replace(/\./g, '').replace(',', '.'); // 2.500,00 -> 2500.00
+    else tok = tok.replace(/\.(?=\d{3}\b)/g, ''); // 2.250 -> 2250 (milhar); 1200 -> 1200
+    const n = Number(tok);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+  return null;
+}
+
+/**
+ * Tier PROVISÓRIO computado só do FORMULÁRIO, na CRIAÇÃO do lead (antes da Ana conversar) — pra o
+ * card já nascer com selo em vez de "layout antigo sem tier". Reusa o mesmo `classifyTier` da
+ * conversa (mesma semântica), alimentado por `cnpjFromLeadForm` + `idadesFromLeadForm` +
+ * `valorFromLeadForm`; `vidas` = nº de idades informadas.
+ *
+ * Só semeia quando dá pra cravar um tier de QUALIDADE (ouro/prata/bronze). Sem dados suficientes
+ * (→ `indefinido`) ou sinal de fora do ICP a partir de um form magro (→ `fora_icp`) NÃO grava:
+ * é prematuro/arriscado antes da conversa — a Ana/consultor classificam depois. SEMPRE `provisorio:
+ * true` (é auto-declarado no anúncio; o motor da conversa recomputa e sobrepõe). Retorna o shape já
+ * pronto pra `custom_fields.tier`, ou null (não grava).
+ */
+export function seedTierFromLeadForm(
+  current: Record<string, unknown> | null | undefined,
+): { value: Tier; motivos: string[]; provisorio: boolean } | null {
+  if (!leadFormSource(current)) return null;
+  const temCnpj = cnpjFromLeadForm(current); // 'pme' | null
+  const idades = idadesFromLeadForm(current);
+  const valor = valorFromLeadForm(current);
+  const vidas = idades.length > 0 ? idades.length : null;
+
+  // Nenhum sinal útil no form → não semeia.
+  if (!temCnpj && vidas == null && valor == null) return null;
+
+  const r = classifyTier({
+    tem_cnpj: temCnpj ?? 'desconhecido',
+    vidas,
+    idades,
+    valor_pago_exato: valor,
+    quer_so_cotacao: false,
+  });
+  if (r.tier === 'indefinido' || r.tier === 'fora_icp') return null;
+  return { value: r.tier, motivos: r.motivos, provisorio: true };
 }
 
 function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): DomainApplyResult {

@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   classifyTier,
   cnpjFromLeadForm,
+  idadesFromLeadForm,
+  valorFromLeadForm,
+  seedTierFromLeadForm,
   nivaHealthExtractor,
   type NivaHealthExtraction,
 } from '@/lib/ai/extraction/domain/niva-health';
@@ -241,5 +244,85 @@ describe('apply: fallback do CNPJ pelo formulário (o buraco da Nathalia)', () =
     const r = nivaHealthExtractor.apply(current, claraExt);
     expect((r.customFields.qualificacao as { tem_cnpj: string }).tem_cnpj).toBe('vai_abrir_mei');
     expect((r.customFields.tier as { value: string }).value).toBe('prata');
+  });
+});
+
+// =============================================================================
+// Semear tier na CRIAÇÃO do lead (só do formulário do Meta) — quick-win intake
+// =============================================================================
+
+// Forma real do lead_form.raw do Meta Lead Ads (ver deals de produção).
+const rawMonica = {
+  'Você possuí CNPJ': 'sim',
+  'Qual o número do seu CNPJ': '',
+  'Quais as idades das pessoas': '41,30,17,13 e 1 ano',
+  'Você possuí plano de saúde': '',
+  'Quanto você paga atualmente no seu plano': '1200 p 2 vidas',
+};
+const rawNathalia = {
+  'Você possuí CNPJ': 'sim',
+  'Quais as idades das pessoas': '40, 45',
+  'Quanto você paga atualmente no seu plano': '2250',
+};
+
+describe('idadesFromLeadForm', () => {
+  it('extrai todas as idades do campo, tolerando "e" e "ano"', () => {
+    expect(idadesFromLeadForm({ lead_form: { raw: rawMonica } })).toEqual([41, 30, 17, 13, 1]);
+  });
+  it('lida com "40, 45" e "34 e 43"', () => {
+    expect(idadesFromLeadForm({ lead_form: { raw: rawNathalia } })).toEqual([40, 45]);
+    expect(idadesFromLeadForm({ lead_form: { raw: { 'Quais as idades das pessoas': '34 e 43' } } })).toEqual([34, 43]);
+  });
+  it('sem campo de idade → vazio', () => {
+    expect(idadesFromLeadForm({ lead_form: { raw: { 'Você possuí CNPJ': 'sim' } } })).toEqual([]);
+    expect(idadesFromLeadForm({})).toEqual([]);
+  });
+});
+
+describe('valorFromLeadForm', () => {
+  it('pega o primeiro número do campo "Quanto você paga" ("1200 p 2 vidas" → 1200)', () => {
+    expect(valorFromLeadForm({ lead_form: { raw: rawMonica } })).toBe(1200);
+  });
+  it('valores simples e com separador de milhar/decimal', () => {
+    expect(valorFromLeadForm({ lead_form: { raw: rawNathalia } })).toBe(2250);
+    expect(valorFromLeadForm({ lead_form: { raw: { 'Quanto você paga atualmente no seu plano': 'R$ 2.500,00' } } })).toBe(2500);
+    expect(valorFromLeadForm({ lead_form: { raw: { 'Quanto você paga atualmente no seu plano': '2.250' } } })).toBe(2250);
+  });
+  it('não casa "Você possuí plano de saúde" (sem quanto/paga) e retorna null sem número', () => {
+    expect(valorFromLeadForm({ lead_form: { raw: { 'Você possuí plano de saúde': 'sim' } } })).toBeNull();
+    expect(valorFromLeadForm({ lead_form: { raw: { 'Quanto você paga atualmente no seu plano': 'primeiro plano' } } })).toBeNull();
+  });
+});
+
+describe('seedTierFromLeadForm (tier provisório na criação)', () => {
+  it('Mônica (5 vidas, paga 1200) → bronze provisório (valor < 2.000)', () => {
+    const seed = seedTierFromLeadForm({ lead_form: { raw: rawMonica } });
+    expect(seed).not.toBeNull();
+    expect(seed!.value).toBe('bronze');
+    expect(seed!.provisorio).toBe(true);
+  });
+  it('Nathalia/Cleysson (2 vidas) → bronze provisório', () => {
+    expect(seedTierFromLeadForm({ lead_form: { raw: rawNathalia } })!.value).toBe('bronze');
+  });
+  it('3 vidas jovens, paga 3000 → prata provisório', () => {
+    const raw = { 'Você possuí CNPJ': 'sim', 'Quais as idades das pessoas': '30, 35, 40', 'Quanto você paga atualmente no seu plano': '3000' };
+    expect(seedTierFromLeadForm({ lead_form: { raw } })!.value).toBe('prata');
+  });
+  it('3 vidas jovens, paga 6000 → ouro, mas provisório (form-only)', () => {
+    const raw = { 'Você possuí CNPJ': 'sim', 'Quais as idades das pessoas': '30, 35, 40', 'Quanto você paga atualmente no seu plano': '6000' };
+    const seed = seedTierFromLeadForm({ lead_form: { raw } });
+    expect(seed!.value).toBe('ouro');
+    expect(seed!.provisorio).toBe(true);
+  });
+  it('CNPJ sim mas SEM idades (vidas desconhecidas) → indefinido → NÃO semeia (null)', () => {
+    expect(seedTierFromLeadForm({ lead_form: { raw: { 'Você possuí CNPJ': 'sim' } } })).toBeNull();
+  });
+  it('1 vida (individual) → fora_icp → NÃO semeia (prematuro pré-conversa)', () => {
+    const raw = { 'Você possuí CNPJ': 'sim', 'Quais as idades das pessoas': '30', 'Quanto você paga atualmente no seu plano': '900' };
+    expect(seedTierFromLeadForm({ lead_form: { raw } })).toBeNull();
+  });
+  it('form vazio / sem lead_form → null', () => {
+    expect(seedTierFromLeadForm({ lead_form: { raw: {} } })).toBeNull();
+    expect(seedTierFromLeadForm({})).toBeNull();
   });
 });
