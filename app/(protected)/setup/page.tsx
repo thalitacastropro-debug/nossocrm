@@ -130,7 +130,7 @@ export default function SetupPage() {
       <div className="max-w-md w-full relative z-10 px-4">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-slate-900 dark:text-white font-display tracking-tight mb-2">
-            Bem-vindo ao NossoCRM
+            Bem-vindo ao NIVA CRM
           </h1>
           <p className="text-slate-500 dark:text-slate-400">Vamos preparar seu ambiente de trabalho.</p>
         </div>
@@ -296,7 +296,7 @@ export default function SetupPage() {
         </div>
 
         <p className="mt-8 text-center text-xs text-slate-400 dark:text-slate-500">
-          &copy; {new Date().getFullYear()} NossoCRM. Todos os direitos reservados.
+          &copy; {new Date().getFullYear()} NIVA CRM. Todos os direitos reservados.
         </p>
       </div>
     </div>

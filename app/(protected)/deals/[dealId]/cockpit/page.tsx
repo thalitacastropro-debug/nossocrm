@@ -7,7 +7,7 @@ import DealCockpitFocusClient from '@/features/deals/cockpit/DealCockpitFocusCli
  */
 export async function generateMetadata({ params }: { params: Promise<{ dealId: string }> }): Promise<Metadata> {
   const { dealId } = await params;
-  return { title: `Deal ${dealId} | NossoCRM` };
+  return { title: `Deal ${dealId} | NIVA CRM` };
 }
 
 export default async function DealCockpitPage({

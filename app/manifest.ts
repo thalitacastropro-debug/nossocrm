@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'NossoCRM',
-    short_name: 'NossoCRM',
+    name: 'NIVA CRM',
+    short_name: 'NIVA CRM',
     description: 'CRM Inteligente para Gestão de Vendas',
     start_url: '/boards',
     display: 'standalone',
