@@ -20,6 +20,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { slotLabelFromIso } from './availability';
 
 export interface HandoffToNextBoardParams {
   supabase: SupabaseClient;
@@ -53,7 +54,7 @@ export async function handoffToNextBoard(params: HandoffToNextBoardParams): Prom
   //    cobre remarcação/re-run. Defensivo: se o deal já saiu do board de origem, também não mexe.
   const { data: srcDeal } = await supabase
     .from('deals')
-    .select('board_id, custom_fields')
+    .select('board_id, title, custom_fields')
     .eq('id', dealId)
     .maybeSingle();
   if (!srcDeal) return { handedOff: false, reason: 'source_missing' };
@@ -108,6 +109,42 @@ export async function handoffToNextBoard(params: HandoffToNextBoardParams): Prom
     completed: true,
   });
   if (actErr) console.error('[Handoff] log de atividade falhou (não-fatal):', actErr);
+
+  // 6. Aviso POSITIVO no Telegram pro consultor ("✅ Novo lead agendado — {nome}, reunião {label}").
+  //    Busca token/chat_id em organization_settings, igual ao handleHandoff do agent.service. Com o
+  //    MOVE, o notify_team da etapa "agendado" ficou inócuo (o deal sai na hora) — este é o alerta que
+  //    avisa o consultor que caiu um lead agendado no funil dele. Best-effort: NUNCA falha o handoff.
+  try {
+    const { data: orgTelegram } = await supabase
+      .from('organization_settings')
+      .select('telegram_bot_token, telegram_chat_id')
+      .eq('organization_id', organizationId)
+      .maybeSingle();
+
+    if (orgTelegram?.telegram_bot_token && orgTelegram?.telegram_chat_id) {
+      const leadForm = srcCustom.lead_form as { mapped?: { name?: string } } | undefined;
+      const reuniao = srcCustom.reuniao_agendada as { data_hora?: string } | undefined;
+      const contactName =
+        leadForm?.mapped?.name?.trim() ||
+        (typeof srcDeal.title === 'string' ? srcDeal.title.trim() : '') ||
+        'Novo lead';
+      const meetingLabel = slotLabelFromIso(reuniao?.data_hora, '-03:00');
+
+      const { sendTelegramMessage, formatMeetingHandoffMessage } = await import('@/lib/notifications/telegram');
+      await sendTelegramMessage(
+        orgTelegram.telegram_bot_token,
+        orgTelegram.telegram_chat_id,
+        formatMeetingHandoffMessage({
+          contactName,
+          meetingLabel,
+          appUrl: process.env.NEXT_PUBLIC_APP_URL,
+          dealId,
+        }),
+      );
+    }
+  } catch (err) {
+    console.error('[Handoff] notificação Telegram falhou (não-fatal):', err);
+  }
 
   return { handedOff: true, targetBoardId: nextBoardId };
 }

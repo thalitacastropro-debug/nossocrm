@@ -112,3 +112,36 @@ export function formatHandoffMessage({
   }
   return lines.join('\n');
 }
+
+interface MeetingHandoffMessageParams {
+  contactName: string;
+  /** Label já formatado do horário (ex.: "Segunda, 20/07, às 15h"). */
+  meetingLabel: string;
+  appUrl?: string;
+  dealId?: string;
+}
+
+/**
+ * Aviso POSITIVO pro consultor quando a Ana agenda uma reunião e o deal é movido pro funil dele.
+ * Diferente do `formatHandoffMessage` (genérico "precisa de atenção humana"): aqui é um lead já
+ * qualificado E agendado entrando no funil — a mensagem celebra e diz o horário.
+ */
+export function formatMeetingHandoffMessage({
+  contactName,
+  meetingLabel,
+  appUrl,
+  dealId,
+}: MeetingHandoffMessageParams): string {
+  const lines = [
+    `✅ <b>Novo lead agendado</b>`,
+    ``,
+    `👤 <b>${escapeHtml(contactName)}</b>`,
+    `📅 <b>Reunião:</b> ${escapeHtml(meetingLabel)}`,
+    `📥 Já está no seu funil (Comercial — Consultor).`,
+  ];
+  if (appUrl && dealId) {
+    lines.push(``);
+    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+  }
+  return lines.join('\n');
+}

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { handoffToNextBoard } from '@/lib/ai/scheduling/handoff';
 
 /**
@@ -15,6 +15,8 @@ function makeSupabase(
     srcDeal?: Record<string, unknown> | null;
     entryStageId?: string | null;
     updateError?: { code: string } | null;
+    /** Config de Telegram da org (organization_settings). Default null = não notifica. */
+    telegram?: { telegram_bot_token: string; telegram_chat_id: string } | null;
   } = {},
 ) {
   const state: any = { updatePatch: null, insertedActivity: null };
@@ -55,6 +57,9 @@ function makeSupabase(
       }
       if (table === 'activities') {
         return { insert: async (row: any) => { state.insertedActivity = row; return { error: null }; } };
+      }
+      if (table === 'organization_settings') {
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: opts.telegram ?? null, error: null }) }) }) };
       }
       throw new Error('tabela inesperada: ' + table);
     },
@@ -130,5 +135,52 @@ describe('handoffToNextBoard (MOVE)', () => {
     const r = await handoffToNextBoard({ supabase: client, ...base });
     expect(r.handedOff).toBe(false);
     expect(r.reason).toBe('db_error');
+  });
+
+  describe('notificação Telegram pro consultor (best-effort)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('org com Telegram configurado => envia aviso positivo (nome + horário) pro chat_id', async () => {
+      const fetchMock = vi.fn(async () => new Response('{"ok":true}', { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const { client } = makeSupabase({
+        telegram: { telegram_bot_token: 'tok-123', telegram_chat_id: 'chat-99' },
+      });
+
+      const r = await handoffToNextBoard({ supabase: client, ...base });
+      expect(r.handedOff).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain('/bottok-123/sendMessage');
+      const payload = JSON.parse(init.body as string);
+      expect(payload.chat_id).toBe('chat-99');
+      expect(payload.text).toContain('João'); // nome do lead_form.mapped.name
+      expect(payload.text).toContain('20/07'); // label da reunião (data_hora 2026-07-20T18:00Z, -03:00)
+      expect(payload.text).toContain('Novo lead agendado');
+    });
+
+    it('org SEM Telegram => não tenta enviar (move ainda ok)', async () => {
+      const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const { client } = makeSupabase(); // telegram default null
+
+      const r = await handoffToNextBoard({ supabase: client, ...base });
+      expect(r.handedOff).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('falha no envio do Telegram NÃO derruba o handoff (move continua ok)', async () => {
+      const fetchMock = vi.fn(async () => { throw new Error('network down'); });
+      vi.stubGlobal('fetch', fetchMock);
+      const { client, state } = makeSupabase({
+        telegram: { telegram_bot_token: 'tok', telegram_chat_id: 'chat' },
+      });
+
+      const r = await handoffToNextBoard({ supabase: client, ...base });
+      expect(r.handedOff).toBe(true); // handoff não é afetado
+      expect(state.updatePatch.board_id).toBe('board-consultor'); // o MOVE aconteceu
+    });
   });
 });
