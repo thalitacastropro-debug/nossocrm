@@ -277,6 +277,9 @@ describe('idadesFromLeadForm', () => {
     expect(idadesFromLeadForm({ lead_form: { raw: { 'Você possuí CNPJ': 'sim' } } })).toEqual([]);
     expect(idadesFromLeadForm({})).toEqual([]);
   });
+  it('idade 0 (recém-nascido) conta como vida — não descarta', () => {
+    expect(idadesFromLeadForm({ lead_form: { raw: { 'Quais as idades das pessoas': '30, 28, 0' } } })).toEqual([30, 28, 0]);
+  });
 });
 
 describe('valorFromLeadForm', () => {
@@ -291,6 +294,14 @@ describe('valorFromLeadForm', () => {
   it('não casa "Você possuí plano de saúde" (sem quanto/paga) e retorna null sem número', () => {
     expect(valorFromLeadForm({ lead_form: { raw: { 'Você possuí plano de saúde': 'sim' } } })).toBeNull();
     expect(valorFromLeadForm({ lead_form: { raw: { 'Quanto você paga atualmente no seu plano': 'primeiro plano' } } })).toBeNull();
+  });
+  it('sufixo "mil"/"k" = milhares ("5 mil"→5000, "2 mil"→2000, "5k"→5000); não estraga "5000"', () => {
+    const k = 'Quanto você paga atualmente no seu plano';
+    expect(valorFromLeadForm({ lead_form: { raw: { [k]: '5 mil' } } })).toBe(5000);
+    expect(valorFromLeadForm({ lead_form: { raw: { [k]: '2 mil' } } })).toBe(2000);
+    expect(valorFromLeadForm({ lead_form: { raw: { [k]: '5k' } } })).toBe(5000);
+    expect(valorFromLeadForm({ lead_form: { raw: { [k]: 'R$ 5 mil por mês' } } })).toBe(5000);
+    expect(valorFromLeadForm({ lead_form: { raw: { [k]: '5000' } } })).toBe(5000);
   });
 });
 
@@ -324,5 +335,55 @@ describe('seedTierFromLeadForm (tier provisório na criação)', () => {
   it('form vazio / sem lead_form → null', () => {
     expect(seedTierFromLeadForm({ lead_form: { raw: {} } })).toBeNull();
     expect(seedTierFromLeadForm({})).toBeNull();
+  });
+  it('regressão #2: "5 mil" com 3 vidas jovens → ouro (não bronze por ler 5 reais)', () => {
+    const raw = { 'Você possuí CNPJ': 'sim', 'Quais as idades das pessoas': '40, 38, 10', 'Quanto você paga atualmente no seu plano': '5 mil' };
+    expect(seedTierFromLeadForm({ lead_form: { raw } })!.value).toBe('ouro');
+  });
+  it('regressão #4: idade 0 conta a 3ª vida → prata (não bronze por virar 2 vidas)', () => {
+    const raw = { 'Você possuí CNPJ': 'sim', 'Quais as idades das pessoas': '30, 28, 0' };
+    expect(seedTierFromLeadForm({ lead_form: { raw } })!.value).toBe('prata');
+  });
+});
+
+describe('apply() — fallback de idades/vidas/valor do formulário (regressão #3)', () => {
+  // ext silenciosa (a Ana ainda não extraiu qualificação da conversa).
+  const silent: NivaHealthExtraction = {
+    ...fullExt,
+    tem_cnpj: 'desconhecido',
+    vidas: null,
+    idades: [],
+    valor_pago_exato: null,
+    operadora: null,
+    objecoes: [],
+  };
+
+  it('conversa silenciosa + form com CNPJ/idades/valor → tier do FORM (NÃO cai p/ indefinido)', () => {
+    const current = {
+      lead_form: {
+        raw: {
+          'Você possuí CNPJ': 'sim',
+          'Quais as idades das pessoas': '40, 38, 10',
+          'Quanto você paga atualmente no seu plano': '6000',
+        },
+      },
+    };
+    const r = nivaHealthExtractor.apply(current, silent);
+    const qual = r.customFields.qualificacao as { tem_cnpj: string; vidas: number; valor_pago_exato: number };
+    expect(qual.tem_cnpj).toBe('pme');
+    expect(qual.vidas).toBe(3);
+    expect(qual.valor_pago_exato).toBe(6000);
+    const tier = (r.customFields.tier as { value: string }).value;
+    expect(tier).not.toBe('indefinido');
+    expect(tier).toBe('ouro');
+  });
+
+  it('a CONVERSA tem precedência: ext com vidas=2 NÃO é sobrescrita pelo form (3 idades)', () => {
+    const current = { lead_form: { raw: { 'Você possuí CNPJ': 'sim', 'Quais as idades das pessoas': '40, 38, 10' } } };
+    const ext: NivaHealthExtraction = { ...silent, tem_cnpj: 'pme', vidas: 2, idades: [40, 38] };
+    const r = nivaHealthExtractor.apply(current, ext);
+    const qual = r.customFields.qualificacao as { vidas: number; idades: number[] };
+    expect(qual.vidas).toBe(2); // do ext, não do form
+    expect(qual.idades).toEqual([40, 38]); // do ext (não-vazio), não do form
   });
 });

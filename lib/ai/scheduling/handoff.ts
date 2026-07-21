@@ -114,6 +114,9 @@ export async function handoffToNextBoard(params: HandoffToNextBoardParams): Prom
   //    Busca token/chat_id em organization_settings, igual ao handleHandoff do agent.service. Com o
   //    MOVE, o notify_team da etapa "agendado" ficou inócuo (o deal sai na hora) — este é o alerta que
   //    avisa o consultor que caiu um lead agendado no funil dele. Best-effort: NUNCA falha o handoff.
+  //    Caveat (LOW, aceito): o guard de idempotência (passo 2) é read-then-write não-atômico; no
+  //    double-run CONCORRENTE conhecido do agent.service, os 2 runs podem passar o guard e enviar 2
+  //    pings idênticos. Raiz é o double-run (não este código); dup de notificação é inócua.
   try {
     const { data: orgTelegram } = await supabase
       .from('organization_settings')

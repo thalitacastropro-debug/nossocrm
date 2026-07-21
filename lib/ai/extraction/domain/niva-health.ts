@@ -202,7 +202,8 @@ export function idadesFromLeadForm(current: Record<string, unknown> | null | und
   if (!src) return [];
   for (const [k, v] of Object.entries(src)) {
     if (typeof v !== 'string' || !/idade/i.test(k)) continue;
-    const nums = (v.match(/\d+/g) ?? []).map((n) => parseInt(n, 10)).filter((n) => n > 0 && n <= 120);
+    // 0–120: idade 0 = recém-nascido é uma vida válida (não descartar, senão subconta vidas).
+    const nums = (v.match(/\d+/g) ?? []).map((n) => parseInt(n, 10)).filter((n) => n >= 0 && n <= 120);
     if (nums.length) return nums;
   }
   return [];
@@ -227,7 +228,12 @@ export function valorFromLeadForm(current: Record<string, unknown> | null | unde
     if (tok.includes(',')) tok = tok.replace(/\./g, '').replace(',', '.'); // 2.500,00 -> 2500.00
     else tok = tok.replace(/\.(?=\d{3}\b)/g, ''); // 2.250 -> 2250 (milhar); 1200 -> 1200
     const n = Number(tok);
-    return Number.isFinite(n) ? Math.round(n) : null;
+    if (!Number.isFinite(n)) return null;
+    // Sufixo "mil"/"k" (formas comuns no BR: "5 mil", "5k" = R$5.000). Multiplica por 1000 só se o
+    // número for pequeno (< 1000), pra não estragar "5000" ou "2.500,00".
+    const after = v.slice((m.index ?? 0) + m[0].length);
+    const isMil = /^\s*k\b/i.test(after) || /\bmil\b/i.test(v);
+    return Math.round(isMil && n < 1000 ? n * 1000 : n);
   }
   return null;
 }
@@ -293,6 +299,21 @@ function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): Dom
   if (merged.tem_cnpj == null) {
     const fromForm = cnpjFromLeadForm(current);
     if (fromForm) merged.tem_cnpj = fromForm;
+  }
+  // Fallback (idem CNPJ): idades/vidas/valor do FORMULÁRIO quando a conversa ainda não os
+  // estabeleceu. Sem isso, o tier semeado no intake era RECOMPUTADO p/ 'indefinido' assim que o
+  // lead respondia algo sem qualificação (vidas ficava null → guard do classifyTier). A conversa
+  // tem precedência (só caímos aqui com o campo nulo/vazio); persiste no merged pra "grudar".
+  if (!Array.isArray(merged.idades) || (merged.idades as unknown[]).length === 0) {
+    const idadesForm = idadesFromLeadForm(current);
+    if (idadesForm.length) {
+      merged.idades = idadesForm;
+      if (merged.vidas == null) merged.vidas = idadesForm.length; // nº de idades = proxy de vidas
+    }
+  }
+  if (merged.valor_pago_exato == null) {
+    const valorForm = valorFromLeadForm(current);
+    if (valorForm != null) merged.valor_pago_exato = valorForm;
   }
   customFields.qualificacao = merged;
 

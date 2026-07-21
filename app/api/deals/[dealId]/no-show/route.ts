@@ -51,7 +51,14 @@ function primeiroNome(nome?: string | null): string | null {
  * cadeia da Ana (config→busy→available) do board da SDR. Best-effort: qualquer falha → [] (a
  * mensagem cai no texto genérico). Quando o lead responder, a própria Ana reagenda de verdade
  * (o board de Resgate roda o mesmo motor de agendamento).
+ *
+ * Buffer: os 2 slots ofertados são os mais próximos, logo os mais perto do piso de antecedência
+ * (minLeadMinutes). Sem folga, uns minutos de atraso na resposta do lead fariam o slot prometido
+ * cair abaixo do piso e a Ana recusar o horário que ela mesma ofereceu. Somamos RESGATE_BUFFER_MIN
+ * ao "agora" só pro CÁLCULO da oferta, dando margem pro lead responder.
  */
+const RESGATE_BUFFER_MIN = 20;
+
 async function computeRescueSlots(admin: SupabaseClient, organizationId: string, now: Date): Promise<Slot[]> {
   try {
     const cfg = getSchedulingConfig(ANA_SDR_BOARD_ID);
@@ -59,14 +66,15 @@ async function computeRescueSlots(admin: SupabaseClient, organizationId: string,
     const boardCfg = await getBoardAIConfig(admin, ANA_SDR_BOARD_ID);
     const consultantUserId = boardCfg?.consultant_user_id;
     if (!consultantUserId) return [];
+    const offerNow = new Date(now.getTime() + RESGATE_BUFFER_MIN * 60_000);
     const busy = await loadBusyIntervals({
       supabase: admin,
       organizationId,
       consultantUserId,
-      now,
+      now: offerNow,
       config: cfg.availability,
     });
-    return getAvailableSlots({ now, busy, config: cfg.availability }).slice(0, 2);
+    return getAvailableSlots({ now: offerNow, busy, config: cfg.availability }).slice(0, 2);
   } catch (err) {
     console.error('[no-show] falha ao calcular horários de resgate (usando texto genérico):', err instanceof Error ? err.message : err);
     return [];
