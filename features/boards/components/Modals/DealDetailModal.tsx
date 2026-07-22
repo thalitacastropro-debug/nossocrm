@@ -12,6 +12,7 @@ import {
   useCreateActivity,
   useUpdateActivity,
   useDeleteActivity,
+  useMoveDealToBoard,
 } from '@/lib/query/hooks';
 import { useUIState } from '@/store/uiState';
 import { useActiveProducts } from '@/lib/query/hooks/useProductsQuery';
@@ -22,7 +23,7 @@ import { LossReasonModal } from '@/components/ui/LossReasonModal';
 import { useMoveDealSimple } from '@/lib/query/hooks';
 import { DEALS_VIEW_KEY } from '@/lib/query';
 import { FocusTrap, useFocusReturn } from '@/lib/a11y';
-import { Activity, DealView } from '@/types';
+import { Activity, Board, DealView } from '@/types';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { useResponsiveMode } from '@/hooks/useResponsiveMode';
 import { DealSheet } from '../DealSheet';
@@ -54,7 +55,7 @@ import {
   FileText,
   CalendarCheck,
   CalendarX,
-  CalendarClock,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { StageProgressBar } from '../StageProgressBar';
@@ -67,6 +68,7 @@ import { VoiceOutcomeCapture } from '@/features/deals/components/VoiceOutcomeCap
 import { useMarkMeetingHeld } from '@/lib/query/hooks/useMarkMeetingHeld';
 import { useCancelMeeting } from '@/lib/query/hooks/useCancelMeeting';
 import { CONSULTOR_BOARD_ID } from '@/lib/config/boards';
+import { missingForBoardMove } from '@/lib/deals/board-move-gate';
 
 interface DealDetailModalProps {
   dealId: string | null;
@@ -112,6 +114,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const createActivityMutation = useCreateActivity();
   const markMeetingHeld = useMarkMeetingHeld();
   const cancelMeeting = useCancelMeeting();
+  const moveDealToBoard = useMoveDealToBoard();
   const updateActivityMutation = useUpdateActivity();
   const deleteActivityMutation = useDeleteActivity();
   const addActivity = (activity: Omit<import('@/types').Activity, 'id' | 'createdAt'>) => createActivityMutation.mutateAsync({ activity });
@@ -178,6 +181,8 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const [pendingLostStageId, setPendingLostStageId] = useState<string | null>(null);
   const [lossReasonOrigin, setLossReasonOrigin] = useState<'button' | 'stage'>('button');
   const [showBriefingDrawer, setShowBriefingDrawer] = useState(false);
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<Board | null>(null);
 
   // Tags suggestions (local for now; Settings UI writes to the same key)
   const [availableTags, setAvailableTags] = usePersistedState<string[]>('crm_tags', []);
@@ -206,6 +211,8 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
       setLossReasonOrigin('button');
       setTagQuery('');
       setShowBriefingDrawer(false);
+      setShowMoveModal(false);
+      setMoveTarget(null);
     }
   }, [isOpen, dealId]); // Depend on dealId to reset when switching deals
 
@@ -237,6 +244,29 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   }, [activities, deal]);
 
   if (!isOpen || !deal) return null;
+
+  // Move entre funis (feature de move manual): nome de quem move + portão de dados.
+  const moverName =
+    profile?.nickname ||
+    [profile?.first_name, profile?.last_name].filter(Boolean).join(' ').trim() ||
+    profile?.email?.split('@')[0] ||
+    'Usuário';
+  const moveMissing = moveTarget ? missingForBoardMove(moveTarget.id, deal.customFields) : [];
+  const handleConfirmMove = () => {
+    if (!moveTarget) return;
+    const targetName = moveTarget.name;
+    moveDealToBoard.mutate(
+      { deal, targetBoard: moveTarget, moverName },
+      {
+        onSuccess: () => {
+          addToast(`Card movido para ${targetName}.`, 'success');
+          onClose();
+        },
+        onError: (e: unknown) =>
+          addToast((e as Error)?.message || 'Falha ao mover o card.', 'warning'),
+      },
+    );
+  };
 
   const addDealTag = (raw: string) => {
     const next = normalizeTag(raw);
@@ -499,32 +529,8 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                     ${deal.value.toLocaleString()}
                   </p>
                 )}
-                {/* Data/hora da reunião em DESTAQUE — o consultor bate o olho e vê quando é a
-                    ligação, sem caçar na timeline. Some depois de realizada. */}
-                {(() => {
-                  const ra = deal.customFields?.reuniao_agendada as
-                    | { status?: string; label?: string; data_hora?: string; datetime?: string }
-                    | undefined;
-                  const confirmada = ra?.status === 'confirmada' || ra?.status === 'confirmed';
-                  const jaRealizada = !!(deal.customFields as Record<string, unknown> | undefined)?.reuniao_realizada;
-                  if (!confirmada || jaRealizada) return null;
-                  const iso = ra?.data_hora || ra?.datetime;
-                  const label =
-                    ra?.label ||
-                    (iso
-                      ? new Date(iso).toLocaleString('pt-BR', {
-                          weekday: 'long', day: '2-digit', month: '2-digit',
-                          hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
-                        })
-                      : null);
-                  if (!label) return null;
-                  return (
-                    <div className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300 border border-primary-200 dark:border-primary-500/30">
-                      <CalendarClock size={16} aria-hidden="true" />
-                      <span className="text-sm font-bold">Reunião: {label}</span>
-                    </div>
-                  );
-                })()}
+                {/* A data/hora da reunião aparece na PRÓPRIA atividade "Ligação diagnóstica"
+                    da timeline (ActivityRow, tipo CALL) — não mais num banner solto aqui. */}
               </div>
               <div className="flex gap-3 items-center">
                 {/* Se fechado: mostra badge + botão Reabrir */}
@@ -655,6 +661,15 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                     </button>
                   ) : null;
                 })()}
+                <button
+                  onClick={() => setShowMoveModal(true)}
+                  className="ml-2 px-3 py-1.5 bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/10 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
+                  title="Mover este card para outro funil"
+                  aria-label="Mover para outro funil"
+                >
+                  <ArrowRightLeft size={14} aria-hidden="true" />
+                  <span className="hidden sm:inline">Mover</span>
+                </button>
                 <button
                   onClick={() => setShowBriefingDrawer(true)}
                   className="ml-2 px-3 py-1.5 bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
@@ -1378,6 +1393,80 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
             if (lossReasonOrigin === 'button') onClose();
           }}
           dealTitle={deal.title}
+        />
+
+        {/* Mover para outro funil — seleção do destino */}
+        {showMoveModal && (
+          <div
+            className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mover para outro funil"
+            onClick={(e) => { if (e.target === e.currentTarget) setShowMoveModal(false); }}
+          >
+            <div className="bg-white dark:bg-dark-card rounded-2xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-white/10 p-6">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white font-display mb-1">Mover para outro funil</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                O card sai deste funil e entra na primeira etapa do funil escolhido.
+              </p>
+              <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+                {boards.filter((b) => b.id !== deal.boardId).length === 0 ? (
+                  <p className="text-sm text-slate-500 italic">Não há outro funil pra onde mover.</p>
+                ) : (
+                  boards
+                    .filter((b) => b.id !== deal.boardId)
+                    .map((b) => {
+                      const missing = missingForBoardMove(b.id, deal.customFields);
+                      return (
+                        <button
+                          key={b.id}
+                          onClick={() => { setMoveTarget(b); setShowMoveModal(false); }}
+                          className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 dark:border-white/10 hover:border-primary-400 dark:hover:border-primary-500/50 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors flex items-center justify-between gap-3"
+                        >
+                          <span className="font-medium text-slate-900 dark:text-white truncate">{b.name}</span>
+                          {missing.length > 0 && (
+                            <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20">
+                              faltam {missing.length}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })
+                )}
+              </div>
+              <div className="mt-5 flex justify-end">
+                <button
+                  onClick={() => setShowMoveModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmação do move — com o aviso do portão (avisa e deixa mover) */}
+        <ConfirmModal
+          isOpen={!!moveTarget}
+          onClose={() => setMoveTarget(null)}
+          onConfirm={handleConfirmMove}
+          title={moveTarget ? `Mover para ${moveTarget.name}` : ''}
+          message={
+            moveMissing.length > 0 ? (
+              <div className="text-left">
+                <p className="mb-2">Faltam dados obrigatórios pra entrar no funil do Consultor:</p>
+                <ul className="list-disc list-inside text-sm text-amber-700 dark:text-amber-300 mb-3 space-y-0.5">
+                  {moveMissing.map((m) => <li key={m}>{m}</li>)}
+                </ul>
+                <p>Mover <strong>{deal.title}</strong> mesmo assim?</p>
+              </div>
+            ) : (
+              <p>Mover <strong>{deal.title}</strong> para <strong>{moveTarget?.name}</strong>?</p>
+            )
+          }
+          confirmText="Mover"
+          variant="primary"
         />
 
         <BriefingDrawer

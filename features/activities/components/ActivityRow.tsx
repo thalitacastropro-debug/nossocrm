@@ -87,6 +87,23 @@ const ActivityRowComponent: React.FC<ActivityRowProps> = ({
         return date.toLocaleDateString('pt-BR');
     };
 
+    // Para reunião/ligação AGENDADA (CALL/MEETING), o `date` é o horário marcado.
+    // Mostrar a data/hora absoluta ("seg, 20/07 às 15:00") é mais útil que "ontem":
+    // o consultor bate o olho e vê QUANDO é a ligação, direto na atividade.
+    const formatScheduledDateTime = (dateString: string) => {
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return formatRelativeTime(dateString);
+        const datePart = date
+            .toLocaleDateString('pt-BR', {
+                weekday: 'short', day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo',
+            })
+            .replace('.,', ','); // "seg., 20/07" → "seg, 20/07"
+        const timePart = date.toLocaleTimeString('pt-BR', {
+            hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
+        });
+        return `${datePart} às ${timePart}`;
+    };
+
     const formatTitle = (title: string) => {
         if (title.includes('Moveu para')) {
             const status = title.replace('Moveu para ', '');
@@ -102,6 +119,8 @@ const ActivityRowComponent: React.FC<ActivityRowProps> = ({
 
     const isSystemActivity = activity.type === 'STATUS_CHANGE';
     const isOverdue = new Date(activity.date) < new Date() && !activity.completed;
+    // Reunião/ligação marcada: mostra a data/hora do compromisso, não o "há X".
+    const isScheduled = activity.type === 'CALL' || activity.type === 'MEETING';
 
     if (isSystemActivity) {
         return (
@@ -184,9 +203,9 @@ const ActivityRowComponent: React.FC<ActivityRowProps> = ({
                             <span className="truncate max-w-[280px]">{company.name}</span>
                         </span>
                     )}
-                    <span className="flex items-center gap-1.5">
+                    <span className={`flex items-center gap-1.5 ${isScheduled ? 'font-semibold text-slate-700 dark:text-slate-200' : ''}`}>
                         <Clock size={14} />
-                        {formatRelativeTime(activity.date)}
+                        {isScheduled ? formatScheduledDateTime(activity.date) : formatRelativeTime(activity.date)}
                     </span>
                 </div>
             </div>

@@ -7,18 +7,18 @@ export default function manifest(): MetadataRoute.Manifest {
     description: 'CRM Inteligente para Gestão de Vendas',
     start_url: '/boards',
     display: 'standalone',
-    background_color: '#ffffff',
-    theme_color: '#0ea5e9',
+    background_color: '#0B1F3A',
+    theme_color: '#0B1F3A',
     icons: [
-      // SVG icons keep the repo text-only. If you need iOS splash/touch icons later,
-      // add PNGs in a follow-up.
+      // Marca NIVA: escudo branco em quadrado navy (base-conhecimento-niva),
+      // SVG com o escudo embutido (repo é text-only: *.png é gitignored).
       {
-        src: '/icons/icon.svg',
+        src: '/brand/niva-symbol.svg',
         sizes: 'any',
         type: 'image/svg+xml',
       },
       {
-        src: '/icons/maskable.svg',
+        src: '/brand/niva-symbol.svg',
         sizes: 'any',
         type: 'image/svg+xml',
         purpose: 'maskable',

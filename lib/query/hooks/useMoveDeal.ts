@@ -395,3 +395,89 @@ export const useMoveDealSimple = (
     error: moveDealMutation.error,
   };
 };
+
+interface MoveDealToBoardParams {
+  deal: Deal | DealView;
+  targetBoard: Board;
+  /** Nome de quem está movendo (vai pra timeline). */
+  moverName: string;
+}
+
+/**
+ * MOVE (não copia) um deal para OUTRO funil.
+ *
+ * Atualiza `board_id` + etapa de entrada no MESMO deal — consistente com a decisão
+ * do handoff Ana→Consultor (uma fonte de verdade: a CALL/`custom_fields` viajam com
+ * o card, sem cópia congelada). Registra QUEM moveu na timeline.
+ *
+ * O portão de dados (quando destino = Consultor) é da UI (avisa e deixa mover) —
+ * este hook só executa o move.
+ */
+export const useMoveDealToBoard = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    { dealId: string; boardId: string; status: string },
+    Error,
+    MoveDealToBoardParams,
+    { previousDeals: DealView[] | undefined }
+  >({
+    mutationFn: async ({ deal, targetBoard, moverName }) => {
+      const entryStageId = targetBoard.stages?.[0]?.id;
+      if (!entryStageId) throw new Error(`O funil "${targetBoard.name}" não tem etapas.`);
+
+      const updates: Partial<Deal> = {
+        boardId: targetBoard.id,
+        status: entryStageId,
+        lastStageChangeDate: new Date().toISOString(),
+        // Re-entra num funil novo → reabre (limpa ganho/perda do funil anterior).
+        isWon: false,
+        isLost: false,
+        closedAt: null as unknown as string,
+      };
+
+      const { error } = await dealsService.update(deal.id, updates);
+      if (error) throw error;
+
+      // Timeline: registra o move E quem fez (pedido da Thalita).
+      activitiesService.create({
+        dealId: deal.id,
+        dealTitle: deal.title,
+        type: 'STATUS_CHANGE',
+        title: `Movido para ${targetBoard.name}`,
+        description: `Movido manualmente por ${moverName}`,
+        date: new Date().toISOString(),
+        completed: true,
+        user: { name: moverName, avatar: '' },
+      } as Omit<Activity, 'id' | 'createdAt'>).catch(console.error);
+
+      return { dealId: deal.id, boardId: targetBoard.id, status: entryStageId };
+    },
+
+    onMutate: async ({ deal, targetBoard }) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.deals.all });
+      const previousDeals = queryClient.getQueryData<DealView[]>(DEALS_VIEW_KEY);
+      const entryStageId = targetBoard.stages?.[0]?.id;
+
+      queryClient.setQueryData<DealView[]>(DEALS_VIEW_KEY, (old) =>
+        old?.map((d) =>
+          d.id === deal.id
+            ? { ...d, boardId: targetBoard.id, status: entryStageId ?? d.status, isWon: false, isLost: false, updatedAt: new Date().toISOString() }
+            : d,
+        ),
+      );
+      queryClient.setQueryData<Deal>(queryKeys.deals.detail(deal.id), (old) =>
+        old ? { ...old, boardId: targetBoard.id, status: entryStageId ?? old.status, isWon: false, isLost: false, updatedAt: new Date().toISOString() } : old,
+      );
+
+      return { previousDeals };
+    },
+
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previousDeals) queryClient.setQueryData(DEALS_VIEW_KEY, ctx.previousDeals);
+    },
+
+    // Realtime sincroniza; não invalidar aqui (mesmo racional do useMoveDeal).
+    onSettled: () => {},
+  });
+};

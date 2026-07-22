@@ -79,6 +79,7 @@ export {
 export {
   useMoveDeal,
   useMoveDealSimple,
+  useMoveDealToBoard,
 } from './useMoveDeal';
 
 // No-show (move-back pro board da Ana + reativa IA + msg de resgate)
