@@ -2253,7 +2253,7 @@ export default function DealCockpitClient({ dealId }: { dealId?: string }) {
                     <Sparkles className="h-4 w-4 text-cyan-300" />
                   </div>
                   <div>
-                    <div className="text-sm font-semibold text-slate-100">NossoCRM Pilot</div>
+                    <div className="text-sm font-semibold text-slate-100">NIVA CRM Pilot</div>
                     <div className="text-[11px] text-slate-500">Deal: {humanizeTestLabel(deal.title) || deal.title}</div>
                   </div>
                 </div>

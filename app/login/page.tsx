@@ -148,7 +148,7 @@ export default function LoginPage() {
                 </div>
 
                 <p className="mt-8 text-center text-xs text-slate-400 dark:text-slate-500">
-                    &copy; {new Date().getFullYear()} CRM IA. Todos os direitos reservados.
+                    &copy; {new Date().getFullYear()} NIVA CRM. Todos os direitos reservados.
                 </p>
             </div>
         </div>

@@ -637,7 +637,7 @@ export async function POST(req: Request) {
     // 6. Stream response
     const result = streamText({
         model,
-        system: `Você é o assistente inteligente do NossoCRM. Você tem acesso completo ao CRM e pode:
+        system: `Você é o assistente inteligente do NIVA CRM. Você tem acesso completo ao CRM e pode:
 
 - Buscar e analisar deals, contatos e atividades
 - Criar novas atividades, deals e tarefas

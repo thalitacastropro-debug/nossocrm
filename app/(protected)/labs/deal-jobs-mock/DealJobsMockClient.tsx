@@ -220,7 +220,7 @@ export default function DealJobsMockClient() {
                   <Sparkles className="h-4 w-4 text-cyan-300" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold">NossoCRM Copilot</div>
+                  <div className="text-sm font-semibold">NIVA CRM Copilot</div>
                   <div className="text-xs text-slate-500">1 sugestão por vez</div>
                 </div>
               </div>
