@@ -469,8 +469,8 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
     >
           {/* HEADER (Stage Bar + Won/Lost) */}
           <div className="bg-slate-50 dark:bg-black/20 border-b border-slate-200 dark:border-white/10 p-6 shrink-0">
-            <div className="flex justify-between items-start mb-6">
-              <div className="flex-1 mr-8">
+            <div className="flex justify-between items-start gap-4 mb-4">
+              <div className="min-w-0 flex-1">
                 {isEditingTitle ? (
                   <div className="flex gap-2 mb-1">
                     <input
@@ -532,7 +532,17 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                 {/* A data/hora da reunião aparece na PRÓPRIA atividade "Ligação diagnóstica"
                     da timeline (ActivityRow, tipo CALL) — não mais num banner solto aqui. */}
               </div>
-              <div className="flex gap-3 items-center">
+              <button
+                onClick={onClose}
+                className="shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                aria-label="Fechar modal"
+              >
+                <X size={24} aria-hidden="true" />
+              </button>
+            </div>
+
+            {/* Barra de ações — o nome ganha a linha inteira acima; as ações não espremem mais o título */}
+            <div className="flex flex-wrap items-center gap-2 mb-6">
                 {/* Se fechado: mostra badge + botão Reabrir */}
                 {(deal.isWon || deal.isLost) ? (
                   <>
@@ -622,6 +632,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                     </button>
                   </>
                 )}
+                <span className="w-px h-6 bg-slate-200 dark:bg-white/10 mx-1 shrink-0" aria-hidden="true" />
                 {deal.boardId === CONSULTOR_BOARD_ID && !(deal.customFields as Record<string, unknown> | undefined)?.reuniao_realizada && (
                   <button
                     onClick={() => {
@@ -630,7 +641,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                       }
                     }}
                     disabled={markMeetingHeld.isPending}
-                    className="ml-2 px-3 py-1.5 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    className="px-3 py-1.5 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
                     title="Marcar reunião realizada (métrica Agendadas→Realizadas)"
                     aria-label="Marcar reunião realizada"
                   >
@@ -652,7 +663,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                         }
                       }}
                       disabled={cancelMeeting.isPending}
-                      className="ml-2 px-3 py-1.5 bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300 hover:bg-rose-200 dark:hover:bg-rose-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                      className="px-3 py-1.5 bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300 hover:bg-rose-200 dark:hover:bg-rose-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
                       title="Cancelar a reunião marcada"
                       aria-label="Cancelar reunião"
                     >
@@ -663,7 +674,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                 })()}
                 <button
                   onClick={() => setShowMoveModal(true)}
-                  className="ml-2 px-3 py-1.5 bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/10 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
+                  className="px-3 py-1.5 bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/10 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
                   title="Mover este card para outro funil"
                   aria-label="Mover para outro funil"
                 >
@@ -672,7 +683,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                 </button>
                 <button
                   onClick={() => setShowBriefingDrawer(true)}
-                  className="ml-2 px-3 py-1.5 bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
+                  className="px-3 py-1.5 bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
                   title="Preparar para a conversa com este lead"
                   aria-label="Preparar conversa com este lead"
                 >
@@ -681,21 +692,13 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                 </button>
                 <button
                   onClick={() => setDeleteId(deal.id)}
-                  className="ml-2 text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                  className="ml-auto text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
                   title="Excluir Negócio"
                   aria-label="Excluir negócio"
                 >
                   <Trash2 size={24} aria-hidden="true" />
                 </button>
-                <button
-                  onClick={onClose}
-                  className="ml-2 text-slate-400 hover:text-slate-600 dark:hover:text-white"
-                  aria-label="Fechar modal"
-                >
-                  <X size={24} aria-hidden="true" />
-                </button>
               </div>
-            </div>
 
             {dealBoard ? (
               <StageProgressBar
