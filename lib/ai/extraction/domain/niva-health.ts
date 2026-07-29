@@ -101,7 +101,29 @@ export function classifyTier(f: {
     return { tier: 'fora_icp', motivos: ['Sem CNPJ e não quer abrir MEI'], provisorio: false };
   }
   if (f.vidas != null && f.vidas < 2) {
-    return { tier: 'fora_icp', motivos: ['Apenas 1 vida (plano individual, fora do perfil)'], provisorio: false };
+    // 1 vida = plano individual, em geral fora do perfil empresarial. EXCEÇÃO (política da Thalita,
+    // 27/07): se o que a pessoa paga hoje for ALTO (> R$1.500/mês), é alto ticket individual e vale
+    // a avaliação do consultor — não elimina. Sem valor conhecido (ex.: primeiro plano), não dá pra
+    // presumir alto ticket → fora do perfil.
+    const altoTicket1Vida = valor != null && valor > 1500;
+    if (!altoTicket1Vida) {
+      return { tier: 'fora_icp', motivos: ['Apenas 1 vida (plano individual, fora do perfil)'], provisorio: false };
+    }
+    // Alto ticket, mas o produto é EMPRESARIAL (exige CNPJ). Se o CNPJ ainda é desconhecido, não crava
+    // 'prata' prematuro (nem semeia no intake): fica indefinido/provisório e o consultor confirma. Com
+    // CNPJ conhecido (pme/mei/vai_abrir_mei — 'nao_tem' já foi eliminado acima) → prata provisório.
+    if (f.tem_cnpj === 'desconhecido') {
+      return {
+        tier: 'indefinido',
+        motivos: ['1 vida com ticket alto — confirmar CNPJ (o consultor avalia)'],
+        provisorio: true,
+      };
+    }
+    return {
+      tier: 'prata',
+      motivos: ['1 vida, mas ticket alto', `paga R$${valor} hoje (o consultor avalia)`],
+      provisorio: true,
+    };
   }
 
   // 2. Dados essenciais ausentes → provisório

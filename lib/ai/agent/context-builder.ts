@@ -163,6 +163,7 @@ export async function buildLeadContext(
   let leadForm: LeadContext['lead_form'] = null;
   let qualificacao: LeadContext['qualificacao'] = null;
   let reuniaoAgendada: LeadContext['reuniao_agendada'] = null;
+  let tier: LeadContext['tier'] = null;
   if (dealResult.data) {
     const customFields = (dealResult.data as { custom_fields?: Record<string, unknown> }).custom_fields;
     const lf = customFields?.lead_form as Record<string, unknown> | undefined;
@@ -181,6 +182,11 @@ export async function buildLeadContext(
     const qual = customFields?.qualificacao as Record<string, unknown> | undefined;
     if (qual && typeof qual === 'object' && Object.keys(qual).length > 0) {
       qualificacao = qual;
+    }
+    // Tier/ICP já classificado (do turno anterior — extração é async). Backstop de gate + escalação.
+    const tierField = customFields?.tier as { value?: unknown } | undefined;
+    if (tierField && typeof tierField.value === 'string') {
+      tier = tierField.value;
     }
     // Reunião já agendada (agenda real) — o wiring usa activity_id/status pra remarcar/cancelar.
     const ra = customFields?.reuniao_agendada as Record<string, unknown> | undefined;
@@ -241,6 +247,7 @@ export async function buildLeadContext(
     deal,
     lead_form: leadForm,
     qualificacao,
+    tier,
     reuniao_agendada: reuniaoAgendada,
     stage,
     messages,
@@ -494,6 +501,8 @@ export function formatContextForPrompt(
       lines.push(`O horário que o lead pediu acabou de ser preenchido. Peça desculpa e ofereça: ${alts}.`);
     } else if (st.kind === 'cancelled') {
       lines.push('A reunião foi cancelada. NUNCA deixe solto: puxe um novo horário agora ou avise que o consultor reorganiza.');
+    } else if (st.kind === 'declined') {
+      lines.push('O lead RECUSOU os horários oferecidos. Acolha sem insistir e NÃO re-jogue os mesmos horários. Se ele só não pôde nesses, ofereça de leve outras opções da lista acima que você ainda não ofereceu. Se ele já recusou tudo ou não quer marcar agora, diga que o consultor vê a melhor data e te retorna aqui no WhatsApp, e encerre sua parte.');
     }
     lines.push('');
   }

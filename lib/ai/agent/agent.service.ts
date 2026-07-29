@@ -19,6 +19,7 @@ import { extractAndUpdateBANT } from '../extraction/extraction.service';
 import { runDomainExtraction } from '../extraction/domain-extraction.service';
 import { runScheduling } from '../scheduling/scheduling.service';
 import { handoffToNextBoard } from '../scheduling/handoff';
+import { noteDeclineAndCheckEscalation, escalateToConsultor } from '../scheduling/escalation';
 import { evaluateStageAdvancement } from './stage-evaluator';
 import {
   buildConversationalPromptFromPatterns,
@@ -564,39 +565,62 @@ export async function processIncomingMessage(
   // verdadeira (ela só diz "fechado" se o booker realmente marcou). Falha = segue sem agenda.
   // justConfirmedMeeting: reunião confirmada neste turno → dispara o handoff pro consultor no fim.
   let justConfirmedMeeting = false;
+  let escalateStuckLead = false;
   try {
-    const sched = await runScheduling({
-      supabase,
-      boardId: deal.board_id,
-      organizationId,
-      conversationId,
-      dealId,
-      contactId: conversation?.contact_id ?? null,
-      leadName: context.contact?.name ?? 'lead',
-      summary: buildConsultantSummary(context.qualificacao),
-      reuniaoAgendada: context.reuniao_agendada ?? null,
-      aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model, structuredApiKey: aiConfig.structuredApiKey, structuredModel: aiConfig.structuredModel },
-      dryRun: isDryRun,
-      consultantUserId: boardAIConfig?.consultant_user_id ?? null,
-      now: new Date(),
-      offeredBefore: context.stats.ai_messages_count >= 1 && context.stage.name !== 'Novo Lead',
-    });
-    context.available_slots = sched.available;
-    context.scheduling_status = sched.status;
-    justConfirmedMeeting = !isDryRun && sched.status.kind === 'confirmed';
-    if (isDryRun) {
-      console.log(
-        '[Scheduling][observe] status=%s slots=%d intent=%s slot=%s deal=%s',
-        sched.status.kind,
-        sched.available.length,
-        sched.detected?.intent ?? 'n/a',
-        sched.detected?.slotIso ?? 'n/a',
+    if (context.tier === 'fora_icp') {
+      // Fix 1b: lead FORA DO PERFIL não recebe horário nem é agendado (backstop do gate da persona).
+      // O tier é do turno anterior — fora_icp raramente vira qualificado; o guard do is_lost + a
+      // persona cobrem o caso raro de o lead qualificar e aceitar um horário no MESMO turno.
+      context.available_slots = [];
+      context.scheduling_status = { kind: 'none' };
+    } else {
+      const sched = await runScheduling({
+        supabase,
+        boardId: deal.board_id,
+        organizationId,
+        conversationId,
         dealId,
-      );
+        contactId: conversation?.contact_id ?? null,
+        leadName: context.contact?.name ?? 'lead',
+        summary: buildConsultantSummary(context.qualificacao),
+        reuniaoAgendada: context.reuniao_agendada ?? null,
+        aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model, structuredApiKey: aiConfig.structuredApiKey, structuredModel: aiConfig.structuredModel },
+        dryRun: isDryRun,
+        consultantUserId: boardAIConfig?.consultant_user_id ?? null,
+        now: new Date(),
+        offeredBefore: context.stats.ai_messages_count >= 1 && context.stage.name !== 'Novo Lead',
+      });
+      context.available_slots = sched.available;
+      context.scheduling_status = sched.status;
+      justConfirmedMeeting = !isDryRun && sched.status.kind === 'confirmed';
+      // Fix 2: lead qualificado recusou os horários → conta a recusa; na 2ª, marca pra escalar pro
+      // consultor no fim do turno (depois da Ana dizer "o consultor te retorna"). Anti-morte-calada
+      // (caso Arthur). Lead fora do perfil nem chega aqui (cai no ramo acima).
+      if (!isDryRun && sched.status.kind === 'declined') {
+        escalateStuckLead = await noteDeclineAndCheckEscalation(supabase, dealId);
+      }
+      if (isDryRun) {
+        console.log(
+          '[Scheduling][observe] status=%s slots=%d intent=%s slot=%s deal=%s',
+          sched.status.kind,
+          sched.available.length,
+          sched.detected?.intent ?? 'n/a',
+          sched.detected?.slotIso ?? 'n/a',
+          dealId,
+        );
+      }
     }
   } catch (err) {
     console.error('[Scheduling] falhou (seguindo sem agenda):', err);
   }
+
+  // try/finally (fix Lay 27/07): o handoff Ana->Consultor precisa rodar em QUALQUER caminho de saída
+  // quando a reunião foi confirmada neste turno (justConfirmedMeeting, setado no passo 8.7 acima).
+  // Antes ele só rodava dentro do bloco 'responded' (passo 13.5) — se o turno que confirmou a reunião
+  // não enviava resposta (skipped/rate-limit/send-fail) OU a geração lançava exceção, o bookSlot já
+  // tinha marcado a reunião mas o move NUNCA acontecia: a lead ficava presa no SDR e a Ana reengajava.
+  // Abrimos o try ANTES da geração pra cobrir também exceção na geração; o finally centraliza o move.
+  try {
 
   // 9. Gerar resposta usando configuração de AI do banco
   const decision = await generateResponse({
@@ -805,17 +829,6 @@ export async function processIncomingMessage(
       }
     }
 
-    // 13.5. Handoff Ana->Consultor: reunião REAL confirmada neste turno → MOVE o deal pro board do
-    // consultor (DEPOIS do avanço de etapa, senão o stage_id do move seria sobrescrito). Best-effort
-    // + idempotente (flag handoff_consultor). A resposta ao lead já foi enviada; o move nunca a afeta.
-    if (justConfirmedMeeting) {
-      try {
-        await handoffToNextBoard({ supabase, dealId, sourceBoardId: deal.board_id, organizationId });
-      } catch (err) {
-        console.error('[AIAgent] Handoff Ana->Consultor falhou (não-fatal):', err);
-      }
-    }
-
     return {
       success: true,
       decision,
@@ -829,6 +842,42 @@ export async function processIncomingMessage(
     success: true,
     decision,
   };
+  } finally {
+    // 13.5. Handoff Ana->Consultor: reunião REAL confirmada neste turno → MOVE o deal pro board do
+    // consultor. Roda no finally pra cobrir TODOS os caminhos de saída (responded, skipped, send-fail,
+    // exceção) — o avanço de etapa (passo 13, dentro do bloco 'responded') já rodou antes do return,
+    // então a ordem "avanço -> move" é preservada e o stage_id do move não é sobrescrito. Best-effort
+    // + idempotente (flag handoff_consultor): nunca move duas vezes nem afeta a resposta já enviada.
+    if (justConfirmedMeeting) {
+      try {
+        await handoffToNextBoard({ supabase, dealId, sourceBoardId: deal.board_id, organizationId });
+      } catch (err) {
+        console.error('[AIAgent] Handoff Ana->Consultor falhou (não-fatal):', err);
+      }
+    }
+
+    // Fix 2 (escalação "precisa humano"): lead QUALIFICADO que recusou horários 2x → MOVE pro
+    // Consultor/Qualificação + alerta (handleHandoff = Telegram + handoff pendente no inbox). Roda
+    // depois da resposta da Ana ("o consultor te retorna"), pra o lead não morrer calado (caso
+    // Arthur). Idempotente (flag escalated_consultor no escalateToConsultor). Só alerta se moveu.
+    if (escalateStuckLead) {
+      try {
+        const moved = await escalateToConsultor(supabase, dealId, deal.board_id, organizationId);
+        if (moved) {
+          await handleHandoff(
+            supabase,
+            conversationId,
+            organizationId,
+            context,
+            'Lead qualificado sem encaixe de horário (2 recusas) — precisa do contato do consultor',
+            incomingMessage,
+          );
+        }
+      } catch (err) {
+        console.error('[AIAgent] Escalação Consultor (sem encaixe) falhou (não-fatal):', err);
+      }
+    }
+  }
 }
 
 // =============================================================================

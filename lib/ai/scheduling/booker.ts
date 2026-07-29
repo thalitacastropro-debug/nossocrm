@@ -131,6 +131,12 @@ export async function bookSlot(params: BookSlotParams): Promise<BookSlotResult> 
         },
       },
       tags,
+      // Agendar é sinal positivo forte: REEXIBE o card se ele tiver sido escondido antes
+      // (is_lost=true por classificação fora-ICP num turno ANTERIOR, antes de o lead ceder e marcar).
+      // O guard da extração impede um NOVO is_lost quando há reunião, mas não LIMPA um is_lost já
+      // gravado — sem isto, um card com reunião REAL continuaria oculto (revisão adversarial 27/07).
+      is_lost: false,
+      closed_at: null,
       updated_at: new Date().toISOString(),
     })
     .eq('id', dealId);

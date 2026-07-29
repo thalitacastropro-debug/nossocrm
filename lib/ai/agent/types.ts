@@ -99,6 +99,11 @@ export interface LeadContext {
   /** Campos de qualificação já extraídos da conversa (deals.custom_fields.qualificacao) */
   qualificacao?: Record<string, unknown> | null;
 
+  /** Tier/ICP já classificado (deals.custom_fields.tier.value): ouro|prata|bronze|indefinido|fora_icp.
+   *  Do turno anterior (a extração é async) — usado como backstop de gate (não agendar fora-ICP) e
+   *  pra decidir escalar lead qualificado que trava no agendamento. */
+  tier?: string | null;
+
   /** Horários livres pra oferecer (agenda real). Vazio quando não aplicável. */
   available_slots?: import('../scheduling/types').Slot[];
 

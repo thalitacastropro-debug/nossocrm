@@ -129,8 +129,18 @@ export async function runDomainExtraction(
     }
     if (applyResult.lossReason) {
       update.loss_reason = applyResult.lossReason;
+      // GUARD (P0 24/07 — cards da Graci/Giovana "sumiram"): um lead com reunião JÁ confirmada
+      // ou já entregue ao consultor (handoff) NUNCA é marcado perdido pela extração. Marcar a
+      // reunião é a verdade da intenção do lead (ele topou falar com o consultor); setar is_lost
+      // sobrescreve isso e SOME com o card (o board filtra 'open' = esconde is_lost), fazendo o
+      // consultor perder um agendamento real. Mantemos o loss_reason como CONTEXTO pro consultor
+      // (ex.: "só quer cotação e recusa diagnóstico"), mas o card continua vivo e visível.
+      const cf = (deal?.custom_fields as Record<string, unknown> | null | undefined) ?? {};
+      const reuniao = cf.reuniao_agendada as { status?: string } | undefined;
+      const meetingConfirmed = reuniao?.status === 'confirmada' || reuniao?.status === 'confirmed';
+      const alreadyHandedOff = cf.handoff_consultor != null;
       // Mover o card pra "perdido" é ação — só fora do dry-run (observe não move card).
-      if (!dryRun) update.is_lost = true;
+      if (!dryRun && !meetingConfirmed && !alreadyHandedOff) update.is_lost = true;
     }
 
     const { error: updateError } = await supabase.from('deals').update(update).eq('id', dealId);

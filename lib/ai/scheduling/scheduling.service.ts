@@ -159,5 +159,11 @@ export async function runScheduling(params: RunSchedulingParams): Promise<RunSch
     }
   }
 
+  // Lead recusou os horários oferecidos sem escolher outro → sinaliza 'declined' (Fix 2): o
+  // agent.service conta a recusa e, na 2ª de um lead qualificado, escala pro consultor.
+  if (detect.intent === 'decline') {
+    return { available, status: { kind: 'declined' }, detected: detect };
+  }
+
   return { available, status: { kind: 'none' }, detected: detect };
 }

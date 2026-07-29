@@ -11,8 +11,10 @@ import { getModel, type AIProvider } from '../config';
 import type { DetectResult, Slot } from './types';
 
 const DetectSchema = z.object({
-  intent: z.enum(['accept', 'reschedule', 'cancel', 'none']).describe(
-    'accept: lead aceitou um horário oferecido. reschedule: já tinha marcado e quer mudar. cancel: quer desmarcar. none: nada de agendamento agora.',
+  intent: z.enum(['accept', 'reschedule', 'cancel', 'decline', 'none']).describe(
+    'accept: lead aceitou um horário oferecido. reschedule: já tinha marcado e quer mudar. cancel: quer desmarcar. ' +
+      'decline: horários JÁ FORAM oferecidos e o lead os RECUSOU sem escolher outro (ex.: "nenhum", "não consigo nesses", "nesse horário não", "prefiro WhatsApp", "não quero ligação"). ' +
+      'none: nada de agendamento agora (ainda não ofereceram horário, ou o lead só respondeu qualificação, ou deu uma preferência de período vaga sem recusar).',
   ),
   slotIso: z.string().nullable().describe(
     'Horário aceito/desejado em ISO UTC, EXATAMENTE igual a um dos "Horários oferecidos". null se não deu pra casar.',

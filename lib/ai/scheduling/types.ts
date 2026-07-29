@@ -37,7 +37,7 @@ export interface AvailabilityConfig {
 
 /** Intenção do lead detectada na conversa. */
 export interface DetectResult {
-  intent: 'accept' | 'reschedule' | 'cancel' | 'none';
+  intent: 'accept' | 'reschedule' | 'cancel' | 'decline' | 'none';
   /** Horário aceito/desejado em ISO UTC, se houver — deve bater com um Slot oferecido. */
   slotIso: string | null;
 }
@@ -47,4 +47,7 @@ export type SchedulingStatus =
   | { kind: 'none' }
   | { kind: 'confirmed'; label: string }
   | { kind: 'slot_taken'; alternatives: Slot[] }
-  | { kind: 'cancelled' };
+  | { kind: 'cancelled' }
+  // Lead RECUSOU os horários oferecidos sem escolher outro (ex.: "nenhum", "prefiro WhatsApp").
+  // Alimenta o contador de recusas (Fix 2): na 2ª, lead qualificado é escalado pro consultor.
+  | { kind: 'declined' };

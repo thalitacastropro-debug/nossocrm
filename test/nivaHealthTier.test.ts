@@ -28,8 +28,26 @@ describe('classifyTier (§10.1)', () => {
   it('fora_icp: sem CNPJ e não quer MEI', () => {
     expect(classifyTier({ ...base, tem_cnpj: 'nao_tem' }).tier).toBe('fora_icp');
   });
-  it('fora_icp: 1 vida (individual)', () => {
-    expect(classifyTier({ ...base, vidas: 1, idades: [30] }).tier).toBe('fora_icp');
+  // 1 vida: individual, em geral fora do perfil — EXCETO alto ticket (> R$1.500) com CNPJ conhecido
+  // (política Thalita 27/07). base paga 6000, então explicitamos o valor em cada caso.
+  it('fora_icp: 1 vida com ticket baixo (≤ 1500)', () => {
+    expect(classifyTier({ ...base, vidas: 1, idades: [30], valor_pago_exato: 800 }).tier).toBe('fora_icp');
+  });
+  it('fora_icp: 1 vida sem valor informado (não presume alto ticket)', () => {
+    expect(classifyTier({ ...base, vidas: 1, idades: [30], valor_pago_exato: null }).tier).toBe('fora_icp');
+  });
+  it('fora_icp: 1 vida com valor exatamente 1500 (fronteira estrita, > 1500)', () => {
+    expect(classifyTier({ ...base, vidas: 1, idades: [30], valor_pago_exato: 1500 }).tier).toBe('fora_icp');
+  });
+  it('prata provisório: 1 vida com ticket alto (> 1500) e CNPJ conhecido', () => {
+    const r = classifyTier({ ...base, vidas: 1, idades: [30], valor_pago_exato: 2000 });
+    expect(r.tier).toBe('prata');
+    expect(r.provisorio).toBe(true);
+  });
+  it('indefinido: 1 vida ticket alto mas CNPJ desconhecido (confirmar empresa)', () => {
+    const r = classifyTier({ ...base, tem_cnpj: 'desconhecido', vidas: 1, idades: [30], valor_pago_exato: 2000 });
+    expect(r.tier).toBe('indefinido');
+    expect(r.provisorio).toBe(true);
   });
   it('gate de cotação tem precedência sobre os demais', () => {
     expect(
