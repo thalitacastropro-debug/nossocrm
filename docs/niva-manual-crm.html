@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manual do CRM — Niva Consultoria</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 14px; color: #1e293b; background: #f8fafc; }
+  .container { max-width: 900px; margin: 0 auto; padding: 40px 32px; background: white; min-height: 100vh; }
+
+  /* Cover */
+  .cover { text-align: center; padding: 60px 0 50px; border-bottom: 3px solid #2563eb; margin-bottom: 48px; }
+  .cover h1 { font-size: 32px; color: #2563eb; font-weight: 800; margin-bottom: 8px; }
+  .cover .subtitle { font-size: 16px; color: #64748b; margin-bottom: 24px; }
+  .cover .meta { font-size: 12px; color: #94a3b8; }
+  .logo-badge { display: inline-block; background: #2563eb; color: white; padding: 10px 24px; border-radius: 24px; font-weight: 700; font-size: 18px; margin-bottom: 24px; letter-spacing: 1px; }
+
+  /* TOC */
+  .toc { background: #f1f5f9; border-radius: 12px; padding: 28px 32px; margin-bottom: 48px; }
+  .toc h2 { font-size: 16px; font-weight: 700; color: #2563eb; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 1px; }
+  .toc ol { padding-left: 20px; }
+  .toc li { margin-bottom: 8px; color: #334155; font-size: 14px; }
+  .toc a { color: #2563eb; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* Sections */
+  .section { margin-bottom: 56px; }
+  h2.section-title { font-size: 22px; font-weight: 800; color: #2563eb; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; margin-bottom: 24px; display: flex; align-items: center; gap: 10px; }
+  h2.section-title .num { background: #2563eb; color: white; width: 32px; height: 32px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; flex-shrink: 0; }
+  h3 { font-size: 16px; font-weight: 700; color: #1e293b; margin: 24px 0 12px; }
+  p { line-height: 1.7; color: #334155; margin-bottom: 12px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 13px; }
+  th { background: #2563eb; color: white; padding: 10px 14px; text-align: left; font-weight: 600; }
+  td { padding: 9px 14px; border-bottom: 1px solid #e2e8f0; color: #334155; }
+  tr:nth-child(even) td { background: #f8fafc; }
+  tr:hover td { background: #eff6ff; }
+
+  /* Badges */
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+  .badge-ai { background: #ede9fe; color: #7c3aed; }
+  .badge-human { background: #dcfce7; color: #16a34a; }
+  .badge-both { background: #fef9c3; color: #ca8a04; }
+
+  /* Callouts */
+  .callout { border-left: 4px solid #f59e0b; background: #fffbeb; padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .callout.info { border-color: #2563eb; background: #eff6ff; }
+  .callout.danger { border-color: #ef4444; background: #fef2f2; }
+  .callout strong { font-weight: 700; }
+
+  /* Flow diagram */
+  .flow { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; margin: 16px 0; }
+  .flow pre { font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.8; color: #334155; white-space: pre-wrap; }
+
+  /* Script boxes */
+  .script { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px 20px; margin: 12px 0; font-style: italic; color: #166534; line-height: 1.7; }
+
+  /* Stats row */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 24px 0; }
+  .stat-card { background: #eff6ff; border-radius: 10px; padding: 18px; text-align: center; }
+  .stat-card .value { font-size: 28px; font-weight: 800; color: #2563eb; }
+  .stat-card .label { font-size: 12px; color: #64748b; margin-top: 4px; }
+
+  /* Print */
+  @media print {
+    body { background: white; }
+    .container { padding: 20px; }
+    .section { page-break-inside: avoid; }
+    h2.section-title { page-break-after: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- CAPA -->
+  <div class="cover">
+    <div class="logo-badge">NIVA CONSULTORIA</div>
+    <h1>Manual do CRM</h1>
+    <p class="subtitle">Guia operacional personalizado para corretores de planos de saúde</p>
+    <p class="meta">Versão 1.0 &nbsp;|&nbsp; Maio de 2026 &nbsp;|&nbsp; NossoCRM</p>
+  </div>
+
+  <!-- SUMÁRIO -->
+  <div class="toc">
+    <h2>Sumário</h2>
+    <ol>
+      <li><a href="#s1">Visão Geral do Sistema</a></li>
+      <li><a href="#s2">Os 5 Boards e Suas Funções</a></li>
+      <li><a href="#s3">Fluxo Completo de um Lead</a></li>
+      <li><a href="#s4">Critérios de Prioridade (MQLs)</a></li>
+      <li><a href="#s5">O Que a IA Faz vs O Que o Consultor Faz</a></li>
+      <li><a href="#s6">Metas e KPIs por Board</a></li>
+      <li><a href="#s7">Atividades Padrão</a></li>
+      <li><a href="#s8">Stella — Sua Assistente no Telegram</a></li>
+      <li><a href="#s9">Scripts de Referência Rápida</a></li>
+      <li><a href="#s10">Glossário</a></li>
+    </ol>
+  </div>
+
+  <!-- 1. VISÃO GERAL -->
+  <div class="section" id="s1">
+    <h2 class="section-title"><span class="num">1</span> Visão Geral do Sistema</h2>
+    <p>O CRM da Niva Consultoria foi configurado para refletir o <strong>método comercial consultivo</strong> praticado pela equipe. O sistema organiza toda a jornada do lead — desde o primeiro contato até a renovação anual — em cinco boards conectados.</p>
+
+    <h3>Princípios do sistema</h3>
+    <div class="callout info">
+      <strong>Nenhum lead é descartado permanentemente.</strong> Todo lead que não converteu hoje entra em nutrição para ser abordado no momento certo.
+    </div>
+    <div class="callout info">
+      <strong>A IA opera, o consultor decide.</strong> A inteligência artificial cuida das etapas operacionais. O consultor humano entra nas etapas que exigem relacionamento e julgamento.
+    </div>
+    <div class="callout info">
+      <strong>Valor do deal = valor do plano.</strong> O campo "Valor" representa o prêmio mensal que o cliente paga no plano — não a comissão da corretora.
+    </div>
+
+    <h3>Sócios e metas individuais</h3>
+    <table>
+      <tr><th>Sócio</th><th>Meta mensal</th><th>Fechamentos necessários</th></tr>
+      <tr><td>Thalita Castro</td><td>R$ 20.000</td><td>~4 vendas/mês</td></tr>
+      <tr><td>Denilson</td><td>R$ 12.000</td><td>~3 vendas/mês</td></tr>
+      <tr><td><strong>Total empresa</strong></td><td><strong>R$ 35.360</strong> (inclui operacional)</td><td><strong>~7 vendas/mês</strong></td></tr>
+    </table>
+
+    <div class="stats">
+      <div class="stat-card"><div class="value">R$2.000</div><div class="label">Ticket médio (valor do plano)</div></div>
+      <div class="stat-card"><div class="value">R$5.400</div><div class="label">Prêmio médio por venda (270%)</div></div>
+      <div class="stat-card"><div class="value">R$3.360</div><div class="label">Custo operacional mensal</div></div>
+    </div>
+  </div>
+
+  <!-- 2. OS 5 BOARDS -->
+  <div class="section" id="s2">
+    <h2 class="section-title"><span class="num">2</span> Os 5 Boards e Suas Funções</h2>
+
+    <h3>Board 1 — SDR: Prospecção &nbsp;<span class="badge badge-ai">IA opera</span></h3>
+    <p>Objetivo: qualificar leads e agendar a 1ª visita com o consultor.</p>
+    <table>
+      <tr><th>Etapa</th><th>O que significa</th><th>Ação esperada</th></tr>
+      <tr><td>Novo Lead</td><td>Lead chegou, ainda não abordado</td><td>IA inicia abordagem</td></tr>
+      <tr><td>Tentativa de Contato</td><td>Ligação realizada, não conectou</td><td>IA reagenda tentativa</td></tr>
+      <tr><td>Contatado</td><td>Falou com o lead</td><td>IA aplica NAPA e tenta agendar</td></tr>
+      <tr><td>Agendado ✓</td><td>1ª visita marcada</td><td>Lead passa para Board 2</td></tr>
+      <tr><td>Descartado</td><td>Não passou no filtro NAPA</td><td>Lead vai para Board 5 (Nutrição)</td></tr>
+    </table>
+
+    <h3>Board 2 — Comercial: Consultor &nbsp;<span class="badge badge-human">Consultor opera</span></h3>
+    <p>Objetivo: converter leads qualificados em clientes.</p>
+    <table>
+      <tr><th>Etapa</th><th>O que significa</th><th>Ação esperada</th></tr>
+      <tr><td>Call Agendada</td><td>Lead vindo do SDR com visita marcada</td><td>Consultor confirma e se prepara</td></tr>
+      <tr><td>Qualificação</td><td>1ª visita realizada, diagnóstico em andamento</td><td>Consultor aplica 3 Sims e fechamentos parciais</td></tr>
+      <tr><td>Negociação</td><td>Proposta apresentada, tratando objeções</td><td>Consultor trata mín. 5 objeções</td></tr>
+      <tr><td>Em Potencial 🔥</td><td>Lead quente, decisão iminente</td><td>Acompanhamento próximo</td></tr>
+      <tr><td>Fechado — Ganho ✓</td><td>Plano contratado</td><td>Lead vai para Board 3 (Implantação)</td></tr>
+      <tr><td>Perdido</td><td>Não fechou</td><td>Lead vai para Board 5 (Nutrição)</td></tr>
+    </table>
+    <div class="callout"><strong>⚠️ No Show:</strong> Se o lead não apareceu na call agendada, o cartão volta para o SDR na etapa "Contatado" para reagendamento.</div>
+
+    <h3>Board 3 — Implantação: ADM &nbsp;<span class="badge badge-both">IA + ADM</span></h3>
+    <p>Objetivo: implantar o plano em até 15 dias úteis após o fechamento.</p>
+    <table>
+      <tr><th>Etapa</th><th>O que significa</th><th>SLA</th></tr>
+      <tr><td>Aguardando Documentação</td><td>Solicitando docs ao cliente</td><td>48h para envio</td></tr>
+      <tr><td>Em Análise</td><td>Documentação enviada à operadora</td><td>5–10 dias úteis</td></tr>
+      <tr><td>Aviso Prévio</td><td>Operadora confirmou, aguardando início</td><td>1–5 dias</td></tr>
+      <tr><td>Implantação Concluída ✓</td><td>Plano ativo</td><td>Cliente vai para Board 4</td></tr>
+      <tr><td>Cancelado</td><td>Implantação não concluída</td><td>Registrar motivo</td></tr>
+    </table>
+
+    <h3>Board 4 — Clientes Ativos (CS) &nbsp;<span class="badge badge-ai">IA opera</span></h3>
+    <p>Objetivo: manter ≥ 90% de retenção na renovação anual. NPS médio ≥ 70.</p>
+    <table>
+      <tr><th>Etapa</th><th>Período</th><th>O que a IA faz</th></tr>
+      <tr><td>Onboarding (D+1 a D+30)</td><td>Primeiros 30 dias</td><td>Boas-vindas D+1, check D+7, 1º NPS D+30</td></tr>
+      <tr><td>Acompanhamento Ativo</td><td>D+30 a D+180</td><td>Check trimestral, NPS D+90</td></tr>
+      <tr><td>NPS Realizado ✓</td><td>Após D+90</td><td>Registra nota, solicita indicação se NPS ≥ 8</td></tr>
+      <tr><td>Revisão Semestral (D+180)</td><td>6 meses</td><td>Revisa cobertura, identifica ajustes</td></tr>
+      <tr><td>Pré-Renovação (D+330)</td><td>35 dias antes do aniversário</td><td>Alerta de renovação, prepara proposta</td></tr>
+      <tr><td>Renovado ✓</td><td>Renovação confirmada</td><td>Reinicia ciclo de CS</td></tr>
+      <tr><td>Cancelado</td><td>Cliente saiu</td><td>Registrar motivo</td></tr>
+    </table>
+    <div class="callout danger"><strong>⚠️ Importante:</strong> Não existe upsell ou mudança de plano fora do aniversário da apólice. Qualquer alteração fora dessa janela gera multa contratual.</div>
+
+    <h3>Board 5 — Nutrição: Reativação &nbsp;<span class="badge badge-ai">IA opera</span></h3>
+    <p>Objetivo: reativar leads perdidos. A carteira é eterna — nenhum lead é descartado definitivamente.</p>
+    <table>
+      <tr><th>Etapa</th><th>O que significa</th><th>Ação da IA</th></tr>
+      <tr><td>Aguardando Reabertura</td><td>Lead recém descartado, aguardando timing</td><td>Inicia nutrição após 30 dias</td></tr>
+      <tr><td>Em Reaquecimento</td><td>Sequência de conteúdo ativa</td><td>Mensagens de valor sobre planos</td></tr>
+      <tr><td>Recontato Agendado</td><td>Lead demonstrou interesse novamente</td><td>IA agenda com consultor</td></tr>
+      <tr><td>Reativado ✓</td><td>Lead volta ao Board 2 (Comercial)</td><td>Consultor retoma</td></tr>
+      <tr><td>Em Hibernação 🌙</td><td>Lead pausou (tem plano recém contratado)</td><td>IA reativa no aniversário da apólice</td></tr>
+    </table>
+  </div>
+
+  <!-- 3. FLUXO -->
+  <div class="section" id="s3">
+    <h2 class="section-title"><span class="num">3</span> Fluxo Completo de um Lead</h2>
+    <div class="flow">
+      <pre>
+  [Anúncio Meta / Indicação / Lista Fria]
+              ↓
+       BOARD 1 — SDR
+       IA qualifica pelo NAPA
+              ↓
+       Agendado ✓
+              ↓
+       BOARD 2 — COMERCIAL
+       Consultor faz diagnóstico (1ª Visita)
+       Elabora proposta
+       Apresenta (2ª Visita)
+       Trata objeções (mín. 5)
+              ↓
+     ┌────────┴────────┐
+  Fechado           Perdido
+     ↓                  ↓
+  BOARD 3           BOARD 5
+  Implantação       Nutrição
+     ↓                  ↓
+  BOARD 4          (quando reativar)
+  Clientes Ativos → BOARD 2 Comercial
+     ↓
+  Renovação anual → reinicia CS
+      </pre>
+    </div>
+  </div>
+
+  <!-- 4. MQLs -->
+  <div class="section" id="s4">
+    <h2 class="section-title"><span class="num">4</span> Critérios de Prioridade (MQLs)</h2>
+    <table>
+      <tr><th>Critério</th><th>Alta 🔴</th><th>Média 🟡</th><th>Baixa ⚪</th></tr>
+      <tr><td>CNPJ</td><td>Ativo ✓</td><td>Ativo ✓ ou prof. liberal</td><td>Sem CNPJ</td></tr>
+      <tr><td>Vidas</td><td>3+</td><td>2 (com limitações)</td><td>1</td></tr>
+      <tr><td>Valor do plano atual</td><td>≥ R$ 2.000/mês</td><td>R$ 800–2.000</td><td>< R$ 800</td></tr>
+      <tr><td>Faixa etária</td><td>Todas até 64 anos</td><td>Alguma vida 65+</td><td>Maioria 65+</td></tr>
+      <tr><td>Plano atual</td><td>Identificado</td><td>Identificado</td><td>Desconhecido</td></tr>
+      <tr><td>Coparticipação</td><td>Identificada</td><td>Identificada</td><td>Não sabe</td></tr>
+    </table>
+
+    <h3>Comissões por operadora</h3>
+    <table>
+      <tr><th>Operadora</th><th>Comissão</th><th>Prêmio (ticket R$2.000)</th></tr>
+      <tr><td>Porto Seguro</td><td>250%</td><td>R$ 5.000</td></tr>
+      <tr><td>AMIL</td><td>270%</td><td>R$ 5.400</td></tr>
+      <tr><td>Sulamérica</td><td>250%</td><td>R$ 5.000</td></tr>
+      <tr><td>Alice</td><td>250%</td><td>R$ 5.000</td></tr>
+      <tr><td><strong>Bradesco</strong></td><td><strong>330%</strong></td><td><strong>R$ 6.600</strong></td></tr>
+      <tr><td><em>Média</em></td><td><em>270%</em></td><td><em>R$ 5.400</em></td></tr>
+    </table>
+  </div>
+
+  <!-- 5. IA vs CONSULTOR -->
+  <div class="section" id="s5">
+    <h2 class="section-title"><span class="num">5</span> O Que a IA Faz vs O Que o Consultor Faz</h2>
+    <table>
+      <tr><th>Tarefa</th><th>IA</th><th>Consultor</th></tr>
+      <tr><td>Primeira abordagem ao lead frio</td><td>✅</td><td></td></tr>
+      <tr><td>Qualificação NAPA</td><td>✅</td><td></td></tr>
+      <tr><td>Agendamento da 1ª visita</td><td>✅</td><td></td></tr>
+      <tr><td>Diagnóstico (1ª Visita)</td><td></td><td>✅</td></tr>
+      <tr><td>Elaboração da proposta</td><td></td><td>✅</td></tr>
+      <tr><td>Apresentação da proposta (2ª Visita)</td><td></td><td>✅</td></tr>
+      <tr><td>Tratamento de objeções</td><td></td><td>✅</td></tr>
+      <tr><td>Fechamento</td><td></td><td>✅</td></tr>
+      <tr><td>Gestão de documentação (Implantação)</td><td>✅</td><td></td></tr>
+      <tr><td>Checkpoints de CS (D+1, D+7, D+30…)</td><td>✅</td><td></td></tr>
+      <tr><td>NPS automático</td><td>✅</td><td></td></tr>
+      <tr><td>Alerta de renovação</td><td>✅</td><td></td></tr>
+      <tr><td>Nutrição de leads perdidos</td><td>✅</td><td></td></tr>
+      <tr><td>Solicitação de indicações (momento NPS)</td><td>✅</td><td></td></tr>
+      <tr><td>Decisões sobre mudança de plano</td><td></td><td>✅</td></tr>
+      <tr><td>Relacionamento estratégico</td><td></td><td>✅</td></tr>
+    </table>
+  </div>
+
+  <!-- 6. METAS -->
+  <div class="section" id="s6">
+    <h2 class="section-title"><span class="num">6</span> Metas e KPIs por Board</h2>
+    <table>
+      <tr><th>Board</th><th>KPI</th><th>Meta mínima</th><th>Meta saudável</th></tr>
+      <tr><td>SDR</td><td>Agendamentos confirmados/mês</td><td>39</td><td>50</td></tr>
+      <tr><td>Comercial</td><td>Fechamentos/mês</td><td>7</td><td>11</td></tr>
+      <tr><td>Implantação</td><td>Implantações concluídas/mês</td><td>7</td><td>11</td></tr>
+      <tr><td>Clientes Ativos</td><td>Renovações/carteira (%)</td><td>85%</td><td>90%</td></tr>
+      <tr><td>Nutrição</td><td>Reativados → Agendados/mês</td><td>2</td><td>4</td></tr>
+    </table>
+
+    <h3>Funil reverso — o que precisa acontecer para 7 fechamentos/mês</h3>
+    <table>
+      <tr><th>Etapa</th><th>Volume necessário/mês</th></tr>
+      <tr><td>Ligações discadas (SDR)</td><td>~290 ligações (15/dia)</td></tr>
+      <tr><td>Conectados</td><td>~130</td></tr>
+      <tr><td>Agendamentos confirmados</td><td>39</td></tr>
+      <tr><td>1ªs visitas realizadas</td><td>~29</td></tr>
+      <tr><td>Em negociação</td><td>~23</td></tr>
+      <tr><td><strong>Fechamentos</strong></td><td><strong>7</strong></td></tr>
+    </table>
+  </div>
+
+  <!-- 7. ATIVIDADES -->
+  <div class="section" id="s7">
+    <h2 class="section-title"><span class="num">7</span> Atividades Padrão</h2>
+    <table>
+      <tr><th>Tipo</th><th>Cor no calendário</th><th>Quando usar</th></tr>
+      <tr><td>📞 CALL (Ligação)</td><td style="color:#3b82f6;font-weight:700">Azul</td><td>Abordagem SDR, follow-up telefônico</td></tr>
+      <tr><td>👥 MEETING (Reunião)</td><td style="color:#8b5cf6;font-weight:700">Roxo</td><td>1ª visita, 2ª visita, apresentação de proposta</td></tr>
+      <tr><td>✉️ EMAIL</td><td style="color:#22c55e;font-weight:700">Verde</td><td>Envio de proposta, follow-up escrito</td></tr>
+      <tr><td>✅ TASK (Tarefa)</td><td style="color:#f97316;font-weight:700">Laranja</td><td>Elaborar proposta, enviar documentação</td></tr>
+    </table>
+
+    <h3>Cadência padrão por deal</h3>
+    <div class="flow">
+      <pre>
+  Novo Lead → Ligação de abordagem (CALL)
+            → Se não atender: 3 tentativas em 3 dias
+            → Se agendar: Reunião de diagnóstico (MEETING)
+            → Após diagnóstico: Tarefa "Elaborar proposta" (TASK)
+            → Apresentação da proposta (MEETING)
+            → Follow-up pós-proposta (CALL)
+            → Fechamento ou Nutrição
+      </pre>
+    </div>
+  </div>
+
+  <!-- 8. STELLA -->
+  <div class="section" id="s8">
+    <h2 class="section-title"><span class="num">8</span> Stella — Sua Assistente no Telegram</h2>
+    <p>A <strong>Stella</strong> é o bot do CRM no Telegram. Ela <strong>envia notificações para você</strong> sobre o que acontece no negócio.</p>
+
+    <h3>O que a Stella notifica hoje</h3>
+    <table>
+      <tr><th>Evento</th><th>Notificação</th></tr>
+      <tr><td>🔔 Handoff de IA</td><td>Lead precisa de atenção humana — com link direto para o deal</td></tr>
+    </table>
+
+    <h3>O que está sendo configurado (em breve)</h3>
+    <table>
+      <tr><th>Evento</th><th>Horário</th></tr>
+      <tr><td>📊 Resumo diário (deals, agendamentos, metas vs realizado)</td><td>8h nos dias úteis</td></tr>
+      <tr><td>⚠️ Alerta de NPS baixo (pontuação < 7)</td><td>Imediato</td></tr>
+      <tr><td>📅 Lembrete de follow-up (deal parado > 3 dias)</td><td>Imediato</td></tr>
+    </table>
+
+    <div class="callout"><strong>Como funciona:</strong> Stella envia, não responde. Para consultar dados do CRM, acesse diretamente pelo navegador.</div>
+  </div>
+
+  <!-- 9. SCRIPTS -->
+  <div class="section" id="s9">
+    <h2 class="section-title"><span class="num">9</span> Scripts de Referência Rápida</h2>
+
+    <h3>Ligação de Abordagem — Lead Frio (Formulário)</h3>
+    <div class="script">"Alô, [Nome]? A gente não se conhece ainda — aqui quem fala é a Thalita da Niva Consultoria. Vi que você preencheu um formulário sobre revisão de plano de saúde. Tem dois minutos? O intuito da minha ligação é só marcar uma conversa rápida de 20–30 minutos, onde vamos entender melhor o seu momento atual. Fica melhor segunda às 10 ou quarta às 15?"</div>
+
+    <h3>Ligação de Abordagem — Lead por Indicação</h3>
+    <div class="script">"Alô, [Nome]? A gente não se conhece — aqui é a Thalita da Niva Consultoria. Quem me passou seu contato foi [Fulano], que é cliente nosso. Você tem dois minutos? Quero marcar uma análise do seu plano de saúde, sem compromisso, sem custo. Fica melhor segunda ou terça?"</div>
+
+    <h3>Tratamento de Objeções na Ligação</h3>
+    <table>
+      <tr><th>Objeção</th><th>Resposta</th></tr>
+      <tr><td>"Manda cotação no WhatsApp"</td><td>"Meu trabalho é consultivo — não consigo passar cotação sem entender sua situação. Assim como um médico não dá diagnóstico sem consultar o paciente."</td></tr>
+      <tr><td>"Já tenho plano"</td><td>"Ótimo! Justamente quem tem plano há anos precisa de análise — pode estar pagando caro sem saber."</td></tr>
+      <tr><td>"Não tenho tempo"</td><td>"São 30 minutos da sua semana. Podemos fazer online, após as 18h, na sua casa."</td></tr>
+      <tr><td>"Não lembro de ter preenchido"</td><td>"Normal! De qualquer forma, o interesse surgiu por algum motivo. São só 20 minutos — segunda às 10 ou terça às 14?"</td></tr>
+    </table>
+
+    <h3>Solicitação de Indicação (ao final de toda reunião)</h3>
+    <div class="script">"Você conhece algum empresário ou profissional que também poderia se beneficiar desse tipo de análise? Meu trabalho cresce por indicação de pessoas como você, e sempre trato indicados com prioridade."</div>
+  </div>
+
+  <!-- 10. GLOSSÁRIO -->
+  <div class="section" id="s10">
+    <h2 class="section-title"><span class="num">10</span> Glossário</h2>
+    <table>
+      <tr><th>Termo</th><th>Significado</th></tr>
+      <tr><td><strong>MQL</strong></td><td>Marketing Qualified Lead — lead com perfil para virar cliente</td></tr>
+      <tr><td><strong>NAPA</strong></td><td>Framework de qualificação: Necessidade, Acessibilidade, Poder de pagamento, Aceitação</td></tr>
+      <tr><td><strong>Ticket médio</strong></td><td>Valor médio do plano que o cliente paga mensalmente (R$ 2.000)</td></tr>
+      <tr><td><strong>Prêmio</strong></td><td>Comissão recebida pela corretora ao fechar o plano (% × valor do plano)</td></tr>
+      <tr><td><strong>Eleição forçada</strong></td><td>Técnica de agendamento: dar duas opções ao lead, nunca perguntar aberto</td></tr>
+      <tr><td><strong>3 Sims</strong></td><td>Técnica da 1ª visita: obter 3 respostas afirmativas antes de apresentar solução</td></tr>
+      <tr><td><strong>Fechamentos parciais</strong></td><td>Micro-comprometimentos durante a reunião para avançar o lead gradualmente</td></tr>
+      <tr><td><strong>No Show</strong></td><td>Lead agendou mas não apareceu na reunião</td></tr>
+      <tr><td><strong>Handoff</strong></td><td>Momento em que a IA transfere o lead para o consultor humano</td></tr>
+      <tr><td><strong>NPS</strong></td><td>Net Promoter Score — nota de satisfação do cliente (0–10)</td></tr>
+      <tr><td><strong>Aniversário da apólice</strong></td><td>Data de renovação anual — única janela para ajustes sem multa</td></tr>
+      <tr><td><strong>Em Hibernação 🌙</strong></td><td>Lead pausado na Nutrição — será reativado no aniversário da apólice anterior</td></tr>
+      <tr><td><strong>SDR</strong></td><td>Sales Development Representative — responsável pela prospecção e agendamento</td></tr>
+      <tr><td><strong>CS</strong></td><td>Customer Success — gestão do cliente após a venda</td></tr>
+      <tr><td><strong>Board</strong></td><td>Pipeline do CRM — representa uma fase do processo</td></tr>
+      <tr><td><strong>Deal</strong></td><td>Cartão de negociação — representa um lead/cliente no CRM</td></tr>
+      <tr><td><strong>Stella</strong></td><td>Bot do Telegram da Niva Consultoria — envia notificações do CRM</td></tr>
+    </table>
+  </div>
+
+  <div style="text-align:center;padding:40px 0 20px;color:#94a3b8;font-size:12px;border-top:1px solid #e2e8f0;margin-top:48px;">
+    Manual gerado em 26/05/2026 &nbsp;|&nbsp; Niva Consultoria &nbsp;|&nbsp; NossoCRM<br>
+    Atualizar sempre que houver mudança nos boards, etapas ou processos.
+  </div>
+
+</div>
+</body>
+</html>
