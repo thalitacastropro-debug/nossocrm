@@ -52,6 +52,50 @@ export function isE164(input?: string | null): boolean {
 }
 
 /**
+ * Formas EQUIVALENTES de um celular brasileiro, por causa do 9º dígito.
+ *
+ * O Brasil acrescentou um 9 na frente dos celulares (2012–2016), mas o JID do
+ * WhatsApp para DDD > 30 continua chegando SEM ele, enquanto o formulário do
+ * Meta traz COM. Como todo lookup de contato é igualdade exata de `phone`, a
+ * mesma pessoa virava DOIS contatos / DOIS deals / DUAS conversas — a Ana
+ * atendia num card sem enxergar o formulário (que estava no outro) e a cadência
+ * de follow-up rodava sozinha no card órfão. Casos reais: Ruberleide Petry
+ * Odahara (DDD 66) e Robson Carlos Alves (DDD 65). Ver roadmap §P0.3.
+ *
+ * Use no LOOKUP (`.in('phone', brPhoneVariants(x))`), nunca na GRAVAÇÃO: o que
+ * se persiste continua sendo o E.164 que chegou.
+ *
+ * Fixo NÃO ganha variante — 8 dígitos começando em 2–5 é linha fixa, e
+ * acrescentar o 9 produziria um número de outra pessoa.
+ *
+ * @param input Telefone em qualquer formato (E.164, sujo, com máscara).
+ * @returns Lista com o próprio número e a variante equivalente, quando existir.
+ *          `[]` se a entrada não for um telefone reconhecível.
+ */
+export function brPhoneVariants(input?: string | null): string[] {
+  const e164 = normalizePhoneE164(input);
+  if (!isE164(e164)) return [];
+
+  const variants = [e164];
+
+  const br = e164.match(/^\+55(\d{2})(\d{8,9})$/);
+  if (!br) return variants; // não é BR (ou tem tamanho fora do padrão): sem variante
+
+  const [, ddd, subscriber] = br;
+
+  if (subscriber.length === 9) {
+    // Celular com o 9 → gera a forma antiga (como o WhatsApp costuma mandar).
+    // Só remove um 9 de verdade: não existe celular de 9 dígitos começando com outro dígito.
+    if (subscriber.startsWith('9')) variants.push(`+55${ddd}${subscriber.slice(1)}`);
+  } else if (/^[6-9]/.test(subscriber)) {
+    // 8 dígitos começando em 6–9 = celular no formato antigo → gera a forma com o 9.
+    variants.push(`+55${ddd}9${subscriber}`);
+  }
+
+  return variants;
+}
+
+/**
  * Para WhatsApp (wa.me) normalmente usamos somente dígitos (sem '+').
  * Retorna '' se não houver número.
  */

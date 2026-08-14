@@ -179,6 +179,44 @@ function normalizeRemoteJid(remoteJid: string, senderPn?: string): string | null
 }
 
 /**
+ * Formas EQUIVALENTES de um celular brasileiro por causa do 9º dígito.
+ *
+ * O JID do WhatsApp para DDD > 30 chega SEM o 9 do celular, enquanto o formulário
+ * do Meta traz COM. Como o lookup de conversa (`external_contact_id`) e o de contato
+ * (`phone`) eram igualdade EXATA, a mesma pessoa virava duas conversas, dois contatos
+ * e dois deals — a Ana atendia num card sem o formulário (que estava no outro) e a
+ * cadência de follow-up rodava sozinha no card órfão. Casos reais: Ruberleide Petry
+ * Odahara (DDD 66) e Robson Carlos Alves (DDD 65).
+ *
+ * ESPELHA `brPhoneVariants` de lib/phone.ts (esta função roda em Deno e não consegue
+ * importar do app) — mesmo padrão já usado em `normalizeExternalMessageId`.
+ * Se mudar aqui, mude lá, e vice-versa. Os testes vivem em lib/phone.test.ts.
+ *
+ * Só LOOKUP. A gravação continua usando o telefone que chegou no evento.
+ */
+function brPhoneVariants(e164: string): string[] {
+  if (!e164) return [];
+  const variants = [e164];
+
+  const br = e164.match(/^\+55(\d{2})(\d{8,9})$/);
+  if (!br) return variants; // não é BR ou tamanho fora do padrão
+
+  const ddd = br[1];
+  const subscriber = br[2];
+
+  if (subscriber.length === 9) {
+    // Celular com o 9 → gera a forma antiga (como o WhatsApp costuma mandar).
+    if (subscriber.startsWith("9")) variants.push(`+55${ddd}${subscriber.slice(1)}`);
+  } else if (/^[6-9]/.test(subscriber)) {
+    // 8 dígitos começando em 6–9 = celular antigo → gera a forma com o 9.
+    // Fixo (2–5) NÃO ganha variante: viraria o número de outra pessoa.
+    variants.push(`+55${ddd}9${subscriber}`);
+  }
+
+  return variants;
+}
+
+/**
  * Extract text preview from UazAPI API message by messageType.
  * Used only for last_message_preview (string field).
  */
@@ -636,12 +674,19 @@ async function handleMessagesUpsert(
     ? new Date(data.messageTimestamp * 1000)
     : new Date();
 
-  // Find existing conversation
+  // Find existing conversation.
+  // Casa pelas VARIANTES do 9º dígito (ver brPhoneVariants): a conversa pré-criada pelo
+  // lead-intake usa o telefone DO FORMULÁRIO (com o 9) e o evento do WhatsApp chega sem.
+  // `limit(1)` + `order` porque a base tem pares legados das duas formas — pega a mais antiga
+  // (a do formulário, que carrega o lead_form) em vez de estourar no maybeSingle.
+  const phoneLookup = brPhoneVariants(phone);
   const { data: existingConv, error: convFindErr } = await supabase
     .from("messaging_conversations")
     .select("id, contact_id, metadata")
     .eq("channel_id", channel.id)
-    .eq("external_contact_id", phone)
+    .in("external_contact_id", phoneLookup)
+    .order("created_at")
+    .limit(1)
     .maybeSingle();
 
   if (convFindErr) throw convFindErr;
@@ -679,7 +724,8 @@ async function handleMessagesUpsert(
       .from("contacts")
       .select("id")
       .eq("organization_id", channel.organization_id)
-      .eq("phone", phone)
+      // Variantes do 9º dígito: o contato pode ter sido criado pelo formulário COM o 9.
+      .in("phone", phoneLookup)
       .is("deleted_at", null)
       .order("created_at")
       .limit(1)

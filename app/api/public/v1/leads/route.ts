@@ -8,6 +8,7 @@ import { sanitizeUUID } from '@/lib/supabase/utils';
 import { getChannelRouter } from '@/lib/messaging/channel-router.service';
 import { generateFirstTouchBubbles } from '@/lib/ai/lead-intake/first-touch';
 import { seedTierFromLeadForm } from '@/lib/ai/extraction/domain/niva-health';
+import { brPhoneVariants } from '@/lib/phone';
 
 export const runtime = 'nodejs';
 // O envio em bolhas com pequeno stagger pode levar alguns segundos — dá folga ao limite serverless.
@@ -166,9 +167,20 @@ async function upsertContact(opts: {
     .select('id')
     .eq('organization_id', organizationId)
     .is('deleted_at', null);
-  if (email && phone) lookup = lookup.or(`email.eq.${email},phone.eq.${phone}`);
-  else if (email) lookup = lookup.eq('email', email);
-  else lookup = lookup.eq('phone', phone as string);
+  // Telefone casa pelas VARIANTES do 9º dígito: o form do Meta manda o celular COM o 9
+  // e o JID do WhatsApp (DDD > 30) manda sem. Igualdade exata duplicava a MESMA pessoa em
+  // dois contatos/deals/conversas — casos Ruberleide (DDD 66) e Robson (DDD 65).
+  // Ver `brPhoneVariants` em lib/phone.ts. A GRAVAÇÃO segue usando o telefone recebido.
+  const phoneVariants = brPhoneVariants(phone);
+  if (email && phoneVariants.length) {
+    lookup = lookup.or(`email.eq.${email},phone.in.(${phoneVariants.join(',')})`);
+  } else if (email) {
+    lookup = lookup.eq('email', email);
+  } else if (phoneVariants.length) {
+    lookup = lookup.in('phone', phoneVariants);
+  } else {
+    lookup = lookup.eq('phone', phone as string);
+  }
 
   const existing = await lookup.order('created_at').limit(1).maybeSingle();
   if (existing.error) throw existing.error;
