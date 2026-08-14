@@ -46,7 +46,11 @@ export const NivaHealthSchema = z.object({
     .describe('Objeções levantadas pelo lead, cada uma como categoria da taxonomia (sem_oportunidade [inclui preço/caro], ficou_na_atual, carencia, rede, concorrente, fora_icp, sem_resposta, timing, reembolso, confianca, decisor, burocracia, outro). Array vazio se nenhuma'),
   quer_so_cotacao: z
     .boolean()
-    .describe('true SOMENTE se o lead insiste em receber cotação/preço e recusa o diagnóstico/agendamento'),
+    .describe(
+      'true SOMENTE se o lead RECUSAR explicitamente falar com o consultor/agendar, insistindo em receber só o preço. ' +
+        'Pedir cotação, perguntar quanto custa ou dizer quantas vidas quer cotar NÃO conta. ' +
+        'Se o lead segue respondendo as perguntas, escolheu um horário, ou simplesmente não recusou nada, é false.'
+    ),
   overallConfidence: z.number().min(0).max(1).describe('Confiança geral da extração (0 a 1)'),
 });
 
@@ -60,7 +64,10 @@ REGRAS:
 - tem_cnpj: "pme" se já tem empresa/CNPJ; "mei" se é MEI; "vai_abrir_mei" se não tem mas aceita abrir; "nao_tem" se não tem e não quer abrir; "desconhecido" se não falou.
 - vidas: número de pessoas que entram no plano. idades: a idade de CADA vida que o lead informou.
 - valor_pago_exato: o valor EXATO da mensalidade ATUAL, apenas o número em reais (ex.: 2500). null se é o primeiro plano ou se não informou o valor.
-- quer_so_cotacao: true apenas se o lead insistir em cotação/preço e recusar o diagnóstico/agendamento.
+- quer_so_cotacao: é um GATE que descarta o lead — só marque true com RECUSA EXPLÍCITA de falar com o consultor
+  (ex.: "não quero conversar, só me manda o preço", "não tenho interesse em reunião"). Pedir cotação, perguntar
+  quanto custa ou dizer quantas vidas quer cotar ("quero cotar com estas vidas apenas") NÃO é recusa — é interesse.
+  Se o lead continua respondendo, escolheu um horário, ou não recusou nada explicitamente: false. Na dúvida, false.
 - objecoes: classifique cada objeção levantada numa categoria da taxonomia: sem_oportunidade (inclui "achou caro"/preço), ficou_na_atual, carencia, rede, concorrente, fora_icp, sem_resposta, timing, reembolso, confianca, decisor, burocracia, outro.
 - Responda em português brasileiro.`;
 

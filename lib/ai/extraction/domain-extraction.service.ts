@@ -15,6 +15,7 @@ import { generateText, Output } from 'ai';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getModel, type AIProvider } from '../config';
 import { getDomainExtractor } from './domain/registry';
+import { resolveExtractionLoss, PERDA_ORIGEM_EXTRACAO } from './loss-guard';
 
 const MAX_MESSAGES_FOR_EXTRACTION = 30;
 
@@ -106,7 +107,7 @@ export async function runDomainExtraction(
     // 3. Estado atual do deal
     const { data: deal } = await supabase
       .from('deals')
-      .select('custom_fields, tags')
+      .select('custom_fields, tags, is_lost')
       .eq('id', dealId)
       .single();
 
@@ -127,20 +128,37 @@ export async function runDomainExtraction(
     if (typeof applyResult.dealValue === 'number' && applyResult.dealValue > 0) {
       update.value = applyResult.dealValue;
     }
-    if (applyResult.lossReason) {
-      update.loss_reason = applyResult.lossReason;
-      // GUARD (P0 24/07 — cards da Graci/Giovana "sumiram"): um lead com reunião JÁ confirmada
-      // ou já entregue ao consultor (handoff) NUNCA é marcado perdido pela extração. Marcar a
-      // reunião é a verdade da intenção do lead (ele topou falar com o consultor); setar is_lost
-      // sobrescreve isso e SOME com o card (o board filtra 'open' = esconde is_lost), fazendo o
-      // consultor perder um agendamento real. Mantemos o loss_reason como CONTEXTO pro consultor
-      // (ex.: "só quer cotação e recusa diagnóstico"), mas o card continua vivo e visível.
-      const cf = (deal?.custom_fields as Record<string, unknown> | null | undefined) ?? {};
-      const reuniao = cf.reuniao_agendada as { status?: string } | undefined;
-      const meetingConfirmed = reuniao?.status === 'confirmada' || reuniao?.status === 'confirmed';
-      const alreadyHandedOff = cf.handoff_consultor != null;
-      // Mover o card pra "perdido" é ação — só fora do dry-run (observe não move card).
-      if (!dryRun && !meetingConfirmed && !alreadyHandedOff) update.is_lost = true;
+    // GUARD (P0 24/07 — cards da Graci/Giovana "sumiram"): um lead com reunião JÁ confirmada
+    // ou já entregue ao consultor (handoff) NUNCA é marcado perdido pela extração. Marcar a
+    // reunião é a verdade da intenção do lead (ele topou falar com o consultor); setar is_lost
+    // sobrescreve isso e SOME com o card (o board filtra 'open' = esconde is_lost), fazendo o
+    // consultor perder um agendamento real. Mantemos o loss_reason como CONTEXTO pro consultor
+    // (ex.: "só quer cotação e recusa diagnóstico"), mas o card continua vivo e visível.
+    //
+    // CAMINHO DE VOLTA (P0.3, 14/08 — caso Ruberleide): a extração relê a conversa INTEIRA a cada
+    // turno, então um falso positivo ("Quero cotar com estas vidas apenas", dito 4 dias antes)
+    // re-dispara pra sempre. Antes, is_lost só era ESCRITO e nunca limpo — um turno errado virava
+    // estado permanente e o card sumia. Agora a extração desfaz a PRÓPRIA conclusão quando muda de
+    // ideia; perda decidida por humano é intocável. Ver lib/ai/extraction/loss-guard.ts.
+    const cf = (deal?.custom_fields as Record<string, unknown> | null | undefined) ?? {};
+    const reuniao = cf.reuniao_agendada as { status?: string } | undefined;
+    const lossFields = resolveExtractionLoss({
+      lossReason: applyResult.lossReason ?? null,
+      meetingConfirmed: reuniao?.status === 'confirmada' || reuniao?.status === 'confirmed',
+      alreadyHandedOff: cf.handoff_consultor != null,
+      currentIsLost: deal?.is_lost === true,
+      lossOwnedByExtraction: cf.perda_origem === PERDA_ORIGEM_EXTRACAO,
+    });
+
+    if (lossFields.loss_reason !== undefined) update.loss_reason = lossFields.loss_reason;
+    // Mexer no is_lost é ação (some/volta o card) — só fora do dry-run (observe não move card).
+    if (!dryRun && lossFields.is_lost !== undefined) {
+      update.is_lost = lossFields.is_lost;
+      // Carimba (ou apaga) a autoria da perda, pra nunca reverter o que um humano decidiu.
+      const cfOut = { ...(applyResult.customFields as Record<string, unknown>) };
+      if (lossFields.is_lost) cfOut.perda_origem = PERDA_ORIGEM_EXTRACAO;
+      else delete cfOut.perda_origem;
+      update.custom_fields = cfOut;
     }
 
     const { error: updateError } = await supabase.from('deals').update(update).eq('id', dealId);
