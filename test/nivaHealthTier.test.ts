@@ -22,8 +22,19 @@ const base: ClassifyInput = {
 
 describe('classifyTier (§10.1)', () => {
   // --- Gates → fora do ICP ---
-  it('fora_icp: só quer cotação', () => {
-    expect(classifyTier({ ...base, quer_so_cotacao: true }).tier).toBe('fora_icp');
+  // DECISÃO DA THALITA (14/08, "tira o poder de matar"): `quer_so_cotacao` DEIXOU de ser gate.
+  // Era um palpite do modelo sobre intenção virando descarte irreversível — matou a Ruberleide
+  // (que só tinha dito "quero cotar com estas vidas apenas") e quase matou a Graci. Agora é SINAL:
+  // o tier segue as regras normais e a recusa vira objeção + tag pro consultor decidir.
+  it('só quer cotação NÃO descarta mais: tier segue as regras normais', () => {
+    const r = classifyTier({ ...base, quer_so_cotacao: true });
+    expect(r.tier).not.toBe('fora_icp');
+    expect(r.tier).toBe(classifyTier({ ...base, quer_so_cotacao: false }).tier);
+  });
+  it('só quer cotação não MASCARA um fora_icp real (1 vida continua fora)', () => {
+    expect(
+      classifyTier({ ...base, quer_so_cotacao: true, vidas: 1, idades: [30], valor_pago_exato: 800 }).tier,
+    ).toBe('fora_icp');
   });
   it('fora_icp: sem CNPJ e não quer MEI', () => {
     expect(classifyTier({ ...base, tem_cnpj: 'nao_tem' }).tier).toBe('fora_icp');
@@ -49,7 +60,7 @@ describe('classifyTier (§10.1)', () => {
     expect(r.tier).toBe('indefinido');
     expect(r.provisorio).toBe(true);
   });
-  it('gate de cotação tem precedência sobre os demais', () => {
+  it('os gates REAIS continuam valendo mesmo com quer_so_cotacao', () => {
     expect(
       classifyTier({ ...base, quer_so_cotacao: true, tem_cnpj: 'nao_tem', vidas: 1 }).tier,
     ).toBe('fora_icp');
@@ -195,10 +206,31 @@ describe('nivaHealthExtractor.apply', () => {
   });
 
   it('fora_icp grava loss_reason e priority null', () => {
-    const r = nivaHealthExtractor.apply({}, { ...fullExt, quer_so_cotacao: true });
+    const r = nivaHealthExtractor.apply({}, { ...fullExt, tem_cnpj: 'nao_tem' });
     expect(r.tier).toBe('fora_icp');
     expect(r.lossReason).toBeTruthy();
     expect(r.priority).toBeNull();
+  });
+
+  // "Tira o poder de matar" (14/08): a recusa vira SINAL visível, não descarte.
+  it('quer_so_cotacao NÃO gera loss_reason e mantém o lead vivo', () => {
+    const r = nivaHealthExtractor.apply({}, { ...fullExt, quer_so_cotacao: true });
+    expect(r.tier).not.toBe('fora_icp');
+    expect(r.lossReason).toBeNull();
+  });
+
+  it('quer_so_cotacao vira objeção + tag pro consultor ver no card', () => {
+    const r = nivaHealthExtractor.apply({}, { ...fullExt, quer_so_cotacao: true });
+    const objecoes = r.customFields.objecoes as Array<{ categoria: string; detalhe?: string | null }>;
+    expect(objecoes.some((o) => o.detalhe?.includes('cotação'))).toBe(true);
+    expect(r.tags).toContain('so-cotacao');
+  });
+
+  it('não duplica a objeção de cotação quando a extração repete o sinal', () => {
+    const primeira = nivaHealthExtractor.apply({}, { ...fullExt, quer_so_cotacao: true });
+    const segunda = nivaHealthExtractor.apply(primeira.customFields, { ...fullExt, quer_so_cotacao: true });
+    const objecoes = segunda.customFields.objecoes as Array<{ detalhe?: string | null }>;
+    expect(objecoes.filter((o) => o.detalhe?.includes('cotação'))).toHaveLength(1);
   });
 
   it('não apaga o lead_form que já existe nos custom_fields', () => {

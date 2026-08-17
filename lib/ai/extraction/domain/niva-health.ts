@@ -90,6 +90,11 @@ REGRAS:
  *       plano sem valor com idades conhecidas) → prata.
  * `provisorio` = faltam idades e/ou valor (consultor termina de qualificar na ligação).
  */
+/** Tag no card quando o lead resiste ao diagnóstico e insiste só em preço. */
+export const TAG_SO_COTACAO = 'so-cotacao';
+/** Texto da objeção correspondente (usado também pra dedup). */
+export const OBJECAO_SO_COTACAO = 'só quer cotação — resistiu ao diagnóstico';
+
 export function classifyTier(f: {
   tem_cnpj: NivaHealthExtraction['tem_cnpj'];
   vidas: number | null;
@@ -101,9 +106,14 @@ export function classifyTier(f: {
   const valor = typeof f.valor_pago_exato === 'number' ? f.valor_pago_exato : null;
 
   // 1. Gates eliminatórios
-  if (f.quer_so_cotacao === true) {
-    return { tier: 'fora_icp', motivos: ['Só quer cotação e recusa o diagnóstico'], provisorio: false };
-  }
+  //
+  // `quer_so_cotacao` NÃO é gate (decisão da Thalita, 14/08 — "tira o poder de matar").
+  // Era: um palpite do modelo sobre INTENÇÃO virava descarte irreversível. Matou a Ruberleide,
+  // que só tinha escrito "Quero cotar com estas vidas apenas" (dizendo quantas vidas entram) e
+  // depois aceitou o horário das 14h; e quase matou a Graci. Como a extração relê a conversa
+  // inteira a cada turno, a frase re-disparava pra sempre. Agora o sinal vira OBJEÇÃO + TAG
+  // (ver apply()) e quem decide descartar é o consultor. Os gates abaixo são FATOS
+  // verificáveis (não tem CNPJ, nº de vidas), não leitura de intenção.
   if (f.tem_cnpj === 'nao_tem') {
     return { tier: 'fora_icp', motivos: ['Sem CNPJ e não quer abrir MEI'], provisorio: false };
   }
@@ -368,6 +378,23 @@ function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): Dom
     customFields.objecoes = [...prev, ...additions];
   }
 
+  // 2b. "Só quer cotação" — SINAL, não sentença ("tira o poder de matar", 14/08).
+  //     Deixou de descartar o lead (ver classifyTier) e passou a aparecer como objeção no
+  //     painel + tag no card, pro consultor decidir. Dedup pelo detalhe: a extração relê a
+  //     conversa inteira todo turno, então o sinal se repete indefinidamente.
+  const querSoCotacao = ext.quer_so_cotacao === true;
+  if (querSoCotacao) {
+    const atuais = Array.isArray(customFields.objecoes)
+      ? (customFields.objecoes as Array<{ detalhe?: string | null }>)
+      : [];
+    if (!atuais.some((o) => o?.detalhe === OBJECAO_SO_COTACAO)) {
+      customFields.objecoes = [
+        ...atuais,
+        { categoria: 'outro' as MotivoTag, detalhe: OBJECAO_SO_COTACAO, origem: 'ana' as const },
+      ];
+    }
+  }
+
   // 3. Tier determinístico — usa os dados MESCLADOS (acumulados ao longo da conversa)
   const tierResult = classifyTier({
     tem_cnpj: (merged.tem_cnpj as NivaHealthExtraction['tem_cnpj']) ?? 'desconhecido',
@@ -404,7 +431,9 @@ function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): Dom
     // Não gera tag de tier: o selo COLORIDO do card (derivado de custom_fields.tier)
     // já mostra o tier automaticamente. Uma tag "tier:bronze" além do selo seria
     // informação duplicada. A service ainda remove tags tier:* antigas dos deals.
-    tags: [],
+    // Exceção: `so-cotacao` não é tier — é o sinal de que o lead resistiu ao diagnóstico,
+    // visível no card pro consultor decidir se descarta (antes isso descartava sozinho).
+    tags: querSoCotacao ? [TAG_SO_COTACAO] : [],
     priority,
     lossReason,
   };
