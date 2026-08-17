@@ -56,6 +56,17 @@ import type { BoardAIConfig } from '@/lib/ai/messaging/types';
  * um prompt próprio em organization_settings.ai_base_system_prompt.
  * Edite via Settings > IA > Prompt Base para customizar por organização.
  */
+/**
+ * Validade do auto-pause por contato (P0.4, 14/08).
+ *
+ * O webhook pausa a IA quando sai mensagem de fora da nossa API (consultor pelo celular OU eco de
+ * automação). Antes isso era PERMANENTE — e como o eco de automação também dispara, leads reais
+ * ficavam mudos pra sempre por acidente. 24h é conservador: o consultor que assume de verdade
+ * responde no mesmo dia (e ainda está coberto pelo takeover por inatividade do passo 4b), enquanto
+ * o lead que volta dias depois deixa de cair no vazio.
+ */
+const PAUSE_TTL_HOURS = 24;
+
 const DEFAULT_BASE_SYSTEM_PROMPT = `Você é um assistente de vendas profissional.
 Seu objetivo é ajudar leads a avançar no funil de vendas de forma natural e consultiva.
 
@@ -227,6 +238,35 @@ export interface ProcessMessageParams {
 export async function processIncomingMessage(
   params: ProcessMessageParams
 ): Promise<AgentProcessResult> {
+  const result = await processIncomingMessageInner(params);
+
+  // OBSERVABILIDADE DO SILÊNCIO (P0.4, 14/08).
+  //
+  // Existem ~14 pontos de saída sem resposta nesta função e NENHUM gravava em
+  // `ai_conversation_log`. Prova: `select action_taken, count(*) from ai_conversation_log`
+  // devolvia só 'responded' e 'handoff' — ZERO 'skipped' em toda a história da tabela.
+  // Quando a Ana calava não sobrava rastro nenhum: a dona via 20 conversas paradas e não
+  // dava pra dizer POR QUÊ sem caçar no log da Vercel.
+  //
+  // Logar AQUI (e não em cada `return`) cobre também os pontos de saída FUTUROS — é o ponto
+  // único por onde todo skip passa. Os caminhos 'responded'/'handoff' já logam lá dentro,
+  // com contexto completo; aqui entra só o que ficou mudo.
+  if (result.decision?.action === 'skipped') {
+    await logSkippedInteraction({
+      supabase: params.supabase,
+      organizationId: params.organizationId,
+      conversationId: params.conversationId,
+      messageId: params.messageId,
+      decision: result.decision,
+    });
+  }
+
+  return result;
+}
+
+async function processIncomingMessageInner(
+  params: ProcessMessageParams
+): Promise<AgentProcessResult> {
   const { supabase, conversationId, organizationId, incomingMessage, messageId } = params;
 
   console.log('[AIAgent] Processing message:', { conversationId, messageId });
@@ -269,16 +309,41 @@ export async function processIncomingMessage(
   if (conversation?.contact_id) {
     const { data: contact } = await supabase
       .from('contacts')
-      .select('ai_paused')
+      .select('ai_paused, ai_paused_at')
       .eq('id', conversation.contact_id)
       .maybeSingle();
-    if (contact?.ai_paused) {
+
+    // A PAUSA EXPIRA (P0.4, 14/08). Antes era permanente: qualquer mensagem enviada do celular
+    // — ou eco de automação — matava a Ana pra sempre naquele contato, sem aviso e sem rastro.
+    // O Roger foi pausado em 13/07 por 2 mensagens de automação, voltou sozinho em 22/07
+    // perguntando "teria algum plano sem carencia?" e ficou 3 semanas sem resposta.
+    // Este código só roda em mensagem INBOUND: expirar aqui significa "o lead voltou a falar e
+    // faz mais de PAUSE_TTL_HOURS que nenhum humano escreveu" — não atropela consultor ativo
+    // (que, além disso, já é coberto pelo takeover por inatividade no passo 4b).
+    // `ai_paused_at` NULL = pausa legada, NÃO expira (ver a migration para o porquê).
+    const pausedAt = contact?.ai_paused_at ? new Date(contact.ai_paused_at as string) : null;
+    const pauseExpired =
+      pausedAt != null && Date.now() - pausedAt.getTime() > PAUSE_TTL_HOURS * 60 * 60 * 1000;
+
+    if (contact?.ai_paused && pauseExpired) {
+      // Auto-cura: limpa a pausa vencida pra ela não voltar a bloquear no próximo turno.
+      await supabase
+        .from('contacts')
+        .update({ ai_paused: false, ai_paused_at: null })
+        .eq('id', conversation.contact_id);
+      console.log(
+        `[AIAgent] Pausa expirada (>${PAUSE_TTL_HOURS}h) — Ana retomando o contato:`,
+        conversation.contact_id
+      );
+    } else if (contact?.ai_paused) {
       console.log('[AIAgent] AI paused for contact:', conversation.contact_id);
       return {
         success: true,
         decision: {
           action: 'skipped',
-          reason: 'AI pausado para este contato',
+          reason: pausedAt
+            ? `AI pausado para este contato desde ${pausedAt.toISOString()} (expira em ${PAUSE_TTL_HOURS}h)`
+            : 'AI pausado para este contato (pausa legada, sem validade)',
         },
       };
     }
@@ -1443,6 +1508,42 @@ async function handleHandoff(
 // =============================================================================
 // Logging
 // =============================================================================
+
+/**
+ * Grava em `ai_conversation_log` o turno em que a Ana decidiu NÃO responder (P0.4).
+ *
+ * Diferente de `logAIInteraction`, aqui não há contexto nem stage: a maioria dos skips
+ * acontece ANTES de montar o contexto (rate limit, ai_paused, deal sem etapa...). Por isso
+ * `stage_id` fica null e `context_snapshot` vazio — o que importa é o PAR
+ * (conversa, motivo), que é o que responde "por que a Ana calou nessa conversa?".
+ *
+ * Fire-and-forget: falhar aqui nunca pode derrubar o processamento da mensagem.
+ */
+async function logSkippedInteraction(params: {
+  supabase: SupabaseClient;
+  organizationId: string;
+  conversationId: string;
+  messageId?: string;
+  decision: AgentDecision;
+}): Promise<void> {
+  const { supabase, organizationId, conversationId, messageId, decision } = params;
+  try {
+    const { error } = await supabase.from('ai_conversation_log').insert({
+      organization_id: organizationId,
+      conversation_id: conversationId,
+      message_id: messageId,
+      stage_id: null,
+      context_snapshot: {},
+      ai_response: '',
+      action_taken: 'skipped',
+      action_reason: decision.reason ?? 'skipped sem motivo declarado',
+      model_used: decision.model_used ?? null,
+    });
+    if (error) console.error('[AI] logSkippedInteraction insert failed (non-fatal):', error.message);
+  } catch (err) {
+    console.error('[AI] logSkippedInteraction unexpected error (non-fatal):', err);
+  }
+}
 
 async function logAIInteraction(params: {
   supabase: SupabaseClient;

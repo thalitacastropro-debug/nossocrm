@@ -887,7 +887,10 @@ async function handleMessagesUpsert(
   if (isFromMe && contactId) {
     const { error: pauseErr } = await supabase
       .from("contacts")
-      .update({ ai_paused: true })
+      // Carimba QUANDO pausou (P0.4): sem isso a pausa era permanente e invisível — o Roger
+      // ficou mudo 9 dias por causa de 2 mensagens de automação e ninguém sabia. O carimbo é o
+      // que permite a pausa EXPIRAR (PAUSE_TTL_HOURS em lib/ai/agent/agent.service.ts).
+      .update({ ai_paused: true, ai_paused_at: new Date().toISOString() })
       .eq("id", contactId)
       .eq("ai_paused", false);
     if (pauseErr) {
@@ -916,19 +919,52 @@ async function handleMessagesUpsert(
   // insertedMsg.id is the internal UUID from the insert — never fall back to
   // externalMessageId (an UazAPI message key, not a UUID) or the AI endpoint
   // will reject the request silently.
-  if (!isFromMe && contentType === "text" && insertedMsg?.id) {
+  if (!isFromMe && insertedMsg?.id) {
+    // MÍDIA TAMBÉM ACORDA A ANA (P0.4, 14/08).
+    //
+    // Antes o gatilho era `contentType === "text"`: áudio, imagem e documento entravam no banco
+    // e a IA NUNCA era chamada — o lead falava e a Ana simplesmente ficava muda, sem nenhum
+    // rastro. Foi o que aconteceu com a Mirella (respondeu com um DOCUMENTO em 04/08, no meio de
+    // uma qualificação que ia bem, e nunca mais teve resposta) e com o Cleysson (imagem).
+    // Eram 51 mídias inbound sem um único turno de IA nos 2 min seguintes.
+    //
+    // Ainda NÃO transcrevemos áudio (isso é o item de áudio→IA, separado, e depende de a mídia
+    // passar a ser baixada — hoje o webhook grava mediaUrl vazio). Até lá, mandamos um
+    // placeholder textual pra Ana saber que chegou algo e pedir por escrito, em vez de sumir.
     const textContent = content.text as string | undefined;
-    if (textContent) {
+    const messageText = contentType === "text" ? textContent : mediaPlaceholder(contentType);
+
+    if (messageText) {
       triggerAIProcessing({
         supabase,
         conversationId,
         organizationId: channel.organization_id,
-        messageText: textContent,
+        messageText,
         messageId: insertedMsg.id,
       }).catch((err) => {
         console.error("[UazAPI] AI processing trigger error:", err);
       });
     }
+  }
+}
+
+/**
+ * Texto que a Ana recebe no lugar de uma mídia que ainda não conseguimos ler.
+ *
+ * Vai como se fosse a mensagem do lead, então precisa deixar claro pra ela o que houve E o que
+ * fazer — o objetivo é a Ana pedir por escrito e a conversa CONTINUAR, em vez de morrer no
+ * silêncio. Retorna null pros tipos em que responder não faria sentido.
+ */
+function mediaPlaceholder(contentType: string): string | null {
+  switch (contentType) {
+    case "audio":
+      return "[o lead mandou um áudio. Você ainda não consegue ouvir áudio: peça, com naturalidade e sem se desculpar demais, que ele mande o principal por escrito — e siga de onde vocês pararam.]";
+    case "image":
+      return "[o lead mandou uma imagem. Você ainda não consegue ver imagens: pergunte, de forma leve, o que tem nela — e siga de onde vocês pararam.]";
+    case "document":
+      return "[o lead mandou um documento. Você ainda não consegue abrir arquivos: diga que o consultor vê o documento na conversa e pergunte o essencial por escrito — e siga de onde vocês pararam.]";
+    default:
+      return null;
   }
 }
 
