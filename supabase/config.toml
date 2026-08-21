@@ -95,3 +95,12 @@ enabled = false
 # portanto desabilitamos a verificação de JWT.
 [functions.webhook-in]
 verify_jwt = false
+
+# A UAZAPI chama esta funcao com o header `x-api-key` proprio (ver
+# messaging-webhook-uazapi/index.ts:103), nunca com um JWT do Supabase.
+# Sem esta entrada, o CLI deploya com verify_jwt=true (o default) e TODA
+# mensagem de WhatsApp passa a tomar 401: a Ana fica surda em producao.
+# A funcao no ar sempre esteve com verify_jwt=false; isto so registra isso
+# no repo para que nenhum deploy futuro derrube a ingestao.
+[functions.messaging-webhook-uazapi]
+verify_jwt = false
