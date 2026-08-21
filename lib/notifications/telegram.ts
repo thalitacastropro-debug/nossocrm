@@ -113,6 +113,50 @@ export function formatHandoffMessage({
   return lines.join('\n');
 }
 
+interface HandoffEscalationParams {
+  contactName: string;
+  dealTitle: string;
+  /** Horas úteis que o lead já esperou desde o handoff. */
+  horasUteis: number;
+  lastMessage: string;
+  appUrl?: string;
+  dealId?: string;
+}
+
+/**
+ * SEGUNDO aviso: ninguém pegou o lead no prazo (2 horas úteis — decisão da Thalita, 20/08).
+ *
+ * Diferente do `formatHandoffMessage`, que é o toque inicial: aqui o ponto é que o prazo
+ * ESTOUROU. Por isso diz há quanto tempo o lead espera e o que acontece se continuar parado —
+ * é esse aviso que vai também pro Telegram da dona, pra virar visível quando o consultor não pegou.
+ */
+export function formatHandoffEscalationMessage({
+  contactName,
+  dealTitle,
+  horasUteis,
+  lastMessage,
+  appUrl,
+  dealId,
+}: HandoffEscalationParams): string {
+  const truncated = lastMessage.slice(0, 300) + (lastMessage.length > 300 ? '...' : '');
+  const lines = [
+    `⏰ <b>Lead esperando há ${horasUteis}h úteis — ninguém assumiu</b>`,
+    ``,
+    `👤 <b>Contato:</b> ${escapeHtml(contactName)}`,
+    `💼 <b>Deal:</b> ${escapeHtml(dealTitle)}`,
+    ``,
+    `💬 <b>Última mensagem do lead:</b>`,
+    `<i>${escapeHtml(truncated)}</i>`,
+    ``,
+    `Se continuar parado por 1 dia útil, a Ana retoma a conversa pra não perder o lead.`,
+  ];
+  if (appUrl && dealId) {
+    lines.push(``);
+    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+  }
+  return lines.join('\n');
+}
+
 interface MeetingHandoffMessageParams {
   contactName: string;
   /** Label já formatado do horário (ex.: "Segunda, 20/07, às 15h"). */

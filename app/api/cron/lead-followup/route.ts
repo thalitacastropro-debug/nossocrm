@@ -13,6 +13,8 @@ import { sendAIResponse } from '@/lib/ai/agent/agent.service';
 import { runLeadFollowup } from '@/lib/ai/followup/run';
 import { generateWarmFollowupBubbles } from '@/lib/ai/followup/generate';
 import { runMeetingReminder } from '@/lib/ai/followup/meeting-reminder';
+import { runHandoffSla } from '@/lib/ai/followup/handoff-sla-run';
+import { formatHandoffEscalationMessage, sendTelegramMessage } from '@/lib/notifications/telegram';
 
 export const maxDuration = 60;
 
@@ -56,6 +58,43 @@ export async function GET(req: Request): Promise<Response> {
   // outras — e ela ignora de propósito dois `if` que são a espinha do runLeadFollowup.
   const reminder = await runMeetingReminder({ supabase, now, sendResponse });
 
-  console.log('[Cron:lead-followup]', JSON.stringify({ followup, reminder }));
-  return json({ followup, reminder });
+  // SLA do handoff (P0.4, 4ª causa): lead entregue ao humano que ninguém pegou.
+  // 2h úteis → 2º aviso (time + dona); 1 dia útil → a Ana retoma. Pendurado aqui de propósito:
+  // reusa o gate de horário comercial e o job pg_cron que já existe.
+  const handoffSla = await runHandoffSla({
+    supabase,
+    now,
+    sendResponse,
+    notify: async ({ dealId, contactName, dealTitle, horasUteis, lastMessage }) => {
+      const { data: cfg } = await supabase
+        .from('organization_settings')
+        .select('telegram_bot_token, telegram_chat_id, telegram_chat_id_alerts')
+        .maybeSingle();
+      if (!cfg?.telegram_bot_token) return;
+
+      const message = formatHandoffEscalationMessage({
+        contactName,
+        dealTitle,
+        horasUteis,
+        lastMessage,
+        appUrl: process.env.NEXT_PUBLIC_APP_URL,
+        dealId: dealId ?? undefined,
+      });
+
+      // Chat do time + chat da dona (quando configurado). Set evita mandar 2x se forem o mesmo.
+      const destinos = new Set(
+        [cfg.telegram_chat_id, cfg.telegram_chat_id_alerts].filter(Boolean) as string[]
+      );
+      await Promise.all(
+        [...destinos].map((chatId) =>
+          sendTelegramMessage(cfg.telegram_bot_token as string, chatId, message).catch((err: unknown) =>
+            console.error('[Cron:handoff-sla] Telegram falhou (não-fatal):', chatId, err)
+          )
+        )
+      );
+    },
+  });
+
+  console.log('[Cron:lead-followup]', JSON.stringify({ followup, reminder, handoffSla }));
+  return json({ followup, reminder, handoffSla });
 }
