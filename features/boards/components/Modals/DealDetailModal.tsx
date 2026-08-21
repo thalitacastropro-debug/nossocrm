@@ -354,7 +354,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
     }
   };
 
-  const handleAddNote = () => {
+  const handleAddNote = async () => {
     if (!newNote.trim()) return;
 
     const noteActivity: Activity = {
@@ -369,8 +369,18 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
       completed: true,
     };
 
-    addActivity(noteActivity);
+    // A escrita e otimista: a nota aparece na hora e some se o banco recusar.
+    // Sem await + catch, essa remocao era silenciosa e o usuario so via a nota
+    // sumir, sem erro nenhum. Falha tem que falar.
+    const previousNote = newNote;
     setNewNote('');
+    try {
+      await addActivity(noteActivity);
+    } catch (error: any) {
+      console.error('[DealDetailModal] addActivity(NOTE) failed:', error);
+      setNewNote(previousNote); // devolve o texto para nao perder o que a pessoa escreveu
+      addToast(error?.message || 'Nao foi possivel salvar a nota. Tente de novo.', 'warning');
+    }
   };
 
   const handleAddProduct = () => {

@@ -118,7 +118,13 @@ const ActivityRowComponent: React.FC<ActivityRowProps> = ({
     };
 
     const isSystemActivity = activity.type === 'STATUS_CHANGE';
-    const isOverdue = new Date(activity.date) < new Date() && !activity.completed;
+    // Nota nao e tarefa: ela nasce com completed=true so para nao virar pendencia.
+    // Trata-la como concluida (riscada + desbotada) fazia a nota recem-escrita
+    // parecer que nao tinha sido salva.
+    const isNote = activity.type === 'NOTE';
+    const looksDone = activity.completed && !isNote;
+    // Nota tambem nao pode ficar "ATRASADA": ela nao tem prazo.
+    const isOverdue = !isNote && new Date(activity.date) < new Date() && !activity.completed;
     // Reunião/ligação marcada: mostra a data/hora do compromisso, não o "há X".
     const isScheduled = activity.type === 'CALL' || activity.type === 'MEETING';
 
@@ -146,7 +152,7 @@ const ActivityRowComponent: React.FC<ActivityRowProps> = ({
     }
 
     return (
-        <div className={`group flex items-center gap-4 p-4 bg-white dark:bg-dark-card border border-slate-200 dark:border-white/5 rounded-xl hover:border-primary-500/50 dark:hover:border-primary-500/50 transition-all ${activity.completed ? 'opacity-60' : ''} ${isSelected ? 'border-primary-500 dark:border-primary-500 bg-primary-50/50 dark:bg-primary-500/10' : ''}`}>
+        <div className={`group flex items-center gap-4 p-4 bg-white dark:bg-dark-card border border-slate-200 dark:border-white/5 rounded-xl hover:border-primary-500/50 dark:hover:border-primary-500/50 transition-all ${looksDone ? 'opacity-60' : ''} ${isSelected ? 'border-primary-500 dark:border-primary-500 bg-primary-50/50 dark:bg-primary-500/10' : ''}`}>
             {onSelect && (
                 <input
                     type="checkbox"
@@ -171,7 +177,7 @@ const ActivityRowComponent: React.FC<ActivityRowProps> = ({
                     <span className="p-1.5 bg-slate-100 dark:bg-white/5 rounded-lg">
                         {getActivityIcon(activity.type)}
                     </span>
-                    <h3 className={`font-medium text-slate-900 dark:text-white truncate ${activity.completed ? 'line-through text-slate-500' : ''}`}>
+                    <h3 className={`font-medium text-slate-900 dark:text-white truncate ${looksDone ? 'line-through text-slate-500' : ''}`}>
                         {formatTitle(activity.title)}
                     </h3>
                     {isOverdue && (
@@ -180,6 +186,11 @@ const ActivityRowComponent: React.FC<ActivityRowProps> = ({
                         </span>
                     )}
                 </div>
+                {activity.description?.trim() && (
+                    <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-words mb-2">
+                        {activity.description.trim()}
+                    </p>
+                )}
                 <div className="flex items-center gap-4 text-sm text-slate-500 dark:text-slate-400">
                     {deal && (
                         <span className="flex items-center gap-1.5 text-primary-600 dark:text-primary-400 font-medium">
