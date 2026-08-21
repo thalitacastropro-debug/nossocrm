@@ -113,6 +113,93 @@ export function formatHandoffMessage({
   return lines.join('\n');
 }
 
+interface EntregaConsultorParams {
+  contactName: string;
+  /** true quando o lead não responde por mensagem — o consultor precisa LIGAR. */
+  precisaLigar: boolean;
+  /** Linha pronta do que já se sabe (ex.: "prata · 3 vidas · paga R$1900/mês · São Paulo"). */
+  qualificacao?: string;
+  /** Há quantos dias o lead entrou no funil. */
+  diasNoFunil?: number;
+  /** Quantos toques de follow-up a Ana já mandou. */
+  toques?: number;
+  /** ISO do último toque enviado. */
+  ultimoToque?: string;
+  appUrl?: string;
+  dealId?: string;
+}
+
+function diaMes(iso?: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+  }).format(d);
+}
+
+/**
+ * Lead ENTREGUE ao consultor sem reunião marcada — o card já está no funil dele, em Qualificação.
+ *
+ * REGRA (Thalita, 21/08): o lead só sai do funil da Ana quando ela não consegue resolver, e a
+ * partir daí é responsabilidade do consultor — a Ana não volta a atender. Antes, o `notify_team`
+ * só mandava um aviso e o card FICAVA no funil da Ana, que o consultor nem abre: a Mônica e o
+ * Cleysson morreram assim. Agora o aviso acompanha um card que realmente mudou de mão.
+ *
+ * `precisaLigar` marca o caso em que a cadência inteira já rodou sem o lead responder: insistir por
+ * mensagem não vai resolver, e ainda gasta disparo numa API não-oficial (risco de bloqueio).
+ */
+export function formatEntregaConsultorMessage({
+  contactName,
+  precisaLigar,
+  qualificacao,
+  diasNoFunil,
+  toques,
+  ultimoToque,
+  appUrl,
+  dealId,
+}: EntregaConsultorParams): string {
+  const lines: string[] = [
+    precisaLigar
+      ? `📞 <b>LIGAR — lead não responde por mensagem</b>`
+      : `🤝 <b>Lead entregue — a Ana não conseguiu resolver</b>`,
+    ``,
+    `👤 <b>${escapeHtml(contactName)}</b>`,
+  ];
+
+  // Briefing: o que já se sabe, há quanto tempo e o que a Ana tentou. Cada linha só aparece se
+  // houver dado — card magro não vira mensagem cheia de "desconhecido".
+  if (qualificacao) lines.push(`📋 ${escapeHtml(qualificacao)}`);
+
+  if (typeof diasNoFunil === 'number') {
+    const tempo =
+      diasNoFunil === 0 ? 'entrou hoje' : diasNoFunil === 1 ? 'no funil há 1 dia' : `no funil há ${diasNoFunil} dias`;
+    lines.push(`⏱ ${tempo}`);
+  }
+
+  if (typeof toques === 'number' && toques > 0) {
+    const quando = diaMes(ultimoToque);
+    lines.push(
+      `💬 ${toques} toque${toques > 1 ? 's' : ''} da Ana${quando ? `, último em ${quando}` : ''} — sem resposta`
+    );
+  }
+
+  lines.push(``);
+  lines.push(
+    precisaLigar
+      ? `A cadência inteira já rodou. Por mensagem não resolve — <b>ligue</b>.\nCard em <b>Qualificação</b> no seu funil.`
+      : `Card em <b>Qualificação</b> no seu funil e agora é seu. A Ana não atende mais essa conversa.`
+  );
+
+  if (appUrl && dealId) {
+    lines.push(``);
+    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+  }
+  return lines.join('\n');
+}
+
 interface HandoffEscalationParams {
   contactName: string;
   dealTitle: string;

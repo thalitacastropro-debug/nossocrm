@@ -8,9 +8,13 @@
  * "1200 duas vidas" (o dado que faltava pra qualificar). O aviso saiu pra ninguém e
  * ela nunca mais teve resposta. O Cleysson, mesma coisa, 02:51.
  *
- * DECISÃO DA THALITA (20/08):
- *   - 2 HORAS ÚTEIS sem ninguém responder  → segundo aviso, agora também pro Telegram dela
- *   - 1 DIA ÚTIL parado                    → a Ana RETOMA e mantém o lead aquecido
+ * DECISÃO DA THALITA (20/08, revisada em 21/08):
+ *   - 2 HORAS ÚTEIS sem ninguém responder → segundo aviso, também pro Telegram dela
+ *
+ * A REGRA MUDOU EM 21/08 e derrubou a "retomada da Ana" que eu tinha desenhado: **uma vez no funil
+ * do consultor, a Ana não volta a atender** — o lead é responsabilidade dele. E, desde 21/08, o
+ * `notify_team` MOVE o card de verdade (ver lib/ai/scheduling/handoff.ts), então a Ana nem poderia
+ * falar: fora do board dela não há `stage_ai_config`. O SLA aqui é só o ESCALONAMENTO do aviso.
  *
  * POR QUE HORA ÚTIL E NÃO HORA CORRIDA: é o caso Mônica. Com relógio corrido, um lead
  * entregue 00:24 estoura o prazo às 02:24 e o segundo aviso vai pro vazio igual ao
@@ -92,11 +96,9 @@ export interface HandoffSlaState {
   segundoAvisoAt: string | null;
   /** 1ª mensagem de HUMANO após o handoff (null = ninguém pegou). */
   humanRepliedAt: string | null;
-  /** Quando a Ana já retomou (null = ainda não). */
-  retomadaAt: string | null;
 }
 
-export type HandoffSlaAcao = 'nada' | 'encerrar' | 'segundo_aviso' | 'retomar';
+export type HandoffSlaAcao = 'nada' | 'encerrar' | 'segundo_aviso';
 
 export interface HandoffSlaResult {
   acao: HandoffSlaAcao;
@@ -116,13 +118,8 @@ export function resolveHandoffSla(state: HandoffSlaState, now: Date): HandoffSla
   // Alguém do time respondeu: o handoff cumpriu o papel, para de vigiar.
   if (state.humanRepliedAt) return { acao: 'encerrar', minutosUteis };
 
-  // Já retomou: nada a fazer (não reengaja em loop).
-  if (state.retomadaAt) return { acao: 'nada', minutosUteis };
-
-  // Velho demais: reengajar agora seria pior que não reengajar. Encerra sem mandar nada.
+  // Velho demais: encerra o acompanhamento em silêncio (o card segue com o consultor).
   if (minutosUteis > SLA_JANELA_MAX_MIN) return { acao: 'encerrar', minutosUteis };
-
-  if (minutosUteis >= SLA_RETOMADA_MIN) return { acao: 'retomar', minutosUteis };
 
   if (minutosUteis >= SLA_SEGUNDO_AVISO_MIN && !state.segundoAvisoAt) {
     return { acao: 'segundo_aviso', minutosUteis };

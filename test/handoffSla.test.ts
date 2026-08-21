@@ -65,7 +65,6 @@ describe('resolveHandoffSla', () => {
     handoffAt: '2026-08-03T12:00:00Z', // seg, local 09:00
     segundoAvisoAt: null as string | null,
     humanRepliedAt: null as string | null,
-    retomadaAt: null as string | null,
   };
 
   it('humano respondeu: encerra o SLA e para de vigiar', () => {
@@ -92,24 +91,19 @@ describe('resolveHandoffSla', () => {
     expect(r.acao).toBe('nada');
   });
 
-  it('1 dia útil parado: a Ana retoma', () => {
-    // seg local 09:00 → ter local 09:00 = 8h30 (seg) + 60 (ter) = 570
+  // REGRA DA THALITA (21/08): a Ana NÃO retoma. Uma vez entregue, o lead é do consultor — e o
+  // handoff agora MOVE o card pro funil dele, então ela nem poderia falar. O SLA só escala o aviso.
+  it('1 dia útil parado: NÃO manda a Ana falar, o aviso já foi dado', () => {
     const r = resolveHandoffSla({ ...base, segundoAvisoAt: '2026-08-03T14:00:00Z' }, new Date('2026-08-04T12:00:00Z'));
-    expect(r.acao).toBe('retomar');
-  });
-
-  it('retomada já feita: não retoma de novo', () => {
-    const r = resolveHandoffSla(
-      { ...base, segundoAvisoAt: '2026-08-03T14:00:00Z', retomadaAt: '2026-08-04T12:00:00Z' },
-      new Date('2026-08-05T12:00:00Z')
-    );
     expect(r.acao).toBe('nada');
   });
 
-  it('retomada tem precedência sobre o segundo aviso quando os dois vencem juntos', () => {
-    // nunca mandou o 2º aviso e já passou 1 dia útil: retomar é a ação mais forte
-    const r = resolveHandoffSla(base, new Date('2026-08-04T12:00:00Z'));
-    expect(r.acao).toBe('retomar');
+  it('nunca devolve ação que faça a Ana falar depois da entrega', () => {
+    const momentos = ['2026-08-03T14:00:00Z', '2026-08-04T12:00:00Z', '2026-08-06T12:00:00Z'];
+    for (const m of momentos) {
+      const r = resolveHandoffSla({ ...base, segundoAvisoAt: '2026-08-03T14:00:00Z' }, new Date(m));
+      expect(['nada', 'encerrar']).toContain(r.acao);
+    }
   });
 
   // ANTI-RAJADA. Descoberto ao conferir o banco ANTES de deployar: havia 7 handoffs
@@ -122,10 +116,10 @@ describe('resolveHandoffSla', () => {
     expect(r.acao).toBe('encerrar');
   });
 
-  it('a fronteira: dentro da janela ainda retoma', () => {
+  it('a fronteira: dentro da janela ainda vigia (não encerra)', () => {
     // 5 dias úteis = 2850 min. Seg 03/08 09:00 + 4 dias úteis cheios + 1h = dentro.
     const r = resolveHandoffSla(base, new Date('2026-08-07T13:00:00Z'));
-    expect(r.acao).toBe('retomar');
+    expect(r.acao).not.toBe('encerrar');
     expect(r.minutosUteis).toBeLessThanOrEqual(SLA_JANELA_MAX_MIN);
   });
 

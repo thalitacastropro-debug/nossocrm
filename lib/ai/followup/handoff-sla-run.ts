@@ -13,8 +13,6 @@ import { resolveHandoffSla, type HandoffSlaState } from './handoff-sla';
 export interface HandoffSlaDeps {
   supabase: SupabaseClient;
   now: Date;
-  /** Manda a Ana falar na conversa (mesma injeção do runLeadFollowup). */
-  sendResponse: (conversationId: string, message: string) => Promise<{ success: boolean }>;
   /** Dispara o segundo aviso. O chamador decide os destinos (consultor + dona). */
   notify: (args: {
     conversationId: string;
@@ -30,20 +28,29 @@ export interface HandoffSlaResultado {
   vigiados: number;
   encerrados: number;
   avisados: number;
-  retomados: number;
 }
 
 /**
- * Mensagem da retomada. Deliberadamente de MANUTENÇÃO, não de venda: o objetivo é o lead não
- * morrer de silêncio, sem atropelar um consultor que possa estar prestes a ligar.
+ * A ANA NÃO VOLTA A ATENDER (regra da Thalita, 21/08).
+ *
+ * A 1ª versão deste módulo tinha um terceiro degrau: depois de 1 dia útil sem ninguém assumir, a
+ * Ana retomaria a conversa. A dona derrubou, e com dois argumentos que eu não tinha:
+ *
+ *  1. Se a Ana entrega, o lead é responsabilidade do CONSULTOR — ela não volta. Um lead com dois
+ *     donos não tem dono.
+ *  2. Mais grave: o consultor **não enxerga o funil da Ana**. Enquanto o `notify_team` só escrevia
+ *     uma flag e mandava um Telegram, o card ficava com ela e ninguém do outro lado via nada. Não
+ *     havia entrega nenhuma — só um bilhete. A pergunta que eu ia fazer ao lead ("o consultor já
+ *     falou com você?") era sobre algo que era IMPOSSÍVEL ter acontecido.
+ *
+ * O fix de verdade ficou em `lib/ai/scheduling/handoff.ts`: o handoff MOVE o card pro funil do
+ * consultor. Aqui sobrou só o escalonamento do aviso.
  */
-const COPY_RETOMADA = 'Oi! Consegui adiantar mais alguma coisa por aqui enquanto isso?';
-
 const BATCH = 50;
 
 export async function runHandoffSla(deps: HandoffSlaDeps): Promise<HandoffSlaResultado> {
-  const { supabase, now, sendResponse, notify } = deps;
-  const res: HandoffSlaResultado = { vigiados: 0, encerrados: 0, avisados: 0, retomados: 0 };
+  const { supabase, now, notify } = deps;
+  const res: HandoffSlaResultado = { vigiados: 0, encerrados: 0, avisados: 0 };
 
   // 1. Conversas com handoff pendente. A flag existe desde sempre — o que faltava era alguém LER.
   const { data: convs } = await supabase
@@ -78,7 +85,6 @@ export async function runHandoffSla(deps: HandoffSlaDeps): Promise<HandoffSlaRes
       handoffAt,
       segundoAvisoAt: (meta.ai_handoff_sla_aviso_at as string | null) ?? null,
       humanRepliedAt: humanReply?.created_at ?? null,
-      retomadaAt: (meta.ai_handoff_sla_retomada_at as string | null) ?? null,
     };
 
     const { acao, minutosUteis } = resolveHandoffSla(state, now);
@@ -104,18 +110,6 @@ export async function runHandoffSla(deps: HandoffSlaDeps): Promise<HandoffSlaRes
       });
       await patchMeta(supabase, conv.id, meta, { ai_handoff_sla_aviso_at: now.toISOString() });
       res.avisados++;
-      continue;
-    }
-
-    // acao === 'retomar' — a Ana volta e o handoff deixa de estar pendente (ela é a dona da
-    // conversa de novo). Só marca a retomada se o envio deu certo, senão tenta no próximo tick.
-    const sent = await sendResponse(conv.id, COPY_RETOMADA);
-    if (sent.success) {
-      await patchMeta(supabase, conv.id, meta, {
-        ai_handoff_pending: false,
-        ai_handoff_sla_retomada_at: now.toISOString(),
-      });
-      res.retomados++;
     }
   }
 

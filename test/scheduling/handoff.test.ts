@@ -33,6 +33,14 @@ function makeSupabase(
         }
       : opts.srcDeal;
   const entryStageId = opts.entryStageId === undefined ? 'stage-call-agendada' : opts.entryStageId;
+  // Lista de etapas do board destino, em ordem. A 1ª é a de entrada; a de "qualificação" é o
+  // destino dos motivos que NÃO são reunião agendada (Thalita, 21/08).
+  const stages = entryStageId
+    ? [
+        { id: entryStageId, name: 'call-agendada' },
+        ...(opts.semQualificacao ? [] : [{ id: 'stage-qualificacao', name: 'qualificacao' }]),
+      ]
+    : [];
 
   const client: any = {
     from(table: string) {
@@ -41,7 +49,9 @@ function makeSupabase(
       }
       if (table === 'board_stages') {
         return {
-          select: () => ({ eq: () => ({ order: () => ({ limit: async () => ({ data: entryStageId ? [{ id: entryStageId }] : [], error: null }) }) }) }),
+          // A função agora lê TODAS as etapas (precisa achar a de qualificação pelo nome),
+          // então o encadeamento termina em .order() — sem .limit().
+          select: () => ({ eq: () => ({ order: async () => ({ data: stages, error: null }) }) }),
         };
       }
       if (table === 'deals') {
@@ -128,6 +138,40 @@ describe('handoffToNextBoard (MOVE)', () => {
     const r = await handoffToNextBoard({ supabase: client, ...base });
     expect(r.reason).toBe('no_target_stage');
     expect(state.updatePatch).toBeNull();
+  });
+
+  // ENTREGA SEM REUNIÃO (Thalita, 21/08). O lead só vai pro consultor quando a Ana não consegue
+  // resolver — e aí NÃO existe horário marcado. Pôr em "call-agendada" mentiria sobre haver
+  // reunião; o destino certo é a etapa de QUALIFICAÇÃO do funil dele.
+  describe('motivos sem reunião marcada', () => {
+    it('ana_nao_resolveu => cai em QUALIFICAÇÃO, não na etapa de entrada', async () => {
+      const { client, state } = makeSupabase();
+      const r = await handoffToNextBoard({ supabase: client, ...base, motivo: 'ana_nao_resolveu' });
+      expect(r.handedOff).toBe(true);
+      expect(state.updatePatch.stage_id).toBe('stage-qualificacao');
+      expect(state.updatePatch.custom_fields.handoff_consultor.motivo).toBe('ana_nao_resolveu');
+    });
+
+    it('sem_resposta_ligar => qualificação + activity destacando LIGAR', async () => {
+      const { client, state } = makeSupabase();
+      const r = await handoffToNextBoard({ supabase: client, ...base, motivo: 'sem_resposta_ligar' });
+      expect(r.handedOff).toBe(true);
+      expect(state.updatePatch.stage_id).toBe('stage-qualificacao');
+      expect(state.insertedActivity.title).toContain('LIGAR');
+    });
+
+    it('reuniao_agendada (default) continua na etapa de ENTRADA — comportamento antigo intacto', async () => {
+      const { client, state } = makeSupabase();
+      await handoffToNextBoard({ supabase: client, ...base });
+      expect(state.updatePatch.stage_id).toBe('stage-call-agendada');
+    });
+
+    it('board destino SEM etapa de qualificação: entrega na de entrada em vez de abortar', async () => {
+      const { client, state } = makeSupabase({ semQualificacao: true });
+      const r = await handoffToNextBoard({ supabase: client, ...base, motivo: 'ana_nao_resolveu' });
+      expect(r.handedOff).toBe(true);
+      expect(state.updatePatch.stage_id).toBe('stage-call-agendada');
+    });
   });
 
   it('erro no update => db_error', async () => {

@@ -1425,6 +1425,40 @@ async function handleHandoff(
     })
     .eq('id', conversationId);
 
+  // ENTREGA DE VERDADE: MOVE o card pro funil do Consultor (Thalita, 21/08).
+  //
+  // Antes, este caminho só escrevia `ai_handoff_pending` na conversa e mandava um Telegram — o card
+  // FICAVA no funil da Ana, que **o consultor não abre**. Ou seja: a Ana dizia ao lead "o consultor
+  // entra em contato" e nada mudava de mão. A Mônica (19/07, 00:24, na mensagem "1200 duas vidas"
+  // que era o dado que faltava) e o Cleysson morreram exatamente assim — o aviso da madrugada não
+  // foi visto e o lead ficou invisível pra quem devia agir.
+  //
+  // Regra: se a Ana não consegue resolver, o lead vira responsabilidade do CONSULTOR — e ela não
+  // volta a atender (sair do board da Ana já a silencia: as etapas do Consultor não têm
+  // stage_ai_config). Cai em QUALIFICAÇÃO, não em call-agendada: não existe reunião marcada aqui.
+  // Best-effort e idempotente (flag handoff_consultor) — nunca derruba o handoff.
+  if (context.deal?.id) {
+    try {
+      // O board de origem não vem no LeadContext (que só carrega stage) — busca aqui, neste
+      // caminho raro, em vez de engordar o contexto do prompt.
+      const { data: dealBoard } = await supabase
+        .from('deals')
+        .select('board_id')
+        .eq('id', context.deal.id)
+        .maybeSingle();
+      const { handoffToNextBoard } = await import('@/lib/ai/scheduling/handoff');
+      await handoffToNextBoard({
+        supabase,
+        dealId: context.deal.id,
+        sourceBoardId: (dealBoard?.board_id as string | null) ?? null,
+        organizationId,
+        motivo: 'ana_nao_resolveu',
+      });
+    } catch (err) {
+      console.error('[AIAgent] MOVE do handoff falhou (não-fatal):', err);
+    }
+  }
+
   // Log handoff as deal activity
   if (context.deal?.id) {
     await supabase.from('deal_activities').insert({

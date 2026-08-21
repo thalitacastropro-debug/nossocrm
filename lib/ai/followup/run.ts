@@ -156,6 +156,31 @@ export async function runLeadFollowup(deps: FollowupDeps): Promise<FollowupResul
     }
     res.processed++;
     if (wasReset) res.reset++;
+
+    // CADÊNCIA ESGOTADA → ENTREGA PRO CONSULTOR, COM ALERTA DE LIGAR (Thalita, 21/08).
+    //
+    // Antes, o último toque gravava `stopped: 'max_touches'` e o card ficava PARADO em
+    // "Em Qualificação" no funil da Ana, indistinguível de lead vivo — a Jéssica Raphael está
+    // assim desde 31/07. Não existia estado terminal nenhum.
+    //
+    // Regra: se a Ana já fez toda a cadência e o lead não interage, insistir por mensagem não vai
+    // resolver — e ainda gasta disparo numa API não-oficial (risco de bloqueio do número). O lead
+    // vai pro funil do consultor, em Qualificação, com alerta destacado pra LIGAR.
+    if (advanced.stopped === true) {
+      try {
+        const { handoffToNextBoard } = await import('@/lib/ai/scheduling/handoff');
+        await handoffToNextBoard({
+          supabase,
+          dealId: deal.id as string,
+          // A seleção acima já filtra por este board — não precisa vir no select.
+          sourceBoardId: ANA_SDR_BOARD_ID,
+          organizationId: deal.organization_id as string,
+          motivo: 'sem_resposta_ligar',
+        });
+      } catch (err) {
+        console.error('[Followup] entrega ao consultor no fim da cadência falhou (não-fatal):', err);
+      }
+    }
   }
 
   return res;

@@ -59,12 +59,12 @@ export async function GET(req: Request): Promise<Response> {
   const reminder = await runMeetingReminder({ supabase, now, sendResponse });
 
   // SLA do handoff (P0.4, 4ª causa): lead entregue ao humano que ninguém pegou.
-  // 2h úteis → 2º aviso (time + dona); 1 dia útil → a Ana retoma. Pendurado aqui de propósito:
-  // reusa o gate de horário comercial e o job pg_cron que já existe.
+  // 2h úteis sem ninguém assumir → 2º aviso (chat do time + o da dona). NÃO há retomada da Ana:
+  // uma vez entregue, o lead é do consultor (regra da Thalita, 21/08) — e o card já saiu do funil
+  // dela. Pendurado aqui de propósito: reusa o gate de horário comercial e o job pg_cron.
   const handoffSla = await runHandoffSla({
     supabase,
     now,
-    sendResponse,
     notify: async ({ dealId, contactName, dealTitle, horasUteis, lastMessage }) => {
       const { data: cfg } = await supabase
         .from('organization_settings')
