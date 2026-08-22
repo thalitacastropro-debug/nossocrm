@@ -15,6 +15,7 @@ import {
   useMoveDealToBoard,
 } from '@/lib/query/hooks';
 import { useUIState } from '@/store/uiState';
+import { sortActivitiesTimeline } from '@/lib/utils/activitySort';
 import { useActiveProducts } from '@/lib/query/hooks/useProductsQuery';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
@@ -240,7 +241,10 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   // Performance: filter deal activities once per deal change (avoid filtering inside render).
   const dealActivities = useMemo(() => {
     if (!deal) return [] as Activity[];
-    return activities.filter((a) => a.dealId === deal.id);
+    // Mais recente primeiro: a timeline do card se le de cima pra baixo, do que
+    // acabou de acontecer para tras. A ordenacao global (sortActivitiesSmart) e
+    // de LISTA DE TAREFAS e jogava a nota recem-escrita para o rodape.
+    return sortActivitiesTimeline(activities.filter((a) => a.dealId === deal.id));
   }, [activities, deal]);
 
   if (!isOpen || !deal) return null;

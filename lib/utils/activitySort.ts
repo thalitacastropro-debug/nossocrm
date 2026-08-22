@@ -45,3 +45,28 @@ export function sortActivitiesSmart(activities: Activity[]): Activity[] {
   return [...overdue, ...todayActivities, ...future];
 }
 
+
+/**
+ * Ordenação da TIMELINE DE UM CARD: mais recente primeiro.
+ *
+ * Por que não usar `sortActivitiesSmart` aqui: aquela ordenação foi escrita para a
+ * LISTA DE TAREFAS (atrasadas primeiro, porque o que venceu é o mais urgente de
+ * resolver). Numa timeline de card a leitura é outra — a pessoa quer ver o que
+ * acabou de acontecer. Com a ordenação de tarefas, uma nota escrita agora caía
+ * DEPOIS de tudo, no rodapé, fora da área visível: foi exatamente por isso que a
+ * nota do Pedro pareceu não existir mesmo já estando gravada e já sendo exibida.
+ *
+ * Mantemos as duas funções separadas de propósito: inverter `sortActivitiesSmart`
+ * consertaria a timeline e quebraria a página Atividades.
+ *
+ * @param activities - Atividades já filtradas por deal.
+ * @returns Novo array, da mais recente para a mais antiga. Datas inválidas vão para o fim.
+ */
+export function sortActivitiesTimeline(activities: Activity[]): Activity[] {
+  const tempo = (a: Activity) => {
+    const t = new Date(a.date).getTime();
+    return Number.isNaN(t) ? -Infinity : t; // data quebrada não disputa o topo
+  };
+
+  return [...activities].sort((a, b) => tempo(b) - tempo(a));
+}

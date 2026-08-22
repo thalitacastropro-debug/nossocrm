@@ -14,6 +14,7 @@ import {
   useMoveDealSimple,
 } from '@/lib/query/hooks';
 import { FocusContextPanel } from '@/features/inbox/components/FocusContextPanel';
+import { sortActivitiesTimeline } from '@/lib/utils/activitySort';
 import type { Activity, DealView } from '@/types';
 
 /**
@@ -50,7 +51,8 @@ export default function DealCockpitFocusClient({ dealId }: { dealId: string }) {
   const dealActivities = useMemo(() => {
     if (!deal) return [] as Activity[];
     // Mantém consistência com a experiência do Focus: filtra por dealId.
-    return activities.filter((a) => a.dealId === deal.id);
+    // Mesma ordem da timeline do card no board: mais recente primeiro.
+    return sortActivitiesTimeline(activities.filter((a) => a.dealId === deal.id));
   }, [activities, deal]);
 
   const { moveDeal } = useMoveDealSimple(board ?? null, []);
