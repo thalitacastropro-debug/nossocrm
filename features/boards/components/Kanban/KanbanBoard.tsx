@@ -10,6 +10,7 @@ import { useMarkNoShow } from '@/lib/query/hooks/useMarkNoShow';
 import { useMarkMeetingHeld } from '@/lib/query/hooks/useMarkMeetingHeld';
 import { useCancelMeeting } from '@/lib/query/hooks/useCancelMeeting';
 import { CONSULTOR_BOARD_ID } from '@/lib/config/boards';
+import { COR_ALERTA, isEtapaDeAlerta, withAlpha } from '@/lib/utils/stageColor';
 
 /**
  * UI: Drop highlight should follow the stage color.
@@ -267,6 +268,11 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     <div role="list" aria-label="Colunas do pipeline" className="flex gap-4 h-full overflow-x-auto pb-2 w-full">
       {stages.map(stage => {
         const stageDeals = dealsByStageId.map.get(stage.id) ?? [];
+        // Etapa de alerta (hoje so a "Call Agendada"): a coluna INTEIRA fica
+        // vermelha, porque quem cai ali ja tem call marcada pela Ana — as vezes
+        // no mesmo dia — e o consultor precisa enxergar isso de longe.
+        // As demais etapas seguem exatamente como sempre foram.
+        const alerta = isEtapaDeAlerta(stage.color);
         const stageValue = dealsByStageId.totals.get(stage.id) ?? 0;
         const isOver = dragOverStage === stage.id && draggingId !== null;
 
@@ -294,17 +300,25 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
             className={`min-w-[20rem] flex-1 flex flex-col rounded-xl border-2 overflow-visible h-full max-h-full transition-all duration-200
                             ${isOver
                 ? `${dropHighlightClasses(stage.color)} scale-[1.02]`
-                : 'border-slate-200/50 dark:border-white/10 glass'
+                : alerta
+                  ? 'border-red-500/60 glass'
+                  : 'border-slate-200/50 dark:border-white/10 glass'
               }
                         `}
           >
-            <div className={`h-1.5 w-full ${stage.color}`}></div>
+            <div
+              className={`h-1.5 w-full ${alerta ? '' : stage.color}`}
+              style={alerta ? { backgroundColor: COR_ALERTA } : undefined}
+            ></div>
 
             <div
-              className={`p-3 border-b border-slate-200 dark:border-white/5 bg-slate-50/50 dark:bg-white/5 shrink-0`}
+              className={`p-3 border-b shrink-0 ${alerta ? 'border-red-500/30' : 'border-slate-200 dark:border-white/5 bg-slate-50/50 dark:bg-white/5'}`}
+              style={alerta ? { backgroundColor: withAlpha(COR_ALERTA, 0.12) } : undefined}
             >
               <div className="flex justify-between items-center mb-1">
-                <span className="font-bold text-slate-700 dark:text-slate-200 font-display text-sm tracking-wide uppercase">
+                <span
+                  className={`font-bold font-display text-sm tracking-wide uppercase ${alerta ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}
+                >
                   {stage.label}
                 </span>
                 <span className="text-xs font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded text-slate-600 dark:text-slate-300">
@@ -337,7 +351,8 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
             <div
               role="list"
               aria-label={`Negócios em ${stage.label}`}
-              className={`flex-1 p-2 overflow-y-auto space-y-2 bg-slate-100/50 dark:bg-black/20 scrollbar-thin min-h-[100px]`}
+              className={`flex-1 p-2 overflow-y-auto space-y-2 scrollbar-thin min-h-[100px] ${alerta ? '' : 'bg-slate-100/50 dark:bg-black/20'}`}
+              style={alerta ? { backgroundColor: withAlpha(COR_ALERTA, 0.06) } : undefined}
             >
               {/* Skeleton: exibido durante carregamento inicial */}
               {isLoading && (
