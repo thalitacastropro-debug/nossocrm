@@ -1,5 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+/**
+ * Duble encadeavel de query: `.eq().eq()` resolve em qualquer ponto da cadeia.
+ * A rota amarra a activity ao deal (`.eq('id', x).eq('deal_id', y)`) — sem isso,
+ * um consultor mexia na reuniao de outro passando o id no proprio card.
+ */
+function cadeiaEq() {
+  const chamadas: unknown[][] = [];
+  const alvo: any = {
+    chamadas,
+    eq: (...args: unknown[]) => { chamadas.push(args); return alvo; },
+    then: (resolve: (v: unknown) => unknown) => resolve({ error: null }),
+  };
+  return alvo;
+}
+
+
 const USER_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5';
 const ORG_ID = 'b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6';
 const DEAL_ID = 'c3d4e5f6-a7b8-4c9d-8e0f-a1b2c3d4e5f6';
@@ -55,9 +71,9 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dealRow = { id: DEAL_ID, organization_id: ORG_ID, owner_id: USER_ID, board_id: 'efbaa84e-cf4b-4465-8b50-41afd612088e', stage_id: 's1', value: 0, custom_fields: { tier: { valor: 'prata' }, qualificacao: { vidas: 2 } } };
-    dealUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn(async () => ({ error: null })) });
+    dealUpdateSpy = vi.fn(() => cadeiaEq());
     activityInsertSpy = vi.fn(async () => ({ error: null }));
-    activityUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn(async () => ({ error: null })) });
+    activityUpdateSpy = vi.fn(() => cadeiaEq());
     voiceInsertSpy = vi.fn(async () => ({ error: null }));
     supabaseClientMock = {
       ...auth(),

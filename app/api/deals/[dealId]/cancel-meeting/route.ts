@@ -75,10 +75,14 @@ export async function POST(
     if (jsonActivityId) {
       // Confere o estado real da activity: se já sumiu, nada a cancelar; se já foi REALIZADA,
       // NÃO cancelar (soft-deletar uma CALL completed a tira das métricas Agendadas/Realizadas).
+      // O activity_id vem de custom_fields, que o usuario escreve. Sem amarrar ao
+      // deal ja autorizado, um consultor cancelava a reuniao de outro passando o id
+      // dela no proprio card. O fallback abaixo sempre filtrou por deal_id.
       const { data: act } = await admin
         .from('activities')
         .select('id, completed, deleted_at')
         .eq('id', jsonActivityId)
+        .eq('deal_id', dealId)
         .maybeSingle();
       if (!act || act.deleted_at) {
         return NextResponse.json({ dealId, already_cancelled: true, note: 'activity gone' }, { status: 200 });

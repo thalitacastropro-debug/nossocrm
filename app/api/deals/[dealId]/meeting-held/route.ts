@@ -44,7 +44,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const agendada = existingCf.reuniao_agendada as { activity_id?: string } | undefined;
 
     if (agendada?.activity_id) {
-      await admin.from('activities').update({ completed: true }).eq('id', agendada.activity_id);
+      // .eq('deal_id') e obrigatorio: activity_id sai de custom_fields, campo do usuario.
+      await admin
+        .from('activities')
+        .update({ completed: true })
+        .eq('id', agendada.activity_id)
+        .eq('deal_id', dealId);
     } else {
       // Lead sem agendamento da Ana → MEETING completed (não colide com o índice de CALL).
       await admin.from('activities').insert({

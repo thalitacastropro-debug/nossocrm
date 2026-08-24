@@ -164,12 +164,37 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to move deal' }, { status: 500 });
     }
 
-    const conversationId = body.conversationId;
-    const effectiveContactId = body.contactId ?? deal.contact_id ?? undefined;
+    // O contato NAO pode vir do corpo: e o do deal ja autorizado. Aceitar body.contactId
+    // deixava um consultor despausar a IA e disparar WhatsApp para o lead de outro.
+    const effectiveContactId = deal.contact_id ?? undefined;
 
     // Admin client (service role) para os side-effects de sistema: messaging_messages
     // tem FORCE RLS, e reativar IA/enviar é ação de sistema — bypass é o caminho seguro.
     const admin = createStaticAdminClient();
+
+    // A conversa tambem e derivada do deal. Se o corpo mandar uma, ela so vale se
+    // pertencer ao contato DESTE card — senao um consultor faria o sistema mandar
+    // WhatsApp para o lead de outro.
+    let conversationId: string | undefined;
+    if (body.conversationId && effectiveContactId) {
+      const { data: conv } = await admin
+        .from('messaging_conversations')
+        .select('id')
+        .eq('id', body.conversationId)
+        .eq('contact_id', effectiveContactId)
+        .maybeSingle();
+      conversationId = conv?.id as string | undefined;
+    }
+    if (!conversationId && effectiveContactId) {
+      const { data: conv } = await admin
+        .from('messaging_conversations')
+        .select('id')
+        .eq('contact_id', effectiveContactId)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      conversationId = conv?.id as string | undefined;
+    }
 
     // 4. Reativa IA (best-effort) — contato (cross-channel) OU fallback na conversa — E reseta o breaker.
     try {

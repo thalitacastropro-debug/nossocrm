@@ -1,5 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+/**
+ * Duble encadeavel de query: `.eq().eq()` resolve em qualquer ponto da cadeia.
+ * A rota amarra a activity ao deal (`.eq('id', x).eq('deal_id', y)`) — sem isso,
+ * um consultor mexia na reuniao de outro passando o id no proprio card.
+ */
+function cadeiaEq() {
+  const chamadas: unknown[][] = [];
+  const alvo: any = {
+    chamadas,
+    eq: (...args: unknown[]) => { chamadas.push(args); return alvo; },
+    then: (resolve: (v: unknown) => unknown) => resolve({ error: null }),
+  };
+  return alvo;
+}
+
+
 const USER_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5';
 const ORG_ID = 'b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6';
 const DEAL_ID = 'c3d4e5f6-a7b8-4c9d-8e0f-a1b2c3d4e5f6';
@@ -29,8 +45,8 @@ describe('POST /api/deals/[dealId]/meeting-held', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dealRow = { id: DEAL_ID, organization_id: ORG_ID, owner_id: USER_ID, custom_fields: { reuniao_agendada: { activity_id: ACT_ID } } };
-    dealUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn(async () => ({ error: null })) });
-    actUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn(async () => ({ error: null })) });
+    dealUpdateSpy = vi.fn(() => cadeiaEq());
+    actUpdateSpy = vi.fn(() => cadeiaEq());
     actInsertSpy = vi.fn(async () => ({ error: null }));
     supabaseClientMock = {
       ...auth(),
@@ -55,6 +71,11 @@ describe('POST /api/deals/[dealId]/meeting-held', () => {
     const res = await callPost();
     expect(res.status).toBe(200);
     expect(actUpdateSpy).toHaveBeenCalledWith({ completed: true });
+    // Trava de seguranca: a activity TEM que ser amarrada ao deal autorizado.
+    // Sem o .eq('deal_id'), um consultor completava a reuniao de outro passando
+    // o activity_id dela no custom_fields do proprio card.
+    const chamadas = (actUpdateSpy.mock.results[0].value as any).chamadas;
+    expect(chamadas).toContainEqual(['deal_id', DEAL_ID]);
     expect(actInsertSpy).not.toHaveBeenCalled();
     const arg = dealUpdateSpy.mock.calls[0][0] as { custom_fields: Record<string, unknown> };
     expect((arg.custom_fields.reuniao_realizada as { realizada: boolean; by: string }).realizada).toBe(true);
