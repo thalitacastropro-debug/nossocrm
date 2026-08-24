@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { boardsService } from '@/lib/supabase/boards';
+import { boardAccessService } from '@/lib/supabase/boardAccess';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { ConfirmDialog as ConfirmModal } from '@/components/ui/confirm-dialog';
@@ -59,6 +61,11 @@ export const UsersPage: React.FC = () => {
     const [activeInvites, setActiveInvites] = useState<any[]>([]);
     const [expirationDays, setExpirationDays] = useState<number | null>(7); // 7 days default, null = never
 
+    // Acesso por funil: quem enxerga qual funil. Admin não aparece aqui — vê todos.
+    const [boards, setBoards] = useState<{ id: string; name: string }[]>([]);
+    const [boardAccess, setBoardAccess] = useState<Record<string, string[]>>({}); // userId -> boardIds
+    const [savingAccess, setSavingAccess] = useState<string | null>(null); // `${userId}:${boardId}`
+
     const sb = supabase;
 
     const fetchUsers = useCallback(async () => {
@@ -116,6 +123,44 @@ export const UsersPage: React.FC = () => {
         }
     }, []);
 
+    const fetchBoardAccess = useCallback(async () => {
+        try {
+            const [{ data: boardsData }, { data: accessData }] = await Promise.all([
+                boardsService.getAll(),
+                boardAccessService.getAll(),
+            ]);
+
+            setBoards((boardsData || []).map((b) => ({ id: b.id, name: b.name })));
+
+            const porUsuario: Record<string, string[]> = {};
+            for (const row of accessData) {
+                (porUsuario[row.userId] ||= []).push(row.boardId);
+            }
+            setBoardAccess(porUsuario);
+        } catch (err) {
+            console.error('Error fetching board access:', err);
+        }
+    }, []);
+
+    /** Liga/desliga um funil para uma pessoa. Otimista, com rollback se falhar. */
+    const toggleBoardAccess = useCallback(async (userId: string, boardId: string) => {
+        const atual = boardAccess[userId] || [];
+        const proximo = atual.includes(boardId)
+            ? atual.filter((id) => id !== boardId)
+            : [...atual, boardId];
+
+        setSavingAccess(`${userId}:${boardId}`);
+        setBoardAccess((prev) => ({ ...prev, [userId]: proximo }));
+
+        const { error: saveError } = await boardAccessService.setForUser(userId, proximo);
+
+        setSavingAccess(null);
+        if (saveError) {
+            setBoardAccess((prev) => ({ ...prev, [userId]: atual }));
+            addToast('Não consegui salvar o acesso ao funil', 'error');
+        }
+    }, [addToast, boardAccess]);
+
     const closeModal = useCallback(() => {
         setIsModalOpen(false);
         setError(null);
@@ -126,6 +171,10 @@ export const UsersPage: React.FC = () => {
     useEffect(() => {
         fetchUsers();
     }, [fetchUsers]);
+
+    useEffect(() => {
+        if (currentUserProfile?.role === 'admin') fetchBoardAccess();
+    }, [currentUserProfile?.role, fetchBoardAccess]);
 
     useEffect(() => {
         if (isModalOpen) {
@@ -394,6 +443,63 @@ export const UsersPage: React.FC = () => {
                                             </>
                                         )}
                                     </div>
+                                )}
+                            </div>
+
+                            {/* Acesso por funil — o admin concede pessoa a pessoa, pela área em que ela atua */}
+                            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-white/5">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                                        Funis que enxerga
+                                    </span>
+                                </div>
+
+                                {user.role === 'admin' ? (
+                                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                                        Todos os funis — administrador.
+                                    </p>
+                                ) : user.role === 'trafego' ? (
+                                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                                        Nenhum. O papel Tráfego não abre funil, só o intake do Meta em Configurações.
+                                    </p>
+                                ) : (
+                                    <>
+                                        <div className="flex flex-wrap gap-2">
+                                            {boards.map((board) => {
+                                                const liberado = (boardAccess[user.id] || []).includes(board.id);
+                                                const salvando = savingAccess === `${user.id}:${board.id}`;
+
+                                                return (
+                                                    <button
+                                                        key={board.id}
+                                                        type="button"
+                                                        onClick={() => toggleBoardAccess(user.id, board.id)}
+                                                        disabled={salvando}
+                                                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border transition-all disabled:opacity-50 ${liberado
+                                                            ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300'
+                                                            : 'border-slate-200 text-slate-500 hover:border-slate-300 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-600'
+                                                            }`}
+                                                        title={liberado ? `Tirar o acesso de ${board.name}` : `Dar acesso a ${board.name}`}
+                                                    >
+                                                        {salvando ? (
+                                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                        ) : liberado ? (
+                                                            <Check className="h-3.5 w-3.5" />
+                                                        ) : (
+                                                            <span className="h-3.5 w-3.5 rounded border border-current opacity-40" />
+                                                        )}
+                                                        {board.name}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+
+                                        {(boardAccess[user.id] || []).length === 0 && (
+                                            <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">
+                                                Sem nenhum funil liberado — hoje esta pessoa abre o CRM e não vê card nenhum.
+                                            </p>
+                                        )}
+                                    </>
                                 )}
                             </div>
                         </div>
