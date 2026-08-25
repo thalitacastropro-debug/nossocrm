@@ -184,10 +184,19 @@ export function useCreateMessagingChannel() {
     mutationFn: async (input: CreateChannelInput): Promise<MessagingChannel> => {
       const supabase = getClient();
 
-      // Get current user's org
+      // Org de quem está criando o canal. O filtro por id é obrigatório: sem ele,
+      // `.single()` depende de a RLS devolver exatamente uma linha de `profiles` —
+      // com dois usuários na organização isso já quebrava ("multiple rows"), e a
+      // policy nova (24/08/2026) devolve o time inteiro para quem enxerga o time.
+      const { data: sessao } = await supabase.auth.getUser();
+      if (!sessao?.user?.id) {
+        throw new Error('Não autenticado');
+      }
+
       const { data: profile } = await supabase
         .from('profiles')
         .select('organization_id')
+        .eq('id', sessao.user.id)
         .single();
 
       if (!profile?.organization_id) {
