@@ -37,6 +37,20 @@ export const isDealRotting = (deal: DealView) => {
 };
 
 /**
+ * A pessoa pode filtrar o funil POR CONSULTOR?
+ *
+ * Só quem enxerga a carteira do time: admin ou quem tem `ve_todos_os_leads`
+ * (sócio/gestor — hoje o Denilson). Para um consultor comum a RLS já devolveria
+ * zero cards de um colega, mas oferecer o nome dos outros num dropdown sugere um
+ * acesso que ele não tem. Decisão da Thalita em 24/08/2026: "o Pedro ou qualquer
+ * outro vendedor não deve conseguir filtrar e acessar o funil de outro consultor,
+ * e isso vale para qualquer funil que ele estiver ativado".
+ */
+export const podeFiltrarPorConsultor = (
+  profile: { role?: string; ve_todos_os_leads?: boolean } | null | undefined,
+): boolean => profile?.role === 'admin' || profile?.ve_todos_os_leads === true;
+
+/**
  * O card passa pelo filtro de dono?
  *
  * `ownerFilter` aceita `'all'`, `'mine'`, `'sem-dono'` ou o id de um membro do
@@ -90,6 +104,8 @@ export const useBoardsController = () => {
   // aparecia como "Sem Dono" — com dois consultores na operação isso deixou de
   // ser detalhe (24/08/2026).
   const { data: orgMembers } = useOrgMembersQuery();
+
+  const veCarteiraDoTime = podeFiltrarPorConsultor(profile);
 
   // AI Context
   const { setContext, clearContext } = useAI();
@@ -906,8 +922,12 @@ export const useBoardsController = () => {
     setSearchTerm,
     ownerFilter,
     setOwnerFilter,
-    /** Time da organização, para o filtro "dono" listar as pessoas por nome. */
-    orgMembers: orgMembers ?? [],
+    /**
+     * Pessoas oferecidas no filtro de dono. Vazio para quem não enxerga a
+     * carteira do time — um consultor filtra no máximo entre "todos" (que para
+     * ele já são só os dele) e "meus negócios".
+     */
+    orgMembers: veCarteiraDoTime ? (orgMembers ?? []) : [],
     statusFilter,
     setStatusFilter,
     dateRange,

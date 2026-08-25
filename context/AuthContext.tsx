@@ -60,6 +60,12 @@ interface Profile {
     phone?: string | null;
     avatar_url?: string | null;
     created_at?: string;
+    /**
+     * Enxerga a carteira do time inteiro, sem ser admin (sócio/gestor — hoje o
+     * Denilson). A RLS já usa isto via `ve_tudo()`; na UI serve para decidir o
+     * que faz sentido MOSTRAR — por exemplo, filtrar o funil por consultor.
+     */
+    ve_todos_os_leads?: boolean;
 }
 
 /**

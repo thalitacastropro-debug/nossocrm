@@ -208,13 +208,20 @@ export const KanbanHeader: React.FC<KanbanHeaderProps> = ({
                         <option value="all">Todos os Donos</option>
                         <option value="mine">Meus Negócios</option>
                         {/* Uma opção por pessoa do time: com dois consultores, "meus
-                            negócios" não responde "o que é do Pedro?" */}
-                        {orgMembers.map((membro) => (
-                            <option key={membro.id} value={membro.id}>
-                                {membro.name}
-                            </option>
-                        ))}
-                        <option value="sem-dono">Sem dono</option>
+                            negócios" não responde "o que é do Pedro?". Vem vazio para
+                            quem não enxerga a carteira do time — um consultor não
+                            filtra pelo colega (a RLS já não entregaria os cards, e
+                            listar o nome sugeriria um acesso que ele não tem). */}
+                        {orgMembers.length > 0 && (
+                            <>
+                                {orgMembers.map((membro) => (
+                                    <option key={membro.id} value={membro.id}>
+                                        {membro.name}
+                                    </option>
+                                ))}
+                                <option value="sem-dono">Sem dono</option>
+                            </>
+                        )}
                     </select>
                     <User className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                 </div>

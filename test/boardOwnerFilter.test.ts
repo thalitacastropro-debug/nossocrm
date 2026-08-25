@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { matchesOwnerFilter } from '@/features/boards/hooks/useBoardsController';
+import {
+  matchesOwnerFilter,
+  podeFiltrarPorConsultor,
+} from '@/features/boards/hooks/useBoardsController';
 
 const THALITA = 'user-thalita';
 const DENILSON = 'user-denilson';
@@ -32,5 +35,28 @@ describe('matchesOwnerFilter', () => {
   it('"sem-dono" isola os órfãos', () => {
     expect(matchesOwnerFilter(undefined, 'sem-dono', THALITA)).toBe(true);
     expect(matchesOwnerFilter(DENILSON, 'sem-dono', THALITA)).toBe(false);
+  });
+});
+
+describe('podeFiltrarPorConsultor', () => {
+  it('admin filtra por qualquer consultor', () => {
+    expect(podeFiltrarPorConsultor({ role: 'admin' })).toBe(true);
+  });
+
+  it('quem enxerga a carteira do time filtra (sócio/gestor)', () => {
+    expect(podeFiltrarPorConsultor({ role: 'vendedor', ve_todos_os_leads: true })).toBe(true);
+  });
+
+  // O pedido da Thalita: o Pedro não pode nem OFERECER o funil de outro consultor
+  // no filtro, em nenhum funil que ele tenha acesso.
+  it('vendedor comum NÃO filtra por consultor', () => {
+    expect(podeFiltrarPorConsultor({ role: 'vendedor', ve_todos_os_leads: false })).toBe(false);
+    expect(podeFiltrarPorConsultor({ role: 'vendedor' })).toBe(false);
+  });
+
+  it('papel tráfego e perfil ausente também não', () => {
+    expect(podeFiltrarPorConsultor({ role: 'trafego' })).toBe(false);
+    expect(podeFiltrarPorConsultor(null)).toBe(false);
+    expect(podeFiltrarPorConsultor(undefined)).toBe(false);
   });
 });
