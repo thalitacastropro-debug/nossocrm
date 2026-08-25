@@ -759,13 +759,19 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                   <h3 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-2">
                     <User size={14} /> Contato Principal
                   </h3>
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-bold">
+                  {/* Nome + selo + botão numa linha só. Um nome longo ("Juliana |
+                      Psicóloga") empurrava o selo para fora da caixa e o botão verde
+                      — irmão posterior, com fundo opaco — pintava por cima dele.
+                      Não era z-index nem hover: era overflow de flex. O que segura é
+                      `min-w-0` + `truncate` no que pode crescer e `shrink-0` no que
+                      não pode encolher. */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 shrink-0 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-bold">
                       {(deal.contactName || '?').charAt(0)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-slate-900 dark:text-white font-medium text-sm flex items-center gap-2">
-                        {deal.contactName || 'Sem contato'}
+                      <p className="text-slate-900 dark:text-white font-medium text-sm flex items-center gap-2 min-w-0">
+                        <span className="truncate">{deal.contactName || 'Sem contato'}</span>
                         {contact?.stage &&
                           (() => {
                             const stage = lifecycleStageById.get(contact.stage);
@@ -778,14 +784,14 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
 
                             return (
                               <span
-                                className={`text-[10px] font-black px-2 py-0.5 rounded shadow-sm uppercase tracking-wider flex items-center gap-1 text-white ${colorClass}`}
+                                className={`text-[10px] font-black px-2 py-0.5 rounded shadow-sm uppercase tracking-wider flex items-center gap-1 text-white shrink-0 whitespace-nowrap ${colorClass}`}
                               >
                                 {stage.name}
                               </span>
                             );
                           })()}
                       </p>
-                      <p className="text-slate-500 text-xs">{deal.contactEmail}</p>
+                      <p className="text-slate-500 text-xs truncate">{deal.contactEmail}</p>
                     </div>
                     {/* Send Message Button */}
                     {contact?.phone && (
@@ -802,7 +808,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                           router.push(`/messaging?${params.toString()}`);
                           onClose();
                         }}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-500/10 hover:bg-green-100 dark:hover:bg-green-500/20 rounded-lg transition-colors"
+                        className="flex shrink-0 items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-500/10 hover:bg-green-100 dark:hover:bg-green-500/20 rounded-lg transition-colors"
                         title="Enviar mensagem via WhatsApp"
                       >
                         <MessageSquare size={14} />
