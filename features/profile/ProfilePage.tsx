@@ -6,7 +6,8 @@ import { getErrorMessage } from '@/lib/utils/errorUtils';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { isE164, normalizePhoneE164 } from '@/lib/phone';
-import { Loader2, User, Mail, Shield, Calendar, Key, Check, Eye, EyeOff, Phone, Pencil, Save, Camera, X } from 'lucide-react';
+import { Loader2, User, Mail, Shield, Calendar, Key, Check, Eye, EyeOff, Phone, Pencil, Save, Camera, X, Home } from 'lucide-react';
+import { usePersistedState } from '@/hooks/usePersistedState';
 
 /**
  * Componente React `ProfilePage`.
@@ -14,6 +15,10 @@ import { Loader2, User, Mail, Shield, Calendar, Key, Check, Eye, EyeOff, Phone, 
  */
 export const ProfilePage: React.FC = () => {
     const { profile, refreshProfile } = useAuth();
+
+    // Mesma chave usada pela antiga aba Geral das Configurações — quem já tinha
+    // escolhido uma página inicial continua com a escolha dele.
+    const [defaultRoute, setDefaultRoute] = usePersistedState<string>('crm_default_route', '/boards');
 
     // Em ambientes onde as variáveis de ambiente não estão configuradas,
     // nosso helper pode retornar `null` para evitar crash.
@@ -570,6 +575,42 @@ export const ProfilePage: React.FC = () => {
                         </div>
                     </div>
                 )}
+            </div>
+
+            {/* Preferências pessoais — moradia nova da "Página Inicial".
+                Ela vivia em Configurações → Geral, e o vendedor perdeu Configurações
+                em 24/08/2026. Não é config do CRM: é preferência de quem usa, e fica
+                guardada no navegador da pessoa (`crm_default_route`, localStorage). */}
+            <div className="bg-white dark:bg-white/3 border border-slate-200 dark:border-white/10 rounded-2xl p-6">
+                <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                        <Home className="w-5 h-5 text-slate-400" />
+                        Preferências
+                    </h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                        Onde o CRM abre quando você entra.
+                    </p>
+                </div>
+
+                <label
+                    htmlFor="pagina-inicial"
+                    className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2"
+                >
+                    Página inicial
+                </label>
+                <select
+                    id="pagina-inicial"
+                    value={defaultRoute}
+                    onChange={(e) => setDefaultRoute(e.target.value)}
+                    className="w-full max-w-sm px-4 py-2.5 border-2 border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none focus:border-primary-500 transition-all"
+                >
+                    <option value="/boards">Funis</option>
+                    <option value="/dashboard">Visão Geral</option>
+                    <option value="/messaging">Chat ao vivo</option>
+                    <option value="/inbox">Inbox</option>
+                    <option value="/activities">Atividades</option>
+                    <option value="/contacts">Contatos</option>
+                </select>
             </div>
 
             {/* Security Section */}

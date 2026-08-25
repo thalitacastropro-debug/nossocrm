@@ -103,13 +103,20 @@ describe('SettingsPage RBAC', () => {
     vi.clearAllMocks()
   })
 
-  it('vendedor não vê seções de configuração do sistema', () => {
+  // Decisão da Thalita em 24/08/2026, com o Pedro no time: "nenhum vendedor deve
+  // ter acesso às configurações". Nem a aba Geral — as preferências pessoais dele
+  // ficam no Perfil. O guard de rota redireciona; a página também se recusa a
+  // montar, caso alguém a renderize por outro caminho.
+  it('vendedor não entra em Configurações — nenhuma aba, nenhuma seção', () => {
     useAuthMock.mockReturnValue({
       profile: { role: 'vendedor' },
     } as any)
 
     render(<SettingsPage />)
 
+    expect(screen.getByRole('heading', { name: /acesso restrito/i })).toBeInTheDocument()
+
+    // Nenhuma seção monta
     expect(
       screen.queryByRole('heading', { name: /^Gerenciamento de Tags$/i })
     ).not.toBeInTheDocument()
@@ -120,11 +127,14 @@ describe('SettingsPage RBAC', () => {
       screen.queryByRole('heading', { name: /^API \(Integrações\)$/i })
     ).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /^Webhooks$/i })).not.toBeInTheDocument()
+    // Nem a preferência pessoal da aba Geral — ela vive no Perfil
+    expect(screen.queryByRole('heading', { name: /página inicial/i })).not.toBeInTheDocument()
 
-    // Preferências pessoais seguem visíveis
-    expect(screen.getByRole('heading', { name: /página inicial/i })).toBeInTheDocument()
-    // Tabs pessoais seguem visíveis
-    expect(screen.getByRole('button', { name: /central de i\.a/i })).toBeInTheDocument()
+    // Nenhuma aba oferecida
+    expect(screen.queryByRole('button', { name: /central de i\.a/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Dados$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Equipe$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /integrações/i })).not.toBeInTheDocument()
   })
 
   it('admin vê seções de configuração do sistema', async () => {

@@ -42,6 +42,17 @@ export function isRole(value: unknown): value is Role {
  */
 export const TRAFEGO_ALLOWED_ROUTES: readonly string[] = ['/settings', '/profile'];
 
+/**
+ * Prefixos de rota FECHADOS para `vendedor` (a rota e tudo abaixo dela).
+ *
+ * Decisão da Thalita em 24/08/2026, com o Pedro já no time: *"acho que nenhum
+ * vendedor deve ter acesso às configurações"*. Configurações concentra a
+ * Central de I.A (a Ana e a chave que paga a IA), o "DELETAR TUDO" da aba Dados,
+ * a Equipe, as Integrações e as Unidades — nada que um consultor precise para
+ * vender. As preferências pessoais dele ficam em `/profile`.
+ */
+export const VENDEDOR_BLOCKED_PREFIXES: readonly string[] = ['/settings'];
+
 /** Remove barra final (exceto raiz) para comparar pathname de forma estável. */
 function normalizePath(pathname: string): string {
   if (pathname.length > 1 && pathname.endsWith('/')) return pathname.slice(0, -1);
@@ -50,14 +61,35 @@ function normalizePath(pathname: string): string {
 
 /**
  * Um papel pode acessar a rota (pathname)?
- * - `admin`/`vendedor`: sempre `true` (não há restrição de rota hoje).
+ * - `admin`: sempre `true`.
+ * - `vendedor`: tudo, MENOS os prefixos de {@link VENDEDOR_BLOCKED_PREFIXES}.
  * - `trafego`: `true` só para as rotas explicitamente liberadas (default-deny).
  *
  * Usado no guard central do servidor (proxy) e para filtrar itens de navegação.
  */
 export function canAccessRoute(role: Role, pathname: string): boolean {
-  if (role !== 'trafego') return true;
-  return TRAFEGO_ALLOWED_ROUTES.includes(normalizePath(pathname));
+  const path = normalizePath(pathname);
+
+  if (role === 'trafego') return TRAFEGO_ALLOWED_ROUTES.includes(path);
+
+  if (role === 'vendedor') {
+    return !VENDEDOR_BLOCKED_PREFIXES.some(
+      (prefixo) => path === prefixo || path.startsWith(`${prefixo}/`),
+    );
+  }
+
+  return true;
+}
+
+/**
+ * Para onde mandar alguém que caiu numa rota proibida.
+ *
+ * Não pode ser fixo em `/settings`: desde que o vendedor perdeu Configurações,
+ * mandar ele para lá seria um laço de redirecionamento.
+ */
+export function homeRouteFor(role: Role): string {
+  if (role === 'trafego') return '/settings';
+  return '/boards';
 }
 
 // ---------------------------------------------------------------------------
@@ -89,12 +121,25 @@ export const INTEGRATIONS_SUBTABS: readonly IntegrationsSubTabId[] = [
  * Um papel pode VER a aba de Configurações informada?
  * - `general`: todos (contém a preferência pessoal "Página Inicial").
  * - `integrations`: `admin` e `trafego` (é onde vivem Webhooks + Canais).
- * - `ai` / `data`: todos MENOS `trafego`.
- * - `products` / `business-units` / `users`: só `admin`.
+ * - `ai` / `data` / `products` / `business-units` / `users`: só `admin`.
+ *
+ * `ai` e `data` eram visíveis para `vendedor` até 24/08/2026. Decisão da Thalita
+ * ao trazer o Pedro para o time — um consultor fica com "Geral" e o próprio
+ * perfil, nada além:
+ * - **Dados** tem o botão "DELETAR TUDO" (varre atividades, negócios, funis...).
+ * - **Central de I.A** é a configuração da Ana e da chave que paga a IA; mexer
+ *   nela quebra o atendimento da operação inteira.
+ * Nenhuma das duas é blindagem sozinha: a RLS é quem barra de fato (ver a
+ * migração `20260824230000_fecha_credenciais_e_organizacao`). Isto aqui evita
+ * oferecer o caminho.
  *
  * Default-deny: papel/aba não mapeado retorna `false`.
  */
 export function canSeeSettingsTab(role: Role | undefined, tab: SettingsTabId): boolean {
+  // Vendedor não entra em Configurações (ver VENDEDOR_BLOCKED_PREFIXES). Isto
+  // cobre o caso de o componente ser montado por outro caminho que não a rota.
+  if (role === 'vendedor') return false;
+
   switch (tab) {
     case 'general':
       return true;
@@ -102,7 +147,6 @@ export function canSeeSettingsTab(role: Role | undefined, tab: SettingsTabId): b
       return role === 'admin' || role === 'trafego';
     case 'ai':
     case 'data':
-      return role !== 'trafego';
     case 'products':
     case 'business-units':
     case 'users':

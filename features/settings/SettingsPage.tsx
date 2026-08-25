@@ -224,6 +224,26 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ tab: initialTab }) => {
   const role = profile?.role;
   const isAdmin = role === 'admin';
 
+  // Vendedor não entra em Configurações (decisão da Thalita, 24/08/2026 — ver
+  // VENDEDOR_BLOCKED_PREFIXES em lib/rbac). O guard de rota no servidor já
+  // redireciona; este bloco cobre a montagem por qualquer outro caminho e evita
+  // que o fallback de aba caia na Geral e mostre a página assim mesmo.
+  if (role === 'vendedor') {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="text-center max-w-sm">
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-2">
+            Acesso restrito
+          </h2>
+          <p className="text-slate-500 dark:text-slate-400">
+            As configurações do CRM são da administração. Suas preferências pessoais ficam
+            no seu Perfil.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // Fonte única das abas; a visibilidade por papel vem do rbac (default-deny p/ 'trafego').
   const allTabs: { id: SettingsTab; name: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'general', name: 'Geral', icon: SettingsIcon },

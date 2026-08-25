@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
+import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
 import { isAllowedOrigin } from '@/lib/security/sameOrigin';
 import { AI_DEFAULT_MODELS } from '@/lib/ai/defaults';
 
@@ -49,7 +50,15 @@ export async function GET() {
     return json({ error: 'Profile not found' }, 404);
   }
 
-  const { data: orgSettings, error: orgError } = await supabase
+  // Lê com a service role e filtra pela org do próprio usuário. A leitura direta
+  // de `organization_settings` passou a ser exclusiva de admin na RLS (24/08/2026,
+  // migração `restringe_credenciais_org_settings`) porque a policy antiga entregava
+  // a LINHA INTEIRA a qualquer membro — chaves de IA, token do Telegram e o
+  // `internal_api_secret` inclusive. Quem decide o que sai daqui é o bloco de
+  // papel logo abaixo, não a RLS: um vendedor continua recebendo os flags da
+  // operação, e nenhuma chave.
+  const admin = createStaticAdminClient();
+  const { data: orgSettings, error: orgError } = await admin
     .from('organization_settings')
     .select('ai_enabled, ai_provider, ai_model, ai_google_key, telegram_bot_token, telegram_chat_id')
     .eq('organization_id', profile.organization_id)

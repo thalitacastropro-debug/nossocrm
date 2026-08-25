@@ -1,6 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
-import { canAccessRoute, isRole } from '@/lib/rbac'
+import { canAccessRoute, homeRouteFor, isRole, ROLE_VALUES } from '@/lib/rbac'
 
 /**
  * Função pública `updateSession` do projeto.
@@ -107,14 +107,17 @@ export async function updateSession(request: NextRequest) {
     // ---------------------------------------------------------------------
     // RBAC guard — default-DENY para papéis limitados (ex.: 'trafego').
     // ---------------------------------------------------------------------
-    // Este é o PONTO CENTRAL de proteção de rota no servidor. Como as rotas
-    // liberadas ao papel mais restrito (trafego) valem para todos os papéis,
-    // usamos fast-path: se a rota já é liberada ao trafego, ninguém precisa ser
-    // barrado e evitamos a consulta de papel. Só quando a rota NÃO é liberada ao
-    // trafego é que consultamos o papel real e, se ele não puder acessar,
-    // redirecionamos para /settings (única área do trafego). admin/vendedor
-    // passam livremente (canAccessRoute retorna true para eles).
-    if (user && !canAccessRoute('trafego', pathname)) {
+    // Este é o PONTO CENTRAL de proteção de rota no servidor. O fast-path evita a
+    // consulta de papel quando a rota é livre para TODO MUNDO; só aí ninguém pode
+    // ser barrado. Antes ele perguntava só pelo 'trafego', assumindo que era o
+    // papel mais restrito em qualquer rota — deixou de valer em 24/08/2026, quando
+    // o vendedor perdeu /settings (rota que o trafego ACESSA). Com a pergunta
+    // antiga, o vendedor entraria em Configurações sem nunca ser checado.
+    const rotaLivreParaTodosOsPapeis = ROLE_VALUES.every((papel) =>
+        canAccessRoute(papel, pathname),
+    )
+
+    if (user && !rotaLivreParaTodosOsPapeis) {
         const { data: me } = await supabase
             .from('profiles')
             .select('role')
@@ -124,7 +127,9 @@ export async function updateSession(request: NextRequest) {
         const role = me?.role
         if (isRole(role) && !canAccessRoute(role, pathname)) {
             const url = request.nextUrl.clone()
-            url.pathname = '/settings'
+            // Destino por papel: mandar todo mundo para /settings viraria laço de
+            // redirecionamento agora que o vendedor não entra lá.
+            url.pathname = homeRouteFor(role)
             url.search = ''
             url.hash = ''
             return NextResponse.redirect(url)
