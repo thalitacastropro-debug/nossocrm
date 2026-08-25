@@ -63,6 +63,28 @@ const getInitials = (name: string) => {
     .toUpperCase();
 };
 
+// Primeiro nome — é o que identifica a pessoa de relance no board.
+const getFirstName = (name: string) => name.trim().split(/\s+/)[0];
+
+/**
+ * Cor fixa por pessoa, para o dono do card ser reconhecido pela cor antes mesmo
+ * da leitura. Classes literais de propósito: o Tailwind não vê nome de classe
+ * montado em runtime e purgaria as cores.
+ */
+const OWNER_COLORS = [
+  'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',
+  'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
+  'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300',
+  'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
+] as const;
+
+const getOwnerColor = (name: string) =>
+  OWNER_COLORS[
+    [...name].reduce((soma, char) => soma + char.charCodeAt(0), 0) % OWNER_COLORS.length
+  ];
+
 /**
  * Telefone do lead pra abrir o WhatsApp direto do card (wa.me).
  * Fontes: custom_fields.phone (E.164, gravado pelo webhook/backfill) ou o
@@ -419,26 +441,43 @@ const DealCardComponent: React.FC<DealCardProps> = ({
       </p>
 
       <div className="flex justify-between items-center pt-2 border-t border-slate-100 dark:border-white/5">
-        <div className="flex items-center gap-2">
-          {deal.owner && deal.owner.name !== 'Sem Dono' && (
-            deal.owner.avatar ? (
-              <Image
-                src={deal.owner.avatar}
-                alt={`Responsável: ${deal.owner.name}`}
-                width={20}
-                height={20}
-                className="w-5 h-5 rounded-full ring-1 ring-white dark:ring-slate-800"
-                title={`Responsável: ${deal.owner.name}`}
-                unoptimized
-              />
-            ) : (
-              <div
-                className="w-5 h-5 rounded-full bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-300 flex items-center justify-center text-[9px] font-bold ring-1 ring-white dark:ring-slate-800"
-                title={`Responsável: ${deal.owner.name}`}
-              >
-                {getInitials(deal.owner.name)}
-              </div>
-            )
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Dono do card. Com dois consultores na operação, saber de quem é o lead
+              tem que ser leitura de relance — daí o primeiro nome ao lado do avatar
+              e a cor fixa por pessoa. Sem dono é estado de risco: aparece marcado. */}
+          {deal.owner && deal.owner.name !== 'Sem Dono' ? (
+            <span
+              className="flex items-center gap-1 min-w-0"
+              title={`Responsável: ${deal.owner.name}`}
+            >
+              {deal.owner.avatar ? (
+                <Image
+                  src={deal.owner.avatar}
+                  alt={`Responsável: ${deal.owner.name}`}
+                  width={20}
+                  height={20}
+                  className="w-5 h-5 rounded-full ring-1 ring-white dark:ring-slate-800 flex-shrink-0"
+                  unoptimized
+                />
+              ) : (
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ring-1 ring-white dark:ring-slate-800 flex-shrink-0 ${getOwnerColor(deal.owner.name)}`}
+                  aria-hidden="true"
+                >
+                  {getInitials(deal.owner.name)}
+                </span>
+              )}
+              <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 truncate max-w-[72px]">
+                {getFirstName(deal.owner.name)}
+              </span>
+            </span>
+          ) : (
+            <span
+              className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 whitespace-nowrap"
+              title="Este lead não tem responsável — ninguém está cuidando dele"
+            >
+              sem dono
+            </span>
           )}
           <span className="text-sm font-bold text-slate-700 dark:text-slate-200 font-mono">
             ${deal.value.toLocaleString()}

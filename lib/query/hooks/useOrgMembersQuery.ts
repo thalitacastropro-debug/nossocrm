@@ -15,6 +15,8 @@ import { supabase } from '@/lib/supabase';
 export interface OrgMember {
   id: string;
   name: string;
+  /** Avatar do perfil, quando houver — usado para mostrar o dono no card do funil. */
+  avatar?: string;
 }
 
 export function useOrgMembersQuery() {
@@ -26,14 +28,16 @@ export function useOrgMembersQuery() {
     queryFn: async (): Promise<OrgMember[]> => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, name')
+        .select('id, name, first_name, nickname, avatar_url')
         .eq('organization_id', orgId!)
         .order('name');
 
       if (error) throw error;
       return (data ?? []).map((p) => ({
         id: p.id,
-        name: p.name ?? 'Sem nome',
+        // Ordem de preferência: como a pessoa se chama > nome completo.
+        name: p.nickname || p.name || p.first_name || 'Sem nome',
+        avatar: p.avatar_url || undefined,
       }));
     },
     enabled: !!orgId,

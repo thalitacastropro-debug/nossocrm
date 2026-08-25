@@ -20,6 +20,7 @@ import { useRealtimeSyncKanban } from '@/lib/realtime/useRealtimeSync';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
 import { useLifecycleStages } from '@/lib/query/hooks/useLifecycleStagesQuery';
+import { useOrgMembersQuery } from '@/lib/query/hooks/useOrgMembersQuery';
 import { useAI } from '@/context/AIContext';
 
 /**
@@ -61,6 +62,12 @@ export const useBoardsController = () => {
   const { profile, organizationId } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
+
+  // Time da organização, para saber o NOME do dono de cada card. Sem isto, o
+  // enriquecimento só cobria o próprio usuário e todo card de outra pessoa
+  // aparecia como "Sem Dono" — com dois consultores na operação isso deixou de
+  // ser detalhe (24/08/2026).
+  const { data: orgMembers } = useOrgMembersQuery();
 
   // AI Context
   const { setContext, clearContext } = useAI();
@@ -351,6 +358,12 @@ export const useBoardsController = () => {
     return () => document.removeEventListener('click', handleClickOutside);
   }, [openActivityMenuId]);
 
+  // Índice do time por id, para resolver o dono de cada card em O(1).
+  const membrosPorId = useMemo(
+    () => new Map((orgMembers ?? []).map(m => [m.id, m])),
+    [orgMembers],
+  );
+
   // Filtering Logic
   const filteredDeals = useMemo(() => {
     // Pre-compute valores fora do loop para evitar recriação a cada iteração
@@ -420,6 +433,14 @@ export const useBoardsController = () => {
           }
         };
       }
+
+      // Card de outra pessoa: busca o nome no time. Antes caía direto no
+      // `owner: 'Sem Dono'` que o transform do banco deixa como placeholder.
+      const dono = deal.ownerId ? membrosPorId.get(deal.ownerId) : undefined;
+      if (dono) {
+        return { ...deal, owner: { name: dono.name, avatar: dono.avatar || '' } };
+      }
+
       return deal;
     });
   // Dependencies usam primitivos específicos ao invés de objetos completos
@@ -435,6 +456,7 @@ export const useBoardsController = () => {
     profile?.nickname,
     profile?.first_name,
     profile?.avatar_url,
+    membrosPorId,
   ]);
 
   // Drag & Drop Handlers
