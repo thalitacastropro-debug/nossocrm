@@ -37,7 +37,11 @@ export const useActivitiesController = () => {
 
   const { showToast } = useToast();
 
-  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  // A aba abre no CALENDÁRIO (decisão da Thalita, 24/08/2026): a pergunta que a
+  // pessoa leva para Atividades é "o que eu tenho pela frente?", e isso se lê numa
+  // agenda. A lista continua a um clique — e o deep-link `?filter=` abaixo força
+  // lista, porque "vencidas/hoje" é recorte, não semana.
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<Activity['type'] | 'ALL'>('ALL');
   const [dateFilter, setDateFilter] = useState<'ALL' | 'overdue' | 'today' | 'upcoming'>('ALL');
