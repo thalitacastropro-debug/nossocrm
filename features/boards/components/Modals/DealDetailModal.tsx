@@ -81,6 +81,18 @@ interface DealDetailModalProps {
 const PT_BR_DATE_FORMATTER = new Intl.DateTimeFormat('pt-BR');
 
 /**
+ * Estilo único das ações secundárias do header (Reunião realizada, Cancelar
+ * reunião, Mover, Preparar).
+ *
+ * Antes cada uma tinha o próprio fundo colorido — verde, rosa, cinza e azul lado
+ * a lado, competindo com Ganho/Perdido, que são as decisões de verdade. A cor
+ * ficou só no ÍCONE, que já basta para diferenciar (Thalita, 25/08/2026: "preciso
+ * um aspecto clean, assim como ajustamos o calendário").
+ */
+const ACAO_SECUNDARIA =
+  'px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50';
+
+/**
  * Componente React `DealDetailModal`.
  *
  * @param {DealDetailModalProps} { dealId, isOpen, onClose } - Parâmetro `{ dealId, isOpen, onClose }`.
@@ -163,7 +175,9 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const [aiResult, setAiResult] = useState<{ suggestion: string; score: number } | null>(null);
   const [emailDraft, setEmailDraft] = useState<string | null>(null);
   const [newNote, setNewNote] = useState('');
-  const [activeTab, setActiveTab] = useState<'timeline' | 'products' | 'info'>('timeline');
+  // Abre em "IA Insights": é o resumo do lead, o que se quer ver primeiro ao abrir
+  // o card (decisão da Thalita, 25/08/2026).
+  const [activeTab, setActiveTab] = useState<'timeline' | 'products' | 'info'>('info');
   const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [objection, setObjection] = useState('');
@@ -507,11 +521,11 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                       setEditTitle(deal.title);
                       setIsEditingTitle(true);
                     }}
-                    className="text-2xl font-bold text-slate-900 dark:text-white font-display leading-tight cursor-pointer hover:text-primary-600 dark:hover:text-primary-400 flex items-center gap-2 group transition-colors"
+                    className="text-xl font-semibold text-slate-900 dark:text-white font-display leading-tight cursor-pointer hover:text-primary-600 dark:hover:text-primary-400 flex items-center gap-2 group transition-colors"
                     title="Clique para editar"
                   >
                     {deal.title}
-                    <Pencil size={16} className="opacity-0 group-hover:opacity-50 text-slate-400" />
+                    <Pencil size={14} className="opacity-0 group-hover:opacity-50 text-slate-400 shrink-0" />
                   </h2>
                 )}
 
@@ -537,7 +551,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                       setEditValue(deal.value.toString());
                       setIsEditingValue(true);
                     }}
-                    className="text-lg text-primary-600 dark:text-primary-400 font-mono font-bold cursor-pointer hover:underline decoration-dashed underline-offset-4"
+                    className="text-sm text-slate-500 dark:text-slate-400 font-mono cursor-pointer hover:text-primary-600 dark:hover:text-primary-400 hover:underline decoration-dashed underline-offset-4"
                     title="Clique para editar valor"
                   >
                     ${deal.value.toLocaleString()}
@@ -618,9 +632,9 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                         }
                         onClose();
                       }}
-                      className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold text-sm shadow-sm flex items-center gap-2"
+                      className="px-3.5 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-lg font-medium text-xs flex items-center gap-1.5 transition-colors"
                     >
-                      <ThumbsUp size={16} /> GANHO
+                      <ThumbsUp size={14} /> Ganho
                     </button>
                     <button
                       onClick={() => {
@@ -640,9 +654,9 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                         setLossReasonOrigin('button');
                         setShowLossReasonModal(true);
                       }}
-                      className="px-4 py-2 bg-transparent border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg font-bold text-sm shadow-sm flex items-center gap-2"
+                      className="px-3.5 py-1.5 border border-red-200 dark:border-red-900/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg font-medium text-xs flex items-center gap-1.5 transition-colors"
                     >
-                      <ThumbsDown size={16} /> PERDIDO
+                      <ThumbsDown size={14} /> Perdido
                     </button>
                   </>
                 )}
@@ -655,11 +669,11 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                       }
                     }}
                     disabled={markMeetingHeld.isPending}
-                    className="px-3 py-1.5 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    className={ACAO_SECUNDARIA}
                     title="Marcar reunião realizada (métrica Agendadas→Realizadas)"
                     aria-label="Marcar reunião realizada"
                   >
-                    <CalendarCheck size={14} aria-hidden="true" />
+                    <CalendarCheck size={14} aria-hidden="true" className="text-emerald-600 dark:text-emerald-400" />
                     <span className="hidden sm:inline">Reunião realizada</span>
                   </button>
                 )}
@@ -677,31 +691,31 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                         }
                       }}
                       disabled={cancelMeeting.isPending}
-                      className="px-3 py-1.5 bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300 hover:bg-rose-200 dark:hover:bg-rose-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                      className={ACAO_SECUNDARIA}
                       title="Cancelar a reunião marcada"
                       aria-label="Cancelar reunião"
                     >
-                      <CalendarX size={14} aria-hidden="true" />
+                      <CalendarX size={14} aria-hidden="true" className="text-rose-600 dark:text-rose-400" />
                       <span className="hidden sm:inline">Cancelar reunião</span>
                     </button>
                   ) : null;
                 })()}
                 <button
                   onClick={() => setShowMoveModal(true)}
-                  className="px-3 py-1.5 bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/10 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
+                  className={ACAO_SECUNDARIA}
                   title="Mover este card para outro funil"
                   aria-label="Mover para outro funil"
                 >
-                  <ArrowRightLeft size={14} aria-hidden="true" />
+                  <ArrowRightLeft size={14} aria-hidden="true" className="text-slate-400" />
                   <span className="hidden sm:inline">Mover</span>
                 </button>
                 <button
                   onClick={() => setShowBriefingDrawer(true)}
-                  className="px-3 py-1.5 bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
+                  className={ACAO_SECUNDARIA}
                   title="Preparar para a conversa com este lead"
                   aria-label="Preparar conversa com este lead"
                 >
-                  <FileText size={14} aria-hidden="true" />
+                  <FileText size={14} aria-hidden="true" className="text-primary-500" />
                   <span className="hidden sm:inline">Preparar</span>
                 </button>
                 <button
@@ -759,40 +773,41 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                   <h3 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-2">
                     <User size={14} /> Contato Principal
                   </h3>
-                  {/* Nome + selo + botão numa linha só. Um nome longo ("Juliana |
-                      Psicóloga") empurrava o selo para fora da caixa e o botão verde
-                      — irmão posterior, com fundo opaco — pintava por cima dele.
-                      Não era z-index nem hover: era overflow de flex. O que segura é
-                      `min-w-0` + `truncate` no que pode crescer e `shrink-0` no que
-                      não pode encolher. */}
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 shrink-0 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-bold">
-                      {(deal.contactName || '?').charAt(0)}
+                  {/* EMPILHADO, não em linha única.
+                      A tentativa anterior (truncate + shrink-0) não resolveu porque
+                      o problema não é só nome longo: esta coluna tem 1/3 do modal, e
+                      avatar + selo + botão "Mensagem" já não cabem juntos nem com o
+                      nome vazio. Com todos marcados para não encolher, o flex
+                      transborda e o botão (fundo opaco, irmão posterior) pinta por
+                      cima do selo — foi o que a Thalita viu de novo em 25/08.
+                      Empilhar tira a disputa por espaço: nada precisa encolher. */}
+                  <div className="space-y-2 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 shrink-0 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-bold">
+                        {(deal.contactName || '?').charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-slate-900 dark:text-white font-medium text-sm truncate">
+                          {deal.contactName || 'Sem contato'}
+                        </p>
+                        <p className="text-slate-500 text-xs truncate">{deal.contactEmail}</p>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-slate-900 dark:text-white font-medium text-sm flex items-center gap-2 min-w-0">
-                        <span className="truncate">{deal.contactName || 'Sem contato'}</span>
-                        {contact?.stage &&
-                          (() => {
-                            const stage = lifecycleStageById.get(contact.stage);
-                            if (!stage) return null;
 
-                            // Extract base color name (e.g. 'blue' from 'bg-blue-500')
-                            const colorClass = stage.color; // e.g. bg-blue-500
-                            // We need to construct text and ring classes dynamically or just use inline styles/safe list
-                            // For now, let's just use the background color provided and white text
+                    {contact?.stage &&
+                      (() => {
+                        const stage = lifecycleStageById.get(contact.stage);
+                        if (!stage) return null;
 
-                            return (
-                              <span
-                                className={`text-[10px] font-black px-2 py-0.5 rounded shadow-sm uppercase tracking-wider flex items-center gap-1 text-white shrink-0 whitespace-nowrap ${colorClass}`}
-                              >
-                                {stage.name}
-                              </span>
-                            );
-                          })()}
-                      </p>
-                      <p className="text-slate-500 text-xs truncate">{deal.contactEmail}</p>
-                    </div>
+                        return (
+                          <span
+                            className={`inline-flex text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide text-white ${stage.color}`}
+                          >
+                            {stage.name}
+                          </span>
+                        );
+                      })()}
+
                     {/* Send Message Button */}
                     {contact?.phone && (
                       <button
@@ -808,11 +823,11 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                           router.push(`/messaging?${params.toString()}`);
                           onClose();
                         }}
-                        className="flex shrink-0 items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-500/10 hover:bg-green-100 dark:hover:bg-green-500/20 rounded-lg transition-colors"
+                        className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-500/10 hover:bg-green-100 dark:hover:bg-green-500/20 rounded-lg transition-colors"
                         title="Enviar mensagem via WhatsApp"
                       >
                         <MessageSquare size={14} />
-                        <span className="hidden sm:inline">Mensagem</span>
+                        Mensagem
                       </button>
                     )}
                   </div>
@@ -977,25 +992,23 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
             {/* Right Content (Tabs & Timeline) */}
             <div className="flex-1 min-h-0 flex flex-col bg-white dark:bg-dark-card">
               <div className="h-14 border-b border-slate-200 dark:border-white/5 flex items-center px-6 shrink-0">
+                {/* Ordem pedida pela Thalita (25/08/2026): o que o consultor quer
+                    ao abrir o card é o resumo da IA; a timeline vem depois, e
+                    produtos por último (raramente usado nesta operação). */}
                 <div className="flex gap-6">
-                  <button
-                    onClick={() => setActiveTab('timeline')}
-                    className={`text-sm font-bold h-14 border-b-2 transition-colors ${activeTab === 'timeline' ? 'border-primary-500 text-primary-600 dark:text-white' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-white'}`}
-                  >
-                    Timeline
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('products')}
-                    className={`text-sm font-bold h-14 border-b-2 transition-colors ${activeTab === 'products' ? 'border-primary-500 text-primary-600 dark:text-white' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-white'}`}
-                  >
-                    Produtos
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('info')}
-                    className={`text-sm font-bold h-14 border-b-2 transition-colors ${activeTab === 'info' ? 'border-primary-500 text-primary-600 dark:text-white' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-white'}`}
-                  >
-                    IA Insights
-                  </button>
+                  {([
+                    { id: 'info', rotulo: 'IA Insights' },
+                    { id: 'timeline', rotulo: 'Timeline' },
+                    { id: 'products', rotulo: 'Produtos' },
+                  ] as const).map(({ id, rotulo }) => (
+                    <button
+                      key={id}
+                      onClick={() => setActiveTab(id)}
+                      className={`text-sm font-medium h-14 border-b-2 transition-colors ${activeTab === id ? 'border-primary-500 text-primary-600 dark:text-white' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-white'}`}
+                    >
+                      {rotulo}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -1004,24 +1017,34 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                   <div className="space-y-6">
                     {/* Microfone em destaque: grava o desfecho da call por voz (áudio→IA→CRM). */}
                     <VoiceOutcomeCapture dealId={deal.id} />
-                    <div className="bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl p-4 shadow-sm">
+                    {/* Caixa de nota compacta: a nota não FICA aqui, ela vai para a
+                        timeline assim que enviada — o campo alto só ocupava a tela
+                        (Thalita, 25/08/2026). Começa com uma linha e cresce até 5
+                        conforme se escreve; o botão só aparece quando há texto. */}
+                    <div className="bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2">
                       <textarea
                         ref={noteTextareaRef}
-                        className="w-full bg-transparent text-sm text-slate-900 dark:text-white placeholder:text-slate-400 outline-none resize-none min-h-[80px]"
+                        rows={1}
+                        className="w-full bg-transparent text-sm text-slate-900 dark:text-white placeholder:text-slate-400 outline-none resize-none max-h-32"
                         placeholder="Escreva uma nota..."
                         value={newNote}
-                        onChange={e => setNewNote(e.target.value)}
-                      ></textarea>
-                      <div className="flex justify-between items-center mt-2 pt-2 border-t border-slate-100 dark:border-white/5">
-                        <div />
-                        <button
-                          onClick={handleAddNote}
-                          disabled={!newNote.trim()}
-                          className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"
-                        >
-                          <Check size={14} /> Enviar
-                        </button>
-                      </div>
+                        onChange={(e) => {
+                          setNewNote(e.target.value);
+                          // Cresce com o conteúdo em vez de reservar altura fixa.
+                          e.target.style.height = 'auto';
+                          e.target.style.height = `${Math.min(e.target.scrollHeight, 128)}px`;
+                        }}
+                      />
+                      {newNote.trim() && (
+                        <div className="flex justify-end mt-1.5 pt-1.5 border-t border-slate-100 dark:border-white/5">
+                          <button
+                            onClick={handleAddNote}
+                            className="bg-primary-600 hover:bg-primary-500 text-white px-3 py-1 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors"
+                          >
+                            <Check size={13} /> Enviar
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     <div className="space-y-3 pl-4 border-l border-slate-200 dark:border-slate-800">
