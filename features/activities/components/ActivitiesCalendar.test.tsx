@@ -34,12 +34,21 @@ const renderCalendario = (activities: Activity[], onEdit?: (a: Activity) => void
   );
 
 describe('ActivitiesCalendar', () => {
-  it('mostra compromisso com título e horário', () => {
-    renderCalendario([atividade({})]);
+  // O que identifica o compromisso de relance é COM QUEM ele é. O título costuma
+  // ser o tipo ("Ligação diagnóstica"), igual em todos os cards da semana.
+  it('põe o nome do lead em evidência, e o título junto do horário', () => {
+    renderCalendario([atividade({ title: 'Ligação diagnóstica' })]);
 
-    expect(screen.getByText('Ligação — João Almeida')).toBeInTheDocument();
-    // O horário é lido DENTRO do bloco: "09:00" também existe na régua de horas.
-    expect(screen.getByTitle(/Ligação — João Almeida/).textContent).toContain('09:00');
+    expect(screen.getByText('João Almeida')).toBeInTheDocument();
+    const bloco = screen.getByTitle(/João Almeida/);
+    expect(bloco.textContent).toContain('09:00');
+    expect(bloco.textContent).toContain('Ligação diagnóstica');
+  });
+
+  it('sem negócio vinculado, cai no título da atividade', () => {
+    renderCalendario([atividade({ dealId: '', dealTitle: '', title: 'Bloqueio — foco' })]);
+
+    expect(screen.getByText('Bloqueio — foco')).toBeInTheDocument();
   });
 
   // O "delineado cinza" que a Thalita via: NOTE e STATUS_CHANGE não tinham cor no
@@ -52,9 +61,9 @@ describe('ActivitiesCalendar', () => {
       atividade({ id: 'c1', type: 'MEETING', title: 'Reunião — Briefing' }),
     ]);
 
-    expect(screen.queryByText('Carteira transferida — Denilson para Pedro')).not.toBeInTheDocument();
-    expect(screen.queryByText('Movido para Qualificação')).not.toBeInTheDocument();
-    expect(screen.getByText('Reunião — Briefing')).toBeInTheDocument();
+    expect(screen.queryByTitle(/Carteira transferida/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/Movido para Qualificação/)).not.toBeInTheDocument();
+    expect(screen.getByTitle(/Reunião — Briefing/)).toBeInTheDocument();
   });
 
   it('avisa quantos registros de histórico existem na semana, para não sumirem calados', () => {

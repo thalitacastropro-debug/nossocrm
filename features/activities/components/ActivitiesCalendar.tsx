@@ -79,6 +79,20 @@ const iconePorTipo = (type: Activity['type'], size = 13) => {
 
 const hhmm = (d: Date) => d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
+/**
+ * Com quem é o compromisso.
+ *
+ * O título costuma ser o tipo do compromisso ("Ligação diagnóstica"), igual em
+ * todos os cards — inútil para bater o olho na semana. Quem identifica é o lead,
+ * e o nome dele vem do negócio. Os cards nascem como "Fulano — Lead Meta Ads":
+ * a origem é ruído aqui, então fica só o nome.
+ */
+function nomeDoLead(activity: Activity, dealTitleById: Map<string, string>): string {
+    const doDeal = (activity.dealId ? dealTitleById.get(activity.dealId) : '') || activity.dealTitle || '';
+    const limpo = doDeal.split('—')[0].trim();
+    return limpo || activity.title;
+}
+
 /** Um compromisso já posicionado na coluna do dia. */
 interface Posicionado {
     activity: Activity;
@@ -330,6 +344,7 @@ export const ActivitiesCalendar: React.FC<ActivitiesCalendarProps> = ({
                                         const estilo = ESTILO_POR_TIPO[activity.type] ?? ESTILO_POR_TIPO.TASK;
                                         const largura = 100 / colunas;
                                         const atrasada = !activity.completed && inicio < new Date();
+                                        const comQuem = nomeDoLead(activity, dealTitleById);
 
                                         return (
                                             <button
@@ -343,19 +358,21 @@ export const ActivitiesCalendar: React.FC<ActivitiesCalendarProps> = ({
                                                     width: `calc(${largura}% - 6px)`,
                                                 }}
                                                 className={`absolute overflow-hidden rounded-md pl-2 pr-1.5 py-1 text-left transition-colors ${estilo.fundo} ${activity.completed ? 'opacity-60' : ''}`}
-                                                title={`${activity.title} — ${hhmm(inicio)}`}
+                                                title={`${comQuem} — ${activity.title} · ${hhmm(inicio)}`}
                                             >
                                                 <span
                                                     className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-md ${atrasada ? 'bg-red-400' : estilo.faixa}`}
                                                     aria-hidden="true"
                                                 />
+                                                {/* COM QUEM primeiro: "Ligação diagnóstica" é igual em todos os
+                                                    cards e não diz nada de relance; o nome do lead diz. */}
                                                 <span
                                                     className={`block text-[11px] font-medium leading-tight truncate ${estilo.texto} ${activity.completed ? 'line-through' : ''}`}
                                                 >
-                                                    {activity.title}
+                                                    {comQuem}
                                                 </span>
-                                                <span className={`block text-[10px] leading-tight ${estilo.hora}`}>
-                                                    {hhmm(inicio)}
+                                                <span className={`block text-[10px] leading-tight truncate ${estilo.hora}`}>
+                                                    {hhmm(inicio)} · {activity.title}
                                                 </span>
                                             </button>
                                         );
