@@ -9,8 +9,8 @@
  * injeção das deps reais (admin client, sendAIResponse, geração quente, relógio).
  */
 import { createStaticAdminClient } from '@/lib/supabase/server';
-import { sendAIResponse } from '@/lib/ai/agent/agent.service';
-import { runLeadFollowup } from '@/lib/ai/followup/run';
+import { sendAIResponse, sendAIMedia } from '@/lib/ai/agent/agent.service';
+import { runLeadFollowup, type AnexoDeToque } from '@/lib/ai/followup/run';
 import { generateWarmFollowupBubbles } from '@/lib/ai/followup/generate';
 import { runMeetingReminder } from '@/lib/ai/followup/meeting-reminder';
 import { runHandoffSla } from '@/lib/ai/followup/handoff-sla-run';
@@ -47,10 +47,30 @@ export async function GET(req: Request): Promise<Response> {
   const sendResponse = (conversationId: string, message: string) =>
     sendAIResponse({ supabase, conversationId, response: message }).then((r) => ({ success: r.success }));
 
+  // Anexo do toque (o vídeo do 3º toque frio). Guardado em
+  // `organization_settings.followup_anexo`; ausente = cadência só com texto.
+  const { data: cfgAnexo } = await supabase
+    .from('organization_settings')
+    .select('followup_anexo')
+    .maybeSingle();
+
+  const anexo = (cfgAnexo?.followup_anexo ?? null) as AnexoDeToque | null;
+
   const followup = await runLeadFollowup({
     supabase,
     now,
     sendResponse,
+    anexo,
+    sendMedia: (conversationId, a) =>
+      sendAIMedia({
+        supabase,
+        conversationId,
+        mediaUrl: a.url,
+        contentType: a.tipo,
+        caption: a.legenda,
+        fileName: a.fileName,
+        comoGravacao: a.comoGravacao,
+      }).then((r) => ({ success: r.success })),
     generateWarm: (args) => generateWarmFollowupBubbles({ supabase, ...args }),
   });
 

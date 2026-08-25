@@ -149,13 +149,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
+    // URL ASSINADA, não pública: o bucket `messaging-media` é privado (áudio e
+    // documento de lead não podem ficar abertos na internet). `getPublicUrl` num
+    // bucket privado devolve um endereço que responde 400 — o arquivo subia e o
+    // envio quebrava depois. Corrigido em 25/08/2026, junto com o primeiro envio
+    // de mídia que de fato funciona.
+    //
+    // A validade longa é requisito do WhatsApp: a UAZAPI baixa o arquivo a partir
+    // desta URL, e o histórico do chat continua abrindo a mídia meses depois.
+    const { data: urlData, error: erroUrl } = await supabase.storage
       .from('messaging-media')
-      .getPublicUrl(storagePath);
+      .createSignedUrl(storagePath, 60 * 60 * 24 * 365);
+
+    if (erroUrl || !urlData?.signedUrl) {
+      console.error('[API] Media signed URL error:', erroUrl);
+      return NextResponse.json({ error: 'Failed to sign media URL' }, { status: 500 });
+    }
 
     return NextResponse.json({
-      mediaUrl: urlData.publicUrl,
+      mediaUrl: urlData.signedUrl,
+      mediaPath: storagePath,
       mediaType,
       mimeType: file.type,
       fileName: file.name,

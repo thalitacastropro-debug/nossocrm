@@ -16,10 +16,36 @@ export const STAGE_NOVO_LEAD = '1e8026b1-88ef-4daa-bc06-fb12b2dceff7';
 export const STAGE_EM_QUALIFICACAO = '3128e500-7182-406a-a095-f7f7c5e772ac';
 const BATCH_SIZE = 40;
 
+/**
+ * Anexo de um toque da cadência — hoje, o vídeo do 3º toque frio.
+ *
+ * Decisão da Thalita (25/08/2026): ela grava um vídeo uma vez e ele acompanha o
+ * toque. Fica no 3º de propósito, **não no primeiro**: mandar mídia para quem
+ * nunca respondeu é o disparo que mais chama atenção do WhatsApp, e a conta é
+ * nova (o risco de bloqueio da UAZAPI já está mapeado no roadmap). No 3º toque o
+ * lead já recebeu duas mensagens de texto sem reclamar.
+ */
+export interface AnexoDeToque {
+  url: string;
+  tipo: 'video' | 'image' | 'audio' | 'document';
+  legenda?: string;
+  fileName?: string;
+  /** Vídeo bolinha (PTV) / áudio de voz (PTT) em vez do formato comum. */
+  comoGravacao?: boolean;
+  /** Índice do toque que leva o anexo. 2 = 3º toque. */
+  toqueIndex: number;
+  /** Só a cadência fria por padrão — a quente é conversa em andamento. */
+  cadencia?: 'cold' | 'warm';
+}
+
 export interface FollowupDeps {
   supabase: SupabaseClient;
   now: Date;
   sendResponse: (conversationId: string, message: string) => Promise<{ success: boolean }>;
+  /** Envia o anexo do toque. Ausente = cadência segue só com texto. */
+  sendMedia?: (conversationId: string, anexo: AnexoDeToque) => Promise<{ success: boolean }>;
+  /** Anexo configurado pela organização (nulo = nenhum). */
+  anexo?: AnexoDeToque | null;
   generateWarm: (args: {
     organizationId: string; boardId: string; conversationId: string; firstName: string | null; touchIndex: number;
   }) => Promise<string[] | null>;
@@ -155,6 +181,22 @@ export async function runLeadFollowup(deps: FollowupDeps): Promise<FollowupResul
       continue;
     }
     res.processed++;
+
+    // Anexo do toque (hoje: o vídeo do 3º toque frio). Vai DEPOIS do texto — a
+    // mensagem explica o vídeo, não o contrário — e o resultado dele NÃO reverte
+    // a cadência: o toque já foi entregue, e reverter faria o texto sair duas
+    // vezes no próximo ciclo (risco de ban, que é o que a cadência mais evita).
+    if (
+      deps.anexo &&
+      deps.sendMedia &&
+      decision.touchIndex === deps.anexo.toqueIndex &&
+      state.cadence === (deps.anexo.cadencia ?? 'cold')
+    ) {
+      const anexoEnviado = await deps.sendMedia(convId, deps.anexo);
+      if (!anexoEnviado.success) {
+        console.warn('[followup] anexo do toque falhou (texto já entregue):', deal.id);
+      }
+    }
     if (wasReset) res.reset++;
 
     // CADÊNCIA ESGOTADA → ENTREGA PRO CONSULTOR, COM ALERTA DE LIGAR (Thalita, 21/08).

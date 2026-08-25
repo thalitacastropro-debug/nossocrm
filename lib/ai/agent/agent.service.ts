@@ -1275,6 +1275,128 @@ export async function sendAIResponse(params: {
 }
 
 /**
+ * Envia UMA mídia pela Ana (vídeo, imagem, áudio ou documento).
+ *
+ * Existe para o anexo da cadência de follow-up: a Thalita grava um vídeo uma vez
+ * e ele acompanha o 3º toque do lead frio (decisão de 25/08/2026). Mesmo caminho
+ * do texto — grava a mensagem no banco antes de entregar, para a mídia aparecer
+ * na conversa mesmo se o envio falhar depois.
+ *
+ * `mediaUrl` precisa ser acessível pela UAZAPI (é ela que baixa o arquivo): use a
+ * URL assinada do bucket `messaging-media`.
+ */
+export async function sendAIMedia(params: {
+  supabase: SupabaseClient;
+  conversationId: string;
+  mediaUrl: string;
+  contentType: 'video' | 'image' | 'audio' | 'document';
+  caption?: string;
+  fileName?: string;
+  /** Vídeo como bolinha (PTV) / áudio como voz (PTT). */
+  comoGravacao?: boolean;
+  simulationMode?: boolean;
+}): Promise<SendResult> {
+  const { supabase, conversationId, mediaUrl, contentType, caption, fileName, comoGravacao, simulationMode } = params;
+
+  const { data: conversation } = await supabase
+    .from('messaging_conversations')
+    .select('channel_id, external_contact_id')
+    .eq('id', conversationId)
+    .single();
+
+  if (!conversation?.channel_id) {
+    return { success: false, error: { code: 'NO_CHANNEL', message: 'Conversa sem canal associado' } };
+  }
+  if (!conversation.external_contact_id) {
+    return { success: false, error: { code: 'NO_CONTACT', message: 'Conversa sem contato externo' } };
+  }
+
+  const content = {
+    type: contentType,
+    mediaUrl,
+    ...(caption ? { caption } : {}),
+    ...(fileName ? { fileName } : {}),
+    ...(comoGravacao && contentType === 'video' ? { enviarComoBolinha: true } : {}),
+    ...(comoGravacao && contentType === 'audio' ? { enviarComoVoz: true } : {}),
+  };
+
+  const { data: message, error: insertError } = await supabase
+    .from('messaging_messages')
+    .insert({
+      conversation_id: conversationId,
+      direction: 'outbound',
+      content_type: contentType,
+      content,
+      status: 'pending',
+      sender_type: 'ai',
+      metadata: { sent_by_ai: true },
+    })
+    .select('id')
+    .single();
+
+  if (insertError) {
+    return { success: false, error: { code: 'INSERT_FAILED', message: insertError.message } };
+  }
+
+  if (simulationMode) {
+    await supabase
+      .from('messaging_messages')
+      .update({ status: 'sent', sent_at: new Date().toISOString() })
+      .eq('id', message.id);
+    return { success: true, messageId: message.id };
+  }
+
+  try {
+    const router = getChannelRouter();
+    const sendResult = await router.sendMessage(conversation.channel_id, {
+      conversationId,
+      to: conversation.external_contact_id,
+      content: content as never,
+    });
+
+    if (sendResult.success) {
+      await supabase
+        .from('messaging_messages')
+        .update({
+          external_id: sendResult.externalMessageId,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        })
+        .eq('id', message.id);
+      return { success: true, messageId: message.id };
+    }
+
+    await supabase
+      .from('messaging_messages')
+      .update({
+        status: 'failed',
+        error_code: sendResult.error?.code || 'SEND_FAILED',
+        error_message: sendResult.error?.message || 'Unknown error',
+        failed_at: new Date().toISOString(),
+      })
+      .eq('id', message.id);
+
+    return {
+      success: false,
+      messageId: message.id,
+      error: {
+        code: sendResult.error?.code || 'SEND_FAILED',
+        message: sendResult.error?.message || 'Falha ao enviar mídia',
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      messageId: message.id,
+      error: {
+        code: 'REQUEST_FAILED',
+        message: error instanceof Error ? error.message : 'Erro ao enviar mídia',
+      },
+    };
+  }
+}
+
+/**
  * Insere UMA mensagem outbound (sender_type 'ai', sent_by_ai:true) e a envia pelo ChannelRouter.
  * Em simulationMode, marca como enviada sem entregar no canal.
  */

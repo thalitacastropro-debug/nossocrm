@@ -19,11 +19,26 @@ import { EvolutionWhatsAppProvider } from './evolution.provider';
 import type { EvolutionCredentials, EvolutionWebhookPayload } from './evolution.provider';
 import type {
   ChannelType,
+  MessageContent,
   ProviderConfig,
   SendMessageParams,
   SendMessageResult,
   TextContent,
 } from '../../types';
+
+/**
+ * Campos de mídia que o envio usa. Os dois últimos são nossos, não do provider:
+ * escolhem o formato "gravado" do WhatsApp (bolinha de vídeo / áudio de voz).
+ */
+type MediaContent = {
+  mediaUrl?: string;
+  caption?: string;
+  fileName?: string;
+  /** Manda o vídeo como PTV — a bolinha redonda. */
+  enviarComoBolinha?: boolean;
+  /** Manda o áudio como PTT — a onda de voz, não um arquivo de música. */
+  enviarComoVoz?: boolean;
+};
 
 // UazAPI usa a mesma estrutura de credenciais do Evolution (serverUrl, instanceName, apiKey).
 // Para a UazAPI, `apiKey` deve ser o INSTANCE TOKEN (usado no header `token`).
@@ -36,6 +51,34 @@ export type UazApiWebhookPayload = EvolutionWebhookPayload;
  * fromMe e status updates) usa "3EB0...". Guardar sempre a forma pura faz o
  * índice único de external_id deduplicar o eco e os status casarem com o envio.
  */
+/**
+ * Traduz o tipo de conteúdo do CRM para o `type` do `/send/media` da UAZAPI.
+ *
+ * `ptv` é o **vídeo bolinha** (Push-to-Video) e `ptt` é o áudio de gravação —
+ * os dois só saem quando o conteúdo pede explicitamente (`enviarComoBolinha` /
+ * `enviarComoVoz`), porque o padrão de um vídeo/áudio anexado é o formato comum.
+ *
+ * Devolve `null` para o que não é mídia enviável (texto, localização, contato...).
+ */
+export function tipoUazapiDaMidia(content: MessageContent): string | null {
+  const m = content as MediaContent;
+
+  switch (content.type) {
+    case 'image':
+      return 'image';
+    case 'video':
+      return m.enviarComoBolinha ? 'ptv' : 'video';
+    case 'audio':
+      return m.enviarComoVoz ? 'ptt' : 'audio';
+    case 'document':
+      return 'document';
+    case 'sticker':
+      return 'sticker';
+    default:
+      return null;
+  }
+}
+
 export function normalizeUazApiMessageId(id: string | undefined): string | undefined {
   if (!id) return id;
   // Prefixo do remetente = só dígitos antes do primeiro ":". Preserva ids que
@@ -75,13 +118,7 @@ export class UazApiWhatsAppProvider extends EvolutionWhatsAppProvider {
     const number = params.to.replace(/\D/g, ''); // só dígitos
 
     if (content.type !== 'text') {
-      return {
-        success: false,
-        error: {
-          code: 'UNSUPPORTED_CONTENT',
-          message: `UazAPI provider: envio de "${content.type}" ainda não implementado (apenas texto por enquanto).`,
-        },
-      };
+      return this.enviarMidia(number, content);
     }
 
     try {
@@ -126,6 +163,104 @@ export class UazApiWhatsAppProvider extends EvolutionWhatsAppProvider {
       const externalMessageId = normalizeUazApiMessageId(rawMessageId);
 
       return { success: true, externalMessageId, status: 'sent' };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: 'REQUEST_FAILED',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        },
+      };
+    }
+  }
+
+  /**
+   * Envia mídia por `POST /send/media`.
+   *
+   * Contrato lido na doc oficial em 25/08/2026
+   * (docs.uazapi.com/endpoint/post/send~media):
+   *   `{ number, type, file, text?, docName?, viewOnce? }`
+   * `file` aceita **URL** ou base64 — mandamos a URL assinada do nosso Storage,
+   * que a UAZAPI baixa. Tipos aceitos: `image`, `video`, `videoplay`, `ptv`
+   * (vídeo bolinha), `document`, `audio`, `myaudio`, `ptt` (áudio de voz),
+   * `sticker`.
+   *
+   * Até aqui o provider recusava tudo que não fosse texto — era por isso que o
+   * consultor não conseguia mandar arquivo nem áudio pelo chat.
+   */
+  private async enviarMidia(
+    number: string,
+    content: MessageContent,
+  ): Promise<SendMessageResult> {
+    const midia = content as MediaContent;
+    const url = midia.mediaUrl;
+
+    if (!url) {
+      return {
+        success: false,
+        error: { code: 'MISSING_MEDIA_URL', message: 'Mídia sem URL para enviar.' },
+      };
+    }
+
+    const tipo = tipoUazapiDaMidia(content);
+    if (!tipo) {
+      return {
+        success: false,
+        error: {
+          code: 'UNSUPPORTED_CONTENT',
+          message: `UazAPI provider: tipo "${content.type}" não é mídia enviável.`,
+        },
+      };
+    }
+
+    try {
+      const body: Record<string, unknown> = { number, type: tipo, file: url };
+
+      // `text` é a legenda no /send/media.
+      const legenda = midia.caption?.trim();
+      if (legenda) body.text = legenda;
+
+      // Nome que o destinatário vê no documento — sem isso vira o hash do arquivo.
+      if (tipo === 'document' && midia.fileName) body.docName = midia.fileName;
+
+      const res = await fetch(`${this.uazServerUrl}/send/media`, {
+        method: 'POST',
+        headers: {
+          token: this.uazToken,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      const raw = await res.text();
+      let json: Record<string, unknown> = {};
+      try {
+        json = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      } catch {
+        // resposta não-JSON
+      }
+
+      if (!res.ok) {
+        return {
+          success: false,
+          error: { code: 'SEND_FAILED', message: `UazAPI ${res.status}: ${raw.slice(0, 200)}` },
+        };
+      }
+
+      const rawMessageId =
+        (json.id as string) ||
+        (json.messageid as string) ||
+        ((json.key as { id?: string } | undefined)?.id) ||
+        undefined;
+
+      // Mesmo motivo do /send/text: o id vem prefixado com o número do remetente e
+      // o eco do webhook usa o id puro. Sem normalizar, a mídia aparece dobrada.
+      return {
+        success: true,
+        externalMessageId: normalizeUazApiMessageId(rawMessageId),
+        status: 'sent',
+      };
     } catch (error) {
       return {
         success: false,
