@@ -42,8 +42,10 @@ interface PipelineViewProps {
   setViewMode: (mode: 'kanban' | 'list') => void;
   searchTerm: string;
   setSearchTerm: (term: string) => void;
-  ownerFilter: 'all' | 'mine';
-  setOwnerFilter: (filter: 'all' | 'mine') => void;
+  /** 'all' | 'mine' | 'sem-dono' | id de um membro do time */
+  ownerFilter: string;
+  setOwnerFilter: (filter: string) => void;
+  orgMembers: { id: string; name: string }[];
   statusFilter: 'open' | 'won' | 'lost' | 'all';
   setStatusFilter: (filter: 'open' | 'won' | 'lost' | 'all') => void;
   draggingId: string | null;
@@ -219,6 +221,7 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
   setSearchTerm,
   ownerFilter,
   setOwnerFilter,
+  orgMembers,
   statusFilter,
   setStatusFilter,
   draggingId,
@@ -323,6 +326,7 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             setSearchTerm={setSearchTerm}
             ownerFilter={ownerFilter}
             setOwnerFilter={setOwnerFilter}
+            orgMembers={orgMembers}
             statusFilter={statusFilter}
             setStatusFilter={setStatusFilter}
             onNewDeal={() => setIsCreateModalOpen(true)}

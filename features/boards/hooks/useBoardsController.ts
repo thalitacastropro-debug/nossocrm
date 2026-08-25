@@ -37,6 +37,28 @@ export const isDealRotting = (deal: DealView) => {
 };
 
 /**
+ * O card passa pelo filtro de dono?
+ *
+ * `ownerFilter` aceita `'all'`, `'mine'`, `'sem-dono'` ou o id de um membro do
+ * time. Era só `'all' | 'mine'` até 24/08/2026 — com dois consultores, "meus
+ * negócios" não responde "o que é do Pedro?" para quem enxerga a carteira toda.
+ *
+ * @param ownerId - Dono do card (`undefined` quando ninguém assumiu).
+ * @param ownerFilter - Valor selecionado no filtro.
+ * @param currentUserId - Id de quem está olhando o board.
+ */
+export const matchesOwnerFilter = (
+  ownerId: string | undefined,
+  ownerFilter: string,
+  currentUserId: string | undefined,
+): boolean => {
+  if (ownerFilter === 'all') return true;
+  if (ownerFilter === 'mine') return !!ownerId && ownerId === currentUserId;
+  if (ownerFilter === 'sem-dono') return !ownerId;
+  return ownerId === ownerFilter;
+};
+
+/**
  * Função pública `getActivityStatus` do projeto.
  *
  * @param {DealView} deal - Parâmetro `deal`.
@@ -132,7 +154,10 @@ export const useBoardsController = () => {
 
   // Filter State (declared before AI context useEffect that uses them)
   const [searchTerm, setSearchTerm] = useState('');
-  const [ownerFilter, setOwnerFilter] = useState<'all' | 'mine'>('all');
+  // 'all' | 'mine' | 'sem-dono' | <id de um membro do time>. Virou aberto quando a
+  // operação passou a ter dois consultores: "Meus Negócios" não responde "o que é
+  // do Pedro?" para quem é admin e enxerga a carteira toda (24/08/2026).
+  const [ownerFilter, setOwnerFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'open' | 'won' | 'lost' | 'all'>('open');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
 
@@ -389,8 +414,7 @@ export const useBoardsController = () => {
         (l.title || '').toLowerCase().includes(searchLower) ||
         (l.companyName || '').toLowerCase().includes(searchLower);
 
-      const matchesOwner =
-        ownerFilter === 'all' || l.ownerId === profile?.id;
+      const matchesOwner = matchesOwnerFilter(l.ownerId, ownerFilter, profile?.id);
 
       // Date: usa timestamps pré-computados (comparação numérica é mais rápida)
       let matchesDate = true;
@@ -882,6 +906,8 @@ export const useBoardsController = () => {
     setSearchTerm,
     ownerFilter,
     setOwnerFilter,
+    /** Time da organização, para o filtro "dono" listar as pessoas por nome. */
+    orgMembers: orgMembers ?? [],
     statusFilter,
     setStatusFilter,
     dateRange,
