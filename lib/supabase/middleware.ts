@@ -89,7 +89,23 @@ export async function updateSession(request: NextRequest) {
 
     // Protected routes - redirect to login if not authenticated
     const isAuthRoute = pathname.startsWith('/login') || pathname.startsWith('/auth')
-    const isPublicRoute = pathname === '/' || pathname.startsWith('/join') || isSetupRoute || isInstallRoute
+
+    // Recuperação de senha é PÚBLICA — e não entra em `isAuthRoute`.
+    //
+    // `/forgot-password` ficava de fora das duas listas: quem estava deslogado
+    // clicava em "Esqueci minha senha" e o guard devolvia para /login. Como quem
+    // esqueceu a senha está, por definição, deslogado, a recuperação simplesmente
+    // não funcionava para ninguém (o Denilson travou nisso em 25/08/2026).
+    //
+    // Por que não em `isAuthRoute`: logo abaixo, quem TEM sessão e cai numa rota
+    // de auth é mandado para /dashboard. `/reset-password` é justamente onde se
+    // chega COM sessão (a de recuperação, criada pelo link do e-mail) — colocá-la
+    // ali jogaria a pessoa para o dashboard sem deixar trocar a senha.
+    const isPasswordRoute =
+        pathname.startsWith('/forgot-password') || pathname.startsWith('/reset-password')
+
+    const isPublicRoute =
+        pathname === '/' || pathname.startsWith('/join') || isSetupRoute || isInstallRoute || isPasswordRoute
 
     if (!user && !isAuthRoute && !isPublicRoute) {
         const url = request.nextUrl.clone()

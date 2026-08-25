@@ -111,6 +111,41 @@ describe('updateSession (Proxy/Supabase)', () => {
     expect(res).toMatchObject({ kind: 'next' })
   })
 
+  // O bug de 25/08/2026: `/forgot-password` não estava em nenhuma lista de rota
+  // liberada. Quem esqueceu a senha está DESLOGADO por definição — clicava em
+  // "Esqueci minha senha" e o guard devolvia para /login. O Denilson travou aí.
+  it('permite /forgot-password sem autenticação — é onde se pede o link', async () => {
+    const req = makeRequest('/forgot-password')
+
+    const res = await updateSession(req)
+
+    expect(mocks.nextResponseMock.redirect).not.toHaveBeenCalled()
+    expect(res).toMatchObject({ kind: 'next' })
+  })
+
+  it('permite /reset-password sem autenticação', async () => {
+    const req = makeRequest('/reset-password')
+
+    const res = await updateSession(req)
+
+    expect(mocks.nextResponseMock.redirect).not.toHaveBeenCalled()
+    expect(res).toMatchObject({ kind: 'next' })
+  })
+
+  // A outra ponta: quem chega em /reset-password vem COM sessão (a de
+  // recuperação, criada pelo link do e-mail). Se a rota fosse tratada como rota
+  // de auth, o guard mandaria a pessoa para /dashboard e ela nunca trocaria a
+  // senha — trocando um beco sem saída por outro.
+  it('deixa quem TEM sessão de recuperação abrir /reset-password', async () => {
+    mocks.state.currentUser = { id: 'denilson' }
+    const req = makeRequest('/reset-password')
+
+    const res = await updateSession(req)
+
+    expect(mocks.nextResponseMock.redirect).not.toHaveBeenCalled()
+    expect(res).toMatchObject({ kind: 'next' })
+  })
+
   it('permite /auth/callback sem autenticação (sem redirect)', async () => {
     const req = makeRequest('/auth/callback')
 

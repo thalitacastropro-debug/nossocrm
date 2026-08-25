@@ -40,7 +40,17 @@ export function isRole(value: unknown): value is Role {
  *                 {@link canSeeSettingsTab}). Subrotas como `/settings/ai` NÃO entram.
  * - `/profile`  : preferências pessoais / perfil.
  */
-export const TRAFEGO_ALLOWED_ROUTES: readonly string[] = ['/settings', '/profile'];
+export const TRAFEGO_ALLOWED_ROUTES: readonly string[] = [
+  '/settings',
+  '/profile',
+  // Trocar a própria senha é direito de qualquer papel. Sem estas duas aqui, a
+  // rota deixa de ser "livre para todos" e o guard do servidor passa a consultar
+  // o papel de quem está trocando a senha — barrando o `trafego` no meio do
+  // caminho. Descoberto em 25/08/2026 por um teste, ao liberar a recuperação de
+  // senha para quem está deslogado.
+  '/forgot-password',
+  '/reset-password',
+];
 
 /**
  * Prefixos de rota FECHADOS para `vendedor` (a rota e tudo abaixo dela).

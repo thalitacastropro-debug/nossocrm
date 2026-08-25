@@ -30,6 +30,17 @@ describe('canAccessRoute — vendedor fora de Configurações', () => {
     expect(canAccessRoute('trafego', '/settings')).toBe(true);
     expect(canAccessRoute('trafego', '/boards')).toBe(false);
   });
+
+  // Trocar a própria senha é direito de qualquer papel. Se a rota não for livre
+  // para TODOS, o guard do servidor consulta o papel de quem está trocando a
+  // senha e barra o `trafego` no meio do caminho.
+  it('recuperação de senha é livre para todos os papéis', () => {
+    for (const papel of ROLE_VALUES) {
+      expect(canAccessRoute(papel, '/forgot-password')).toBe(true);
+      expect(canAccessRoute(papel, '/reset-password')).toBe(true);
+    }
+    expect(ROLE_VALUES.every((p) => canAccessRoute(p, '/forgot-password'))).toBe(true);
+  });
 });
 
 describe('homeRouteFor — destino de quem cai em rota proibida', () => {
