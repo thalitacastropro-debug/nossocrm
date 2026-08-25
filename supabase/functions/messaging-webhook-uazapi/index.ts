@@ -296,6 +296,164 @@ function conteudoDeMidia(obj: Record<string, unknown> | undefined): Record<strin
   return out;
 }
 
+/** Tipos de conteúdo que têm arquivo para baixar. */
+const CONTEUDOS_COM_ARQUIVO = new Set(["audio", "image", "video", "document", "sticker"]);
+
+const EXTENSAO_POR_MIME: Record<string, string> = {
+  "audio/ogg": "ogg",
+  "audio/mpeg": "mp3",
+  "audio/mp4": "m4a",
+  "audio/amr": "amr",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "video/mp4": "mp4",
+  "application/pdf": "pdf",
+};
+
+/**
+ * Baixa o arquivo da mídia na UAZAPI e guarda no Storage.
+ *
+ * **Por que existe:** o webhook da UAZAPI não manda o arquivo — provado com os
+ * áudios de teste da Thalita em 25/08/2026: vêm `id`, `content` e
+ * `mediaType: "ptt"`, e nenhuma URL nem base64. Sem baixar, o player fica mudo e
+ * o consultor não ouve o próprio histórico (137 mídias assim no banco).
+ *
+ * **Como:** tenta os endpoints prováveis de download em sequência e aceita as
+ * três formas de resposta que essas APIs usam — binário direto, JSON com URL, ou
+ * JSON com base64. O que der certo vira arquivo no bucket `messaging-media`
+ * (privado) e uma URL assinada em `mediaUrl`, que é o campo que o player lê.
+ *
+ * **À prova de falha:** qualquer erro aqui devolve o content original. Mídia sem
+ * arquivo é o que já acontecia; derrubar o webhook por causa dela seria pior — é
+ * o mesmo caminho por onde passam as mensagens de texto da Ana.
+ *
+ * O campo `_download` registra o que aconteceu em cada tentativa: é o que dirá,
+ * sem outro deploy, qual endpoint a UAZAPI aceita.
+ */
+async function baixarEGuardarMidia(
+  supabase: ReturnType<typeof createClient>,
+  credenciais: Record<string, string> | undefined,
+  contentType: string,
+  conteudoOriginal: Record<string, unknown>,
+  ctx: { organizationId: string; conversationId: string; messageId: string },
+): Promise<Record<string, unknown>> {
+  let content = conteudoOriginal;
+  if (!CONTEUDOS_COM_ARQUIVO.has(contentType)) return content;
+  if (content.mediaUrl) return content; // já veio pronta
+
+  const serverUrl = String(credenciais?.serverUrl ?? "").replace(/\/$/, "");
+  const token = credenciais?.apiKey;
+  const id = content.id ?? content.messageid ?? ctx.messageId;
+  if (!serverUrl || !token || !id) {
+    return { ...content, _download: "sem servidor, token ou id" };
+  }
+
+  // Contrato lido na documentação oficial em 25/08/2026
+  // (docs.uazapi.com/endpoint/post/message~download):
+  //   POST /message/download { id, return_base64?, generate_mp3?, return_link?,
+  //                            transcribe?, openai_apikey?, download_quoted? }
+  //   -> { fileURL, mimetype, base64Data, transcription }
+  //
+  // `generate_mp3: true` (o padrão da UAZAPI) é o que queremos: MP3 toca em
+  // qualquer navegador; OGG do WhatsApp não toca em todos.
+  // `transcribe` fica de fora: exige chave da OpenAI, e a Niva usa Google e
+  // Anthropic. É o caminho para a Ana ENTENDER áudio — anotado no roadmap.
+  const tentativas: Array<{ rota: string; body: Record<string, unknown> }> = [
+    { rota: "/message/download", body: { id, generate_mp3: true, return_link: true } },
+    { rota: "/message/download", body: { id, return_base64: true, return_link: false } },
+  ];
+
+  const diario: string[] = [];
+
+  for (const { rota, body } of tentativas) {
+    try {
+      const res = await fetch(`${serverUrl}${rota}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", token },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        diario.push(`${rota} -> HTTP ${res.status}`);
+        continue;
+      }
+
+      const tipoResposta = res.headers.get("content-type") ?? "";
+      let bytes: Uint8Array | null = null;
+      let mime = String(content.mimeType ?? "");
+
+      if (tipoResposta.includes("application/json")) {
+        const json = await res.json() as Record<string, unknown>;
+        const url = json.fileURL ?? json.fileUrl ?? json.url ?? json.mediaUrl;
+        // `base64Data` é o nome no contrato da UAZAPI — os outros ficam como rede
+        // de segurança para variações entre versões.
+        const base64 = json.base64Data ?? json.base64 ?? json.fileBase64 ?? json.data;
+        mime = String(json.mimetype ?? json.mimeType ?? mime);
+        if (typeof json.transcription === "string" && json.transcription.trim()) {
+          content = { ...content, transcription: json.transcription };
+        }
+
+        if (typeof url === "string" && /^https?:\/\//.test(url)) {
+          const arquivo = await fetch(url);
+          if (!arquivo.ok) {
+            diario.push(`${rota} -> url devolvida deu HTTP ${arquivo.status}`);
+            continue;
+          }
+          bytes = new Uint8Array(await arquivo.arrayBuffer());
+          mime = mime || (arquivo.headers.get("content-type") ?? "");
+        } else if (typeof base64 === "string" && base64.length > 100) {
+          const limpo = base64.includes(",") ? base64.slice(base64.indexOf(",") + 1) : base64;
+          bytes = Uint8Array.from(atob(limpo), (c) => c.charCodeAt(0));
+        } else {
+          diario.push(`${rota} -> json sem url/base64 (chaves: ${Object.keys(json).slice(0, 12).join(",")})`);
+          continue;
+        }
+      } else {
+        bytes = new Uint8Array(await res.arrayBuffer());
+        mime = mime || tipoResposta;
+      }
+
+      if (!bytes || bytes.byteLength === 0) {
+        diario.push(`${rota} -> arquivo vazio`);
+        continue;
+      }
+
+      const ext = EXTENSAO_POR_MIME[mime.split(";")[0].trim()] ?? "bin";
+      const caminho = `${ctx.organizationId}/${ctx.conversationId}/${ctx.messageId}.${ext}`;
+
+      const { error: erroUpload } = await supabase.storage
+        .from("messaging-media")
+        .upload(caminho, bytes, { contentType: mime || "application/octet-stream", upsert: true });
+
+      if (erroUpload) {
+        diario.push(`${rota} -> upload falhou: ${erroUpload.message}`);
+        continue;
+      }
+
+      // Assinatura longa: o player lê `mediaUrl` direto. `mediaPath` fica guardado
+      // para reassinar sem precisar baixar de novo.
+      const { data: assinada } = await supabase.storage
+        .from("messaging-media")
+        .createSignedUrl(caminho, 60 * 60 * 24 * 365);
+
+      diario.push(`${rota} -> OK (${bytes.byteLength} bytes, ${mime || "sem mime"})`);
+
+      return {
+        ...content,
+        mediaUrl: assinada?.signedUrl ?? "",
+        mediaPath: caminho,
+        mimeType: mime || undefined,
+        _download: diario,
+      };
+    } catch (e) {
+      diario.push(`${rota} -> erro: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  return { ...content, _download: diario };
+}
+
 function extractMessageContent(data: UazAPIMessageData): { contentType: string; content: Record<string, unknown> } {
   const { messageType, message } = data;
   if (!message) return { contentType: "text", content: { type: "text", text: "[mensagem]" } };
@@ -775,6 +933,8 @@ async function handleMessagesUpsert(
     organization_id: string;
     business_unit_id: string;
     external_identifier: string;
+    /** Necessário para baixar a mídia na UAZAPI (serverUrl + apiKey). */
+    credentials?: Record<string, string>;
   },
   payload: UazAPIUpsertPayload
 ) {
@@ -978,6 +1138,21 @@ async function handleMessagesUpsert(
     }
   }
 
+  // Mídia: baixa o arquivo na UAZAPI e guarda no Storage antes de gravar a
+  // mensagem, para o player já nascer com som. Nunca lança: se falhar, entra como
+  // entrava antes (sem arquivo) e o motivo fica em `content._download`.
+  const conteudoFinal = await baixarEGuardarMidia(
+    supabase,
+    channel.credentials,
+    contentType,
+    content,
+    {
+      organizationId: channel.organization_id,
+      conversationId,
+      messageId: externalMessageId ?? crypto.randomUUID(),
+    },
+  );
+
   // Insert message (inbound or outbound from WhatsApp app)
   // Preserve real content type instead of always saving as 'text'
   const { data: insertedMsg, error: msgErr } = await supabase
@@ -987,7 +1162,7 @@ async function handleMessagesUpsert(
       external_id: externalMessageId,
       direction,
       content_type: contentType,
-      content,
+      content: conteudoFinal,
       status: direction === "outbound" ? "sent" : "delivered",
       ...(direction === "outbound"
         ? { sent_at: timestamp.toISOString() }
