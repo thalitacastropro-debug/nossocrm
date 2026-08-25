@@ -265,10 +265,25 @@ function extractMessageText(data: UazAPIMessageData): string {
 function conteudoDeMidia(obj: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!obj) return { mediaUrl: "" };
 
-  const url = obj.mediaUrl ?? obj.mediaurl ?? obj.url ?? obj.fileURL ?? obj.fileUrl ?? obj.downloadUrl;
+  // `content` pode ser a própria URL (string) ou um objeto com ela dentro — foi o
+  // campo que sobrou no payload real do áudio de 25/08.
+  const doContent = typeof obj.content === "string"
+    ? obj.content
+    : (obj.content as Record<string, unknown> | undefined)?.url
+      ?? (obj.content as Record<string, unknown> | undefined)?.mediaUrl;
+
+  const url = obj.mediaUrl ?? obj.mediaurl ?? obj.url ?? obj.fileURL ?? obj.fileUrl ??
+    obj.downloadUrl ?? doContent;
+
+  // Só aceita como mídia o que REALMENTE parece um endereço de arquivo: `content`
+  // de mensagem de texto guarda o texto, e ele não pode virar `mediaUrl`.
+  const ehEndereco = typeof url === "string" && /^(https?:)?\/\//.test(url);
+
   const out: Record<string, unknown> = {
-    mediaUrl: typeof url === "string" ? url : "",
+    mediaUrl: ehEndereco ? url : "",
   };
+
+  if (obj.mediaType) out.mediaType = obj.mediaType;
 
   if (obj.mimetype || obj.mimeType) out.mimeType = obj.mimetype ?? obj.mimeType;
   if (obj.seconds) out.seconds = obj.seconds;
@@ -437,6 +452,14 @@ const CAMPOS_DE_MIDIA = [
   "seconds",
   "mediaKey",
   "id",
+  // Confirmados no áudio de teste de 25/08/2026: o payload real da UAZAPI NÃO
+  // traz url nem base64 — traz `content`, `mediaType` e `convertOptions`. O
+  // `content` é o candidato a carregar o arquivo (para texto ele guarda
+  // `{ text }`), então entra aqui para revelar o formato de vez.
+  "content",
+  "mediaType",
+  "convertOptions",
+  "messageid",
 ] as const;
 
 /** Copia os campos de mídia presentes no payload cru, sem inventar nenhum. */
