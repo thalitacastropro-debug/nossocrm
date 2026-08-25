@@ -253,6 +253,34 @@ function extractMessageText(data: UazAPIMessageData): string {
  * Extract structured content from UazAPI API message by messageType.
  * Returns { contentType, content } to preserve the real media type.
  */
+/**
+ * Monta a parte de mídia do `content` a partir do que o adaptador preservou.
+ *
+ * `mediaUrl` é o campo que o player do CRM lê (`MessageBubble`): ele já está
+ * pronto — waveform, play/pause, seek — e só fica desabilitado porque a URL vem
+ * vazia. Se a UAZAPI mandar a URL no webhook, o áudio passa a tocar sem mais
+ * nenhuma mudança de código. Se não mandar, `_camposRecebidos` diz o que ela
+ * manda de fato, e é por ali que o download será implementado.
+ */
+function conteudoDeMidia(obj: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!obj) return { mediaUrl: "" };
+
+  const url = obj.mediaUrl ?? obj.mediaurl ?? obj.url ?? obj.fileURL ?? obj.fileUrl ?? obj.downloadUrl;
+  const out: Record<string, unknown> = {
+    mediaUrl: typeof url === "string" ? url : "",
+  };
+
+  if (obj.mimetype || obj.mimeType) out.mimeType = obj.mimetype ?? obj.mimeType;
+  if (obj.seconds) out.seconds = obj.seconds;
+  if (obj.fileLength) out.fileLength = obj.fileLength;
+
+  // Trilha de diagnóstico — some quando o download definitivo estiver no ar.
+  if (obj._camposRecebidos) out._camposRecebidos = obj._camposRecebidos;
+  if (obj._chavesDoPayload) out._chavesDoPayload = obj._chavesDoPayload;
+
+  return out;
+}
+
 function extractMessageContent(data: UazAPIMessageData): { contentType: string; content: Record<string, unknown> } {
   const { messageType, message } = data;
   if (!message) return { contentType: "text", content: { type: "text", text: "[mensagem]" } };
@@ -265,21 +293,38 @@ function extractMessageContent(data: UazAPIMessageData): { contentType: string; 
     case "imageMessage":
       return {
         contentType: "image",
-        content: { type: "image", mediaUrl: "", caption: (message.imageMessage as Record<string, unknown>)?.caption as string },
+        content: {
+          type: "image",
+          caption: (message.imageMessage as Record<string, unknown>)?.caption as string,
+          ...conteudoDeMidia(message.imageMessage as Record<string, unknown>),
+        },
       };
     case "audioMessage":
-      return { contentType: "audio", content: { type: "audio", mediaUrl: "" } };
+      return {
+        contentType: "audio",
+        content: { type: "audio", ...conteudoDeMidia(message.audioMessage as Record<string, unknown>) },
+      };
     case "videoMessage":
       return {
         contentType: "video",
-        content: { type: "video", mediaUrl: "", caption: (message.videoMessage as Record<string, unknown>)?.caption as string },
+        content: {
+          type: "video",
+          caption: (message.videoMessage as Record<string, unknown>)?.caption as string,
+          ...conteudoDeMidia(message.videoMessage as Record<string, unknown>),
+        },
       };
     case "documentMessage": {
       const doc = message.documentMessage as Record<string, unknown>;
-      return { contentType: "document", content: { type: "document", mediaUrl: "", fileName: doc?.fileName as string } };
+      return {
+        contentType: "document",
+        content: { type: "document", fileName: doc?.fileName as string, ...conteudoDeMidia(doc) },
+      };
     }
     case "stickerMessage":
-      return { contentType: "sticker", content: { type: "sticker", mediaUrl: "" } };
+      return {
+        contentType: "sticker",
+        content: { type: "sticker", ...conteudoDeMidia(message.stickerMessage as Record<string, unknown>) },
+      };
     case "locationMessage": {
       const loc = message.locationMessage as Record<string, unknown>;
       return {
@@ -359,6 +404,66 @@ function determineEventType(eventNorm: string): string {
  * message.fromMe, message.messageType ("Conversation", "ExtendedTextMessage", ...),
  * message.messageTimestamp (em MILISSEGUNDOS), message.senderName, message.sender.
  */
+/**
+ * Campos de MÍDIA que o adaptador precisa preservar do payload cru.
+ *
+ * Até 24/08/2026 este adaptador montava `{ audioMessage: {} }` — descartava tudo
+ * que a UAZAPI mandasse junto do áudio. Resultado: 137 mídias no banco (75
+ * áudios, 44 imagens, 18 documentos) com `mediaUrl: ""`, o player desabilitado, e
+ * o consultor sem conseguir ouvir o próprio histórico.
+ *
+ * Como a documentação da UAZAPI é uma SPA (não dá para ler o contrato) e o
+ * payload cru nunca foi persistido, a estratégia aqui é: **copiar o que existir**,
+ * entre os nomes que as APIs de WhatsApp costumam usar, e registrar em
+ * `_camposRecebidos` QUAIS chaves vieram. Com o primeiro áudio real, o contrato
+ * aparece no banco e o download definitivo pode ser escrito sem adivinhação.
+ *
+ * `base64` fica de fora de propósito: pode ter megabytes e não cabe numa coluna
+ * de metadados — se for esse o caminho, o valor vira arquivo no Storage, não JSON.
+ */
+const CAMPOS_DE_MIDIA = [
+  "mediaUrl",
+  "mediaurl",
+  "url",
+  "fileURL",
+  "fileUrl",
+  "downloadUrl",
+  "directPath",
+  "mimetype",
+  "mimeType",
+  "fileName",
+  "filename",
+  "fileLength",
+  "seconds",
+  "mediaKey",
+  "id",
+] as const;
+
+/** Copia os campos de mídia presentes no payload cru, sem inventar nenhum. */
+function midiaDoPayload(m: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const recebidos: string[] = [];
+
+  for (const campo of CAMPOS_DE_MIDIA) {
+    const valor = m[campo];
+    if (valor === undefined || valor === null || valor === "") continue;
+    // Corta valores absurdos (base64 disfarçado de url, por exemplo).
+    if (typeof valor === "string" && valor.length > 2000) {
+      recebidos.push(`${campo}(>2000 chars)`);
+      continue;
+    }
+    out[campo] = valor;
+    recebidos.push(campo);
+  }
+
+  // Diagnóstico: todas as chaves que vieram no objeto da mensagem. É o que
+  // responde "a UAZAPI manda URL, id ou base64?" sem precisar de outro deploy.
+  out._camposRecebidos = recebidos;
+  out._chavesDoPayload = Object.keys(m).slice(0, 40);
+
+  return out;
+}
+
 function adaptUazapiNative(raw: Record<string, unknown>): UazAPIUpsertPayload | null {
   const m = raw?.message as Record<string, unknown> | undefined;
   if (!m || typeof m !== "object") return null;
@@ -381,16 +486,18 @@ function adaptUazapiNative(raw: Record<string, unknown>): UazAPIUpsertPayload | 
     message = { imageMessage: { caption: String(m.caption ?? text) } };
   } else if (mtypeRaw.includes("audio") || mtypeRaw.includes("ptt")) {
     messageType = "audioMessage";
-    message = { audioMessage: {} };
+    message = { audioMessage: { ...midiaDoPayload(m) } };
   } else if (mtypeRaw.includes("video")) {
     messageType = "videoMessage";
-    message = { videoMessage: { caption: String(m.caption ?? text) } };
+    message = { videoMessage: { caption: String(m.caption ?? text), ...midiaDoPayload(m) } };
   } else if (mtypeRaw.includes("document")) {
     messageType = "documentMessage";
-    message = { documentMessage: { fileName: String(m.fileName ?? m.filename ?? "") } };
+    message = {
+      documentMessage: { fileName: String(m.fileName ?? m.filename ?? ""), ...midiaDoPayload(m) },
+    };
   } else if (mtypeRaw.includes("sticker")) {
     messageType = "stickerMessage";
-    message = { stickerMessage: {} };
+    message = { stickerMessage: { ...midiaDoPayload(m) } };
   }
 
   return {
