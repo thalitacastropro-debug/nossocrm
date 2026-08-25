@@ -16,6 +16,34 @@ interface MessageThreadProps {
   onReply?: (message: MessagingMessage) => void;
 }
 
+/**
+ * Junta as páginas da conversa em UMA lista cronológica.
+ *
+ * As páginas chegam da mais nova para a mais antiga: a página 0 traz as últimas
+ * mensagens e cada `fetchNextPage` busca um lote mais velho. Concatenar na ordem
+ * de chegada colocava o lote ANTIGO **depois** do novo — numa conversa com mais
+ * de uma página, julho aparecia no fim da thread e o scroll automático (que vai
+ * para o fim) parava justamente lá. A mensagem de ontem ficava perdida no meio da
+ * lista, e a conversa parecia "não ter atualizado".
+ *
+ * Encontrado em 25/08/2026, quando a Thalita mandou um áudio de teste, viu
+ * "[áudio]" na lista lateral e nada na conversa aberta. As mensagens estavam no
+ * banco o tempo todo.
+ *
+ * Invertemos a ordem das PÁGINAS, nunca a das mensagens dentro delas — essas já
+ * vêm cronológicas do `useMessagesInfinite`.
+ *
+ * Reações não viram bolha: elas aparecem como pílula na mensagem alvo.
+ */
+export function juntarPaginasEmOrdem(
+  pages: { messages: MessagingMessage[] }[] | undefined,
+): MessagingMessage[] {
+  return [...(pages ?? [])]
+    .reverse()
+    .flatMap((p) => p.messages)
+    .filter((m) => m.contentType !== 'reaction');
+}
+
 function DateDivider({ date }: { date: Date }) {
   const today = new Date();
   const yesterday = new Date(today);
@@ -54,12 +82,7 @@ export function MessageThread({ conversationId, presenceStatus, onReply }: Messa
   const prevMessagesLengthRef = useRef(0);
   const isLoadingOlderRef = useRef(false);
 
-  // Flatten pages into single message array (chronological order).
-  // Filter out reaction messages — they are displayed as pills on the target
-  // message bubble, not as standalone bubbles in the thread.
-  const messages = (data?.pages.flatMap((p) => p.messages) ?? []).filter(
-    (m) => m.contentType !== 'reaction',
-  );
+  const messages = juntarPaginasEmOrdem(data?.pages);
 
   // Scroll to bottom on new messages (not when loading older)
   useEffect(() => {

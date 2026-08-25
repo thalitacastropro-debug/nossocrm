@@ -2,7 +2,7 @@
 
 import React, { memo, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
-import { Check, CheckCheck, Clock, AlertCircle, FileText, MapPin, Play, Pause, Image, Reply } from 'lucide-react';
+import { Check, CheckCheck, Clock, AlertCircle, FileText, MapPin, Play, Pause, Image, Reply, Mic } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { sanitizeUrl } from '@/lib/utils/sanitize';
 import { useSendMessage } from '@/lib/query/hooks/useMessagingMessagesQuery';
@@ -104,9 +104,28 @@ const AudioPlayer = memo(function AudioPlayer({
 
   const progress = duration > 0 ? currentTime / duration : 0;
 
+  // Sem arquivo, o player virava um botão cinza que não fazia nada e não
+  // explicava nada — o consultor ficava travado sem saber por quê. Enquanto o
+  // download da mídia da UAZAPI não existe (§0.5 do roadmap: o webhook nunca
+  // baixou o arquivo), é mais honesto dizer o que houve e para onde ir.
+  if (!safeUrl) {
+    return (
+      <div
+        className={cn(
+          'flex items-center gap-2 text-[11px] leading-snug rounded-lg px-2.5 py-2',
+          isOutbound ? 'bg-white/15 text-white/90' : 'bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-slate-300',
+        )}
+        style={{ minWidth: 200 }}
+      >
+        <Mic className="w-4 h-4 flex-shrink-0 opacity-70" />
+        <span>Áudio ainda não disponível no CRM — ouça no WhatsApp</span>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-2.5 select-none" style={{ minWidth: 200 }}>
-      {safeUrl && <audio ref={audioRef} src={safeUrl} preload="metadata" />}
+      <audio ref={audioRef} src={safeUrl} preload="metadata" />
 
       {/* Play / Pause button */}
       <button
