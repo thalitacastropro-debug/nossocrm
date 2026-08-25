@@ -7,6 +7,7 @@ import { AIConfigSection } from './components/AIConfigSection';
 import { AIAgentConfigSection } from './components/ai/AIAgentConfigSection';
 import { TelegramNotificationSettings } from './components/ai/TelegramNotificationSettings';
 import { AIFeaturesSection } from './components/AIFeaturesSection';
+import { FollowupAnexoSection } from './components/ai/FollowupAnexoSection';
 
 /**
  * Componente React `AICenterSettings`.
@@ -68,6 +69,10 @@ export const AICenterSettings: React.FC = () => {
 
       <div className="mt-6">
         <TelegramNotificationSettings />
+      </div>
+
+      <div className="mt-6">
+        <FollowupAnexoSection />
       </div>
 
       <div className="mt-6">

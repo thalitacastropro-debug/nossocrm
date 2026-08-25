@@ -137,6 +137,8 @@ export function MessageInput({ conversation, replyTo, onCancelReply }: MessageIn
   const [recordingDuration, setRecordingDuration] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Vídeo escolhido vai como bolinha (PTV) em vez de vídeo comum. */
+  const [comoBolinha, setComoBolinha] = useState(false);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -229,6 +231,9 @@ export function MessageInput({ conversation, replyTo, onCancelReply }: MessageIn
       URL.revokeObjectURL(pendingMediaRef.current.preview);
     }
     setPendingMedia(null);
+    // A escolha de bolinha é do envio, não do usuário: não pode "grudar" e
+    // transformar o próximo vídeo comum em bolinha sem ele perceber.
+    setComoBolinha(false);
   }, []);
 
   // Cleanup recording on unmount
@@ -377,6 +382,11 @@ export function MessageInput({ conversation, replyTo, onCancelReply }: MessageIn
             fileName: result.fileName,
             fileSize: result.fileSize,
             ...(text.trim() ? { caption: text.trim() } : {}),
+            // Vídeo bolinha (PTV): o provider traduz para `type: "ptv"` na UAZAPI.
+            ...(result.mediaType === 'video' && comoBolinha ? { enviarComoBolinha: true } : {}),
+            // Áudio gravado no CRM vai como mensagem de voz (PTT), não como
+            // arquivo de música — é o que o lead espera ver do outro lado.
+            ...(result.mediaType === 'audio' ? { enviarComoVoz: true } : {}),
           } as MessageContent;
 
           sendMessage.mutate(
@@ -614,6 +624,24 @@ export function MessageInput({ conversation, replyTo, onCancelReply }: MessageIn
                 {formatFileSize(pendingMedia.file.size)}
               </p>
             </div>
+            {/* Vídeo bolinha (PTV do WhatsApp). Só aparece para vídeo: é o formato
+                redondo de gravação, e a UAZAPI o aceita como `type: "ptv"`. Fica
+                aqui, junto do arquivo escolhido, porque é uma decisão sobre ESTE
+                envio — não uma configuração de conta. */}
+            {pendingMedia.mediaType === 'video' && (
+              <label
+                className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300 cursor-pointer shrink-0 px-2"
+                title="Envia como vídeo redondo, igual ao gravado pela câmera do WhatsApp"
+              >
+                <input
+                  type="checkbox"
+                  checked={comoBolinha}
+                  onChange={(e) => setComoBolinha(e.target.checked)}
+                  className="rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+                />
+                bolinha
+              </label>
+            )}
             <button
               type="button"
               onClick={clearMedia}
