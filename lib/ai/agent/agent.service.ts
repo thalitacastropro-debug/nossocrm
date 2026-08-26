@@ -732,6 +732,28 @@ async function processIncomingMessageInner(
     // Replace response with validated (possibly fallback) version
     decision.response = validation.response;
 
+    // §1b — RESPOSTA BLOQUEADA: o texto que a Ana gerou não vai sair; o lead recebe só a ponte.
+    //
+    // Isso acontecia em silêncio: o único registro era um console.info que a Vercel descarta em
+    // dias. Foram 6 bloqueios em 5 conversas de lead pago desde 28/07 e ninguém no time soube de
+    // nenhum. Agora o motivo fica gravado em `ai_conversation_log.action_reason` (consultável para
+    // sempre) e o alarme sai na hora. O card NÃO é movido: bloqueio pode ser falso positivo do
+    // validador, e tirar o lead do funil da Ana por causa disso seria pior que o problema.
+    if (!validation.safe) {
+      decision.reason = `OUTPUT_BLOQUEADO: ${validation.issues.join(', ') || 'sem detalhe'}`;
+      if (!isDryRun) {
+        await alertarRespostaBloqueada({
+          supabase,
+          organizationId,
+          dealId,
+          conversationId,
+          context,
+          issues: validation.issues,
+          ultimaMensagemDoLead: incomingMessage,
+        });
+      }
+    }
+
     // 10a. Dry-run mode (observe): loga o que teria feito, mas não envia.
     if (isDryRun) {
       // Extração domain-specific (campos + tier) — AWAIT no observe pra gravar o tier de forma
@@ -1514,6 +1536,83 @@ async function sendOneBubble(params: {
 // =============================================================================
 // Handoff
 // =============================================================================
+
+/**
+ * Acende o alarme quando o validador de saída barra a resposta da Ana (§1b do roadmap).
+ *
+ * Faz três coisas, todas best-effort — falhar aqui nunca pode derrubar o turno:
+ * 1. nota NOTE na timeline do card, para quem abrir o lead entender o buraco na conversa;
+ * 2. aviso no Telegram do time, pedindo que um humano responda de verdade;
+ * 3. o motivo estruturado já vai no `ai_conversation_log` pelo `decision.reason` do chamador.
+ *
+ * Não move o card e não marca handoff: o bloqueio pode ser falso positivo do validador, e tirar o
+ * lead do funil da Ana por causa disso seria pior que o problema.
+ */
+async function alertarRespostaBloqueada(params: {
+  supabase: SupabaseClient;
+  organizationId: string;
+  dealId: string;
+  conversationId: string;
+  context: LeadContext;
+  issues: string[];
+  ultimaMensagemDoLead?: string;
+}): Promise<void> {
+  const { supabase, organizationId, dealId, conversationId, context, issues, ultimaMensagemDoLead } =
+    params;
+  const motivos = issues.join(', ') || 'sem detalhe';
+
+  logStructured({
+    event: 'ai.output_blocked',
+    org_id: organizationId,
+    conversation_id: conversationId,
+    deal_id: dealId,
+    issues,
+  });
+
+  try {
+    const { error } = await supabase.from('activities').insert({
+      deal_id: dealId,
+      organization_id: organizationId,
+      type: 'NOTE',
+      title: 'Resposta da Ana bloqueada pelo validador',
+      description:
+        `A resposta gerada não foi enviada (motivo: ${motivos}). O lead recebeu só uma ponte ` +
+        `("já te respondo") para a conversa não morrer. Alguém do time precisa responder.`,
+      date: new Date().toISOString(),
+      completed: true,
+    });
+    if (error) console.error('[AIAgent] nota de resposta bloqueada falhou (não-fatal):', error);
+  } catch (err) {
+    console.error('[AIAgent] nota de resposta bloqueada falhou (não-fatal):', err);
+  }
+
+  try {
+    const { data: orgTelegram } = await supabase
+      .from('organization_settings')
+      .select('telegram_bot_token, telegram_chat_id')
+      .eq('organization_id', organizationId)
+      .maybeSingle();
+
+    if (orgTelegram?.telegram_bot_token && orgTelegram?.telegram_chat_id) {
+      const { sendTelegramMessage, formatRespostaBloqueadaMessage } = await import(
+        '@/lib/notifications/telegram'
+      );
+      await sendTelegramMessage(
+        orgTelegram.telegram_bot_token,
+        orgTelegram.telegram_chat_id,
+        formatRespostaBloqueadaMessage({
+          contactName: context.contact?.name ?? 'Lead',
+          issues,
+          ultimaMensagemDoLead,
+          appUrl: process.env.NEXT_PUBLIC_APP_URL,
+          dealId,
+        }),
+      );
+    }
+  } catch (err) {
+    console.error('[AIAgent] alerta de resposta bloqueada falhou (não-fatal):', err);
+  }
+}
 
 async function handleHandoff(
   supabase: SupabaseClient,

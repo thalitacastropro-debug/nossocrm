@@ -8,7 +8,7 @@
  * - Resposta vazia
  */
 import { describe, expect, it, vi } from 'vitest'
-import { validateAIOutput } from '@/lib/ai/agent/output-validator'
+import { validateAIOutput, BLOCKED_OUTPUT_BRIDGE } from '@/lib/ai/agent/output-validator'
 import type { LeadContext } from '@/lib/ai/agent/types'
 
 vi.mock('@/lib/ai/agent/structured-logger', () => ({
@@ -41,7 +41,7 @@ const CONTEXT_WITH_PII: LeadContext = {
   } as any,
 }
 
-const FALLBACK = 'Obrigado pelo contato! Nossa equipe retornará em breve.'
+const FALLBACK = BLOCKED_OUTPUT_BRIDGE
 
 // ---------------------------------------------------------------------------
 // Respostas seguras — devem passar
@@ -179,13 +179,28 @@ describe('validateAIOutput — vazamento de PII', () => {
     expect(result.issues.some(i => i.startsWith('pii_leak:phone'))).toBe(true)
   })
 
-  it('rejeita quando valor do deal aparece verbatim', () => {
+  // REGRESSÃO (26/08): `deals.value` guarda a MENSALIDADE QUE O LEAD PAGA — dado que ele mesmo
+  // acabou de dizer no chat, não PII vinda do CRM. Tratar isso como vazamento destruiu 6 respostas
+  // reais da Ana (Daniel R$500, Richard R$350, Ana Paula R$750, Domingos R$715, Lilian R$990).
+  it('NÃO rejeita quando a Ana repete a mensalidade do lead (valor do deal)', () => {
     const result = validateAIOutput(
       'Nossa proposta de 15000 reais inclui suporte.',
       CONTEXT_WITH_PII
     )
-    expect(result.safe).toBe(false)
-    expect(result.issues.some(i => i.startsWith('pii_leak:deal_value'))).toBe(true)
+    expect(result.safe).toBe(true)
+    expect(result.issues.some(i => i.startsWith('pii_leak:deal_value'))).toBe(false)
+  })
+
+  it('caso Daniel (18/08): recap com "R$ 500" passa quando deal.value = 500', () => {
+    const ctx: LeadContext = {
+      ...EMPTY_CONTEXT,
+      contact: { id: 'c1', name: 'Daniel', email: null, phone: '+5512991228329' } as any,
+      deal: { id: 'd1', title: 'Daniel', value: 500 } as any,
+    }
+    const texto = 'Anotado: Unimed, R$ 500, sem coparticipação, 3 vidas.'
+    const result = validateAIOutput(texto, ctx)
+    expect(result.safe).toBe(true)
+    expect(result.response).toBe(texto)
   })
 
   it('não rejeita quando PII não está no contexto', () => {
@@ -224,5 +239,22 @@ describe('validateAIOutput — estrutura do ValidationResult', () => {
     expect(result).toHaveProperty('safe', false)
     expect(result).toHaveProperty('response', FALLBACK)
     expect(result.issues.length).toBeGreaterThan(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A mensagem de bloqueio NÃO pode encerrar a conversa
+// ---------------------------------------------------------------------------
+describe('mensagem usada quando a resposta é bloqueada', () => {
+  it('é uma PONTE, não uma despedida', () => {
+    const result = validateAIOutput('Sou um robô projetado para ajudar vendas.', EMPTY_CONTEXT)
+    expect(result.safe).toBe(false)
+    expect(result.response).toBe(BLOCKED_OUTPUT_BRIDGE)
+    // O texto antigo se despedia e a conversa morria ali (6 casos reais desde 28/07).
+    expect(result.response).not.toMatch(/retornar[áa] em breve|entrar[áa] em contato/i)
+  })
+
+  it('promete resposta da própria Ana, no mesmo canal', () => {
+    expect(BLOCKED_OUTPUT_BRIDGE).toMatch(/j[áa] te respondo/i)
   })
 })

@@ -276,3 +276,61 @@ export function formatMeetingHandoffMessage({
   }
   return lines.join('\n');
 }
+
+interface RespostaBloqueadaParams {
+  contactName: string;
+  /** Rótulos do `output-validator` (ex.: `leakage:declared_ai_pt`, `length_exceeded:…`). */
+  issues: string[];
+  /** Última coisa que o lead escreveu — o que ficou sem resposta de verdade. */
+  ultimaMensagemDoLead?: string;
+  appUrl?: string;
+  dealId?: string;
+}
+
+/**
+ * A Ana gerou uma resposta e o validador de saída a BLOQUEOU (§1b do roadmap).
+ *
+ * Por que este aviso existe: até 26/08/2026 o bloqueio era invisível — só um `console.info`
+ * que sumia da Vercel em poucos dias. O lead recebia uma despedida educada e o time nunca
+ * ficava sabendo. Foram 6 disparos em 5 conversas de lead pago desde 28/07, 2 delas mortas ali.
+ *
+ * Agora o lead recebe uma PONTE ("já te respondo") e este alarme chama alguém para assumir.
+ * O aviso NÃO move o card: bloqueio pode ser falso positivo do validador, e tirar o lead do
+ * funil da Ana por causa disso seria pior que o problema.
+ */
+export function formatRespostaBloqueadaMessage({
+  contactName,
+  issues,
+  ultimaMensagemDoLead,
+  appUrl,
+  dealId,
+}: RespostaBloqueadaParams): string {
+  const lines: string[] = [
+    `🚧 <b>Resposta da Ana bloqueada — ela não respondeu o lead</b>`,
+    ``,
+    `👤 <b>${escapeHtml(contactName)}</b>`,
+  ];
+
+  if (issues.length > 0) {
+    lines.push(`⚠️ <b>Motivo:</b> ${escapeHtml(issues.join(', '))}`);
+  }
+
+  if (ultimaMensagemDoLead) {
+    const truncated =
+      ultimaMensagemDoLead.slice(0, 300) + (ultimaMensagemDoLead.length > 300 ? '...' : '');
+    lines.push(``);
+    lines.push(`💬 <b>O lead disse:</b>`);
+    lines.push(`<i>${escapeHtml(truncated)}</i>`);
+  }
+
+  lines.push(``);
+  lines.push(
+    `A Ana mandou só "já te respondo" para não encerrar a conversa. <b>Alguém precisa responder de verdade.</b>`
+  );
+
+  if (appUrl && dealId) {
+    lines.push(``);
+    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+  }
+  return lines.join('\n');
+}

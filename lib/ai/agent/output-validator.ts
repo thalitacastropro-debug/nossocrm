@@ -17,8 +17,19 @@ import { logStructured } from './structured-logger';
 /** WhatsApp message character limit */
 const MAX_RESPONSE_LENGTH = 4096;
 
-/** Generic fallback when output is deemed unsafe */
-const FALLBACK_RESPONSE = 'Obrigado pelo contato! Nossa equipe retornará em breve.';
+/**
+ * Texto enviado quando a resposta gerada é bloqueada.
+ *
+ * PRECISA ser uma PONTE, nunca uma despedida. Até 26/08/2026 esta constante era
+ * *"Obrigado pelo contato! Nossa equipe retornará em breve."* — uma frase de encerramento.
+ * Ela disparou 6× em 5 conversas de lead PAGO desde 28/07 e, em 2 delas, a conversa
+ * acabou exatamente ali (Ana Paula Trivino 09/08 e Domingos 04/08): o lead entendeu que
+ * tinha sido despachado, e ninguém no time ficou sabendo.
+ *
+ * A ponte segura o lead no mesmo canal, com a mesma pessoa (a Ana), e a próxima mensagem
+ * dele reentra no fluxo normal. O alarme para o time sai em `agent.service`.
+ */
+export const BLOCKED_OUTPUT_BRIDGE = 'Deixa eu confirmar uma informação aqui e já te respondo.';
 
 // =============================================================================
 // Leakage Detection Patterns
@@ -54,6 +65,9 @@ const LEAKAGE_PATTERNS: Array<[RegExp, string]> = [
  * Check if the response exposes PII from the lead context verbatim.
  * We only flag PII that comes from the CONTEXT (not from what the lead themselves sent).
  * E.g., if the AI response repeats the lead's email from context, that's a leak.
+ *
+ * Escopo: identidade de contato (e-mail e telefone). Ver a nota longa no fim da função sobre
+ * por que `deal.value` NÃO entra aqui.
  */
 function detectPIILeak(
   response: string,
@@ -82,14 +96,22 @@ function detectPIILeak(
     }
   }
 
-  // Check deal value leak (only flag if it's a specific number, not generic)
-  if (context.deal?.value && context.deal.value > 0) {
-    const valueStr = context.deal.value.toString();
-    // Only flag values with 3+ digits to avoid false positives on short numbers
-    if (valueStr.length >= 3 && response.includes(valueStr)) {
-      leaks.push(`deal_value:${valueStr.substring(0, 2)}***`);
-    }
-  }
+  // NÃO existe checagem de `deal.value` aqui — de propósito.
+  //
+  // Havia uma, com `response.includes(valor)` (substring cru, sem limite de palavra), e ela era a
+  // causa real do fallback que matava lead pago. Nesta operação a extração grava em `deals.value`
+  // a MENSALIDADE QUE O LEAD PAGA — número que ele mesmo acabou de escrever no WhatsApp e em torno
+  // do qual gira a qualificação inteira. Ou seja: o dado não vem do CRM para o lead, vem do lead
+  // para o CRM. Repetir "R$ 500" para quem disse "pago 500" não é vazamento, é conversa.
+  //
+  // Efeito medido no banco em 26/08/2026: nos 6 disparos do fallback (Daniel 500, Richard 350,
+  // Ana Paula 750, Domingos 715, Lilian 990), `deal.value` tinha 3 dígitos e a Ana estava
+  // recapitulando o valor. A primeira vez que ela repetia o número depois da extração gravar o
+  // campo, a mensagem inteira era descartada. Além disso o `includes` casava "500" dentro de
+  // "1500" e "R$ 5.500".
+  //
+  // Se um dia for preciso proteger um valor que o lead NÃO conhece (proposta, comissão), isso é
+  // outro campo e outra checagem — não `deal.value`.
 
   return leaks;
 }
@@ -121,7 +143,7 @@ export interface ValidationResult {
  * Checks:
  * 1. System prompt / AI identity leakage
  * 2. Maximum length (WhatsApp limit)
- * 3. PII from context appearing verbatim in response
+ * 3. PII de contato (e-mail/telefone) do contexto aparecendo verbatim na resposta
  * 4. Empty or nonsensical response
  *
  * @param response  Raw LLM output text
@@ -139,7 +161,7 @@ export function validateAIOutput(
   // Check 0: Empty or whitespace-only
   if (!response || response.trim().length === 0) {
     issues.push('empty_response');
-    return logAndReturn(issues, FALLBACK_RESPONSE, meta);
+    return logAndReturn(issues, BLOCKED_OUTPUT_BRIDGE, meta);
   }
 
   // Check 1: System prompt / AI identity leakage
@@ -154,15 +176,17 @@ export function validateAIOutput(
     issues.push(`length_exceeded:${response.length}/${MAX_RESPONSE_LENGTH}`);
   }
 
-  // Check 3: PII leak from context
+  // Check 3: PII de CONTATO vinda do contexto (e-mail/telefone) — nunca o valor do deal
   const piiLeaks = detectPIILeak(response, context);
   if (piiLeaks.length > 0) {
     issues.push(...piiLeaks.map((l) => `pii_leak:${l}`));
   }
 
-  // Decision: if any issue found, use fallback
+  // Decisão: qualquer problema → NÃO envia o texto gerado. Manda a ponte e devolve safe:false,
+  // que é o gatilho do alarme em agent.service (Telegram + nota na timeline). Bloqueio silencioso
+  // foi o que deixou 6 respostas morrerem sem ninguém ver.
   if (issues.length > 0) {
-    return logAndReturn(issues, FALLBACK_RESPONSE, meta);
+    return logAndReturn(issues, BLOCKED_OUTPUT_BRIDGE, meta);
   }
 
   return { safe: true, response, issues: [] };
