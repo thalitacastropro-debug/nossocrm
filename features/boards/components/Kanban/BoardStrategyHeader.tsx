@@ -21,6 +21,10 @@ import { useActivities } from '@/lib/query/hooks';
 import { useOrgMembersQuery } from '@/lib/query/hooks/useOrgMembersQuery';
 import { boardAccessService } from '@/lib/supabase/boardAccess';
 import { useVendasDoFunil, type VendasDoFunil } from '@/lib/query/hooks/useVendasDoFunilQuery';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '@/lib/query/queryKeys';
+import { Modal } from '@/components/ui/Modal';
+import { PremioFechadoForm } from '@/features/deals/components/PremioFechadoForm';
 import { getCurrentMonthRange, countScheduledMeetings } from '@/lib/boards/goalMetrics';
 import { matchesOwnerFilter } from '@/features/boards/hooks/useBoardsController';
 import { useAuth } from '@/context/AuthContext';
@@ -32,7 +36,13 @@ const BRL_CURRENCY_FORMATTER = new Intl.NumberFormat('pt-BR', { style: 'currency
 const EMPTY_ACTIVITIES: Activity[] = [];
 // Mesmo motivo do EMPTY_ACTIVITIES: enquanto as vendas carimbadas não chegam, o memo
 // precisa de um objeto com identidade estável.
-const SEM_VENDAS: VendasDoFunil = { vendas: [], contagem: 0, valorTotal: 0 };
+const SEM_VENDAS: VendasDoFunil = {
+  vendas: [],
+  contagem: 0,
+  valorTotal: 0,
+  valorTotalPremio: 0,
+  pendentesDePremio: [],
+};
 
 interface BoardStrategyHeaderProps {
   board: Board;
@@ -95,6 +105,19 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
   const { setIsGlobalAIOpen } = useUIState();
   const [isEditing, setIsEditing] = useState(false);
   const [editedBoard, setEditedBoard] = useState(board);
+  /**
+   * Pendência de prêmio aberta no topo do funil (dealId da venda sendo preenchida).
+   * O formulário mora AQUI, e não só no card, porque quem vendeu não enxerga mais o
+   * card depois que ele foi para a Implantação (acesso por funil, 24/08) — o topo do
+   * funil de origem é o único lugar em que o consultor vê e resolve a própria pendência.
+   */
+  const [pendenciaAberta, setPendenciaAberta] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  // A venda por trás da pendência aberta — some sozinha se o prêmio chegar por outra via
+  // (outro usuário salvou, realtime invalidou) enquanto o modal estava aberto.
+  const vendaPendenteAberta = pendenciaAberta
+    ? vendasDoMes.pendentesDePremio.find((v) => v.dealId === pendenciaAberta) ?? null
+    : null;
   /**
    * Time da organização: alimenta o select de responsável do funil e resolve o nome que aparece
    * no cabeçalho em modo leitura.
@@ -264,36 +287,39 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
    *   já é outra pessoa ("quando o card for pra implantação já tem que identificar quem fez a
    *   venda", pedido da dona em 26/08).
    */
-  const resumoFinanceiro = React.useMemo<{ mensalidadesEmJogo: number; ganhoNoMes: number } | null>(() => {
-    const inicioMes = Date.parse(monthRange.start);
-    const fimMes = Date.parse(monthRange.end);
-
+  const resumoFinanceiro = React.useMemo<{
+    mensalidadesEmJogo: number;
+    ganhoNoMes: number;
+    pendenciasDePremio: typeof vendasDoMes.pendentesDePremio;
+  } | null>(() => {
     // 1) Vendas carimbadas do mês: a fonte de verdade. Já vêm recortadas por funil da
     // venda e por período pelo hook; aqui só falta o filtro por consultor da tela.
+    //
+    // O QUE SOMA MUDOU EM 26/08/2026 (2ª rodada): o "Já ganho no mês" soma o PRÊMIO do
+    // plano VENDIDO (`carimbo.premio_mensal`), não mais `valor_na_venda` — que é a
+    // mensalidade do plano ANTIGO do lead e inflava o topo com receita que não existe.
+    // Venda ainda sem prêmio NÃO soma: vira pendência visível logo abaixo do número
+    // ("falta informar o prêmio"), até alguém preencher (niva-os-visao.md §1).
     let ganhoNoMes = 0;
-    const jaContadosPeloCarimbo = new Set<string>();
+    const pendenciasDePremio: typeof vendasDoMes.pendentesDePremio = [];
     for (const venda of vendasDoMes.vendas) {
-      jaContadosPeloCarimbo.add(venda.dealId);
       if (!matchesOwnerFilter(venda.carimbo.vendedor_id ?? undefined, ownerFilter, profile?.id)) continue;
-      ganhoNoMes += venda.carimbo.valor_na_venda;
+      if (venda.carimbo.premio_mensal !== null) ganhoNoMes += venda.carimbo.premio_mensal;
+      else pendenciasDePremio.push(venda);
     }
 
-    // 2) MESMA PONTE TEMPORÁRIA da barra de meta: ganho ANTERIOR ao carimbo ainda vive
-    // como `is_won` parado neste funil e não tem de onde ser reconstruído. Some também,
-    // pulando quem já entrou pelo carimbo — senão a mesma venda contaria duas vezes no
-    // mês da virada. Quando não sobrar ganho sem carimbo, este trecho morre.
+    // 2) Ganho ANTERIOR ao carimbo (`is_won` parado neste funil, sem carimbo): a barra de
+    // meta ainda o CONTA como fechamento, mas ele NÃO soma dinheiro aqui — `d.value` é a
+    // mensalidade do plano ANTIGO do lead, e o "Já ganho" agora é soma de PRÊMIO. Misturar
+    // as duas unidades devolveria o número errado que esta mudança mata. Em produção não
+    // existe nenhum `is_won` sem carimbo (conferido em 26/08), então nada some da tela.
     let funilTemValor = false;
     for (const d of deals) {
       if (d.boardId !== board.id) continue;
-      if ((d.value || 0) > 0) funilTemValor = true;
-      if (jaContadosPeloCarimbo.has(d.id)) continue;
-      // Sem data de fechamento não dá para dizer que caiu neste mês — não conta (melhor
-      // faltar do que inflar o "já ganho" com fechamento antigo sem carimbo).
-      if (!d.isWon || !d.closedAt) continue;
-      if (!matchesOwnerFilter(d.ownerId, ownerFilter, profile?.id)) continue;
-      const fechadoEm = Date.parse(d.closedAt);
-      if (Number.isNaN(fechadoEm) || fechadoEm < inicioMes || fechadoEm > fimMes) continue;
-      ganhoNoMes += d.value || 0;
+      if ((d.value || 0) > 0) {
+        funilTemValor = true;
+        break;
+      }
     }
 
     // Funil sem nenhum card com valor (SDR, nutrição...) não ganha o bloco: "R$ 0,00" só
@@ -310,7 +336,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
       mensalidadesEmJogo += d.value || 0;
     }
 
-    return { mensalidadesEmJogo, ganhoNoMes };
+    return { mensalidadesEmJogo, ganhoNoMes, pendenciasDePremio };
   }, [deals, filteredDeals, board.id, monthRange, ownerFilter, profile?.id, vendasDoMes]);
 
   /**
@@ -773,7 +799,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
                     </div>
                     <div
                       className="min-w-0 cursor-help"
-                      title="Soma das vendas fechadas NESTE funil dentro do mês corrente, pelo carimbo da venda: a venda continua contando aqui mesmo depois de o card ir para a Implantação. Segue o filtro por consultor comparando QUEM VENDEU (não o dono atual do card), mas ignora a busca e o filtro de situação: é o total do mês, não o que está desenhado nas colunas. Ganhos antigos, anteriores ao carimbo, ainda entram pela data de fechamento do card."
+                      title="Soma do PRÊMIO MENSAL dos planos VENDIDOS neste funil dentro do mês corrente, pelo carimbo da venda: a venda continua contando aqui mesmo depois de o card ir para a Implantação. Venda ainda sem prêmio informado NÃO entra na soma — ela aparece como pendência ao lado, até alguém preencher. Segue o filtro por consultor comparando QUEM VENDEU (não o dono atual do card), mas ignora a busca e o filtro de situação: é o total do mês, não o que está desenhado nas colunas."
                     >
                       <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">
                         Já ganho no mês
@@ -782,6 +808,27 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
                         {BRL_CURRENCY_FORMATTER.format(resumoFinanceiro.ganhoNoMes)}
                       </div>
                     </div>
+                    {/* PENDÊNCIA DO PRÊMIO: venda carimbada sem o prêmio do plano vendido.
+                        É o desenho combinado em niva-os-visao.md §1 — o ganho NÃO trava a
+                        operação com modal no drag; o número é que fica devendo, visível,
+                        até alguém preencher. Clicar abre o formulário aqui mesmo: quem
+                        vendeu não enxerga mais o card (ele vive na Implantação), mas
+                        enxerga — e resolve — a própria pendência no topo do funil. */}
+                    {resumoFinanceiro.pendenciasDePremio.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setPendenciaAberta(resumoFinanceiro.pendenciasDePremio[0].dealId)}
+                        className="min-w-0 text-left px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors"
+                        title="Tem venda fechada sem o prêmio do plano vendido. Enquanto o prêmio não for informado, essa venda não entra no 'Já ganho no mês' nem em relatório de comissão. Clique para informar."
+                      >
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-400 whitespace-nowrap">
+                          <AlertTriangle size={11} />
+                          {resumoFinanceiro.pendenciasDePremio.length === 1
+                            ? 'Falta o prêmio de 1 venda'
+                            : `Falta o prêmio de ${resumoFinanceiro.pendenciasDePremio.length} vendas`}
+                        </span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -859,6 +906,40 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
           </>
         )}
       </div>
+
+      {/* Formulário da pendência de prêmio. Vive no header (e não no card) porque o card
+          ganho mudou de funil e quem vendeu não o enxerga mais — o topo do funil de origem
+          é onde o consultor resolve a própria pendência. Salvou → invalida as vendas
+          carimbadas e o "Já ganho no mês" atualiza na hora. */}
+      {(() => {
+        const pendencia = vendaPendenteAberta;
+        if (!pendencia) return null;
+        return (
+          <Modal
+            isOpen
+            onClose={() => setPendenciaAberta(null)}
+            title={`Prêmio da venda — ${pendencia.titulo ?? 'card sem título'}`}
+            size="sm"
+          >
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Venda de {pendencia.carimbo.vendedor_nome ?? 'responsável não identificado'} em{' '}
+                {new Date(pendencia.carimbo.vendido_em).toLocaleDateString('pt-BR')}. Informe a
+                mensalidade do plano que o cliente COMPROU — é ela que entra no
+                &quot;Já ganho no mês&quot; e nos relatórios.
+              </p>
+              <PremioFechadoForm
+                dealId={pendencia.dealId}
+                onCancel={() => setPendenciaAberta(null)}
+                onSaved={() => {
+                  setPendenciaAberta(null);
+                  queryClient.invalidateQueries({ queryKey: queryKeys.vendasDoFunil.all });
+                }}
+              />
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 };

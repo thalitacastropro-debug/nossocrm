@@ -200,6 +200,20 @@ const ReportsPage: React.FC = () => {
 
           <PeriodFilterSelect value={period} onChange={setPeriod} />
 
+          {/* Fechamento do mês: prêmio dos planos VENDIDOS + comissão por pessoa. Só
+              admin — comissão é dado confidencial (a rota também recusa quem não é). */}
+          {profile?.role === 'admin' && (
+            <button
+              type="button"
+              onClick={() => router.push('/reports/fechamento')}
+              className="group flex items-center gap-2 px-3 py-2 rounded-lg glass border border-emerald-200/60 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400 hover:border-emerald-300 dark:hover:border-emerald-500/40 transition-all duration-200"
+              title="Fechamento do mês por pessoa (só administradores)"
+            >
+              <DollarSign size={16} className="group-hover:scale-110 transition-transform" />
+              <span className="text-sm font-medium opacity-90 group-hover:opacity-100">Fechamento</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleExportPDF}

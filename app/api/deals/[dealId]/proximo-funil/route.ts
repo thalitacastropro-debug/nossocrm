@@ -92,6 +92,109 @@ interface PerfilRow {
 const nomeDoPerfil = (p: PerfilRow | null | undefined): string | null =>
   p ? (p.nickname || p.name || p.first_name || null) : null;
 
+/**
+ * Carimba a venda de um card ganho em funil SEM próximo funil (Nutrição, Clientes Ativos).
+ *
+ * O card fica onde está (`is_won = true` no board), mas a venda passa a existir onde todos
+ * os painéis leem: no carimbo. Sem isto, ganho em funil de ponta era invisível para a barra
+ * de meta, para o "Já ganho no mês" e para a pendência de prêmio fechado.
+ *
+ * Devolve o carimbo gravado, ou `null` quando não havia o que carimbar (card não-ganho,
+ * carimbo já existente) ou quando a gravação falhou (com log — venda sumida em silêncio é
+ * exatamente o que esta rota existe para não deixar acontecer).
+ */
+async function carimbarVendaSemMover(
+  admin: ReturnType<typeof createStaticAdminClient>,
+  deal: DealRow,
+  origem: BoardRow | null,
+  orgId: string,
+  boardOrigemId: string,
+): Promise<CarimboVenda | null> {
+  if (deal.is_won !== true) return null;
+
+  // MERGE a partir do banco e NUNCA sobrescrever carimbo existente — mesmas regras do
+  // caminho com destino (ver o passo 7 do handler).
+  const customFields: Record<string, unknown> = { ...(deal.custom_fields ?? {}) };
+  const carimboExistente = customFields.venda;
+  if (typeof carimboExistente === 'object' && carimboExistente !== null) return null;
+
+  // Nome da etapa e do vendedor são conforto de leitura: falha em qualquer um dos dois não
+  // pode impedir a venda de ser carimbada.
+  let etapaNome = 'Ganho';
+  if (deal.stage_id) {
+    try {
+      const { data } = await admin
+        .from('board_stages')
+        .select('id, name, label, linked_lifecycle_stage')
+        .eq('id', deal.stage_id)
+        .maybeSingle();
+      const etapa = data as StageRow | null;
+      etapaNome = etapa?.label || etapa?.name || etapaNome;
+    } catch (err) {
+      console.error('[deals/proximo-funil] etapa do carimbo sem move falhou (não-fatal):', err);
+    }
+  }
+  let vendedorNome: string | null = null;
+  if (deal.owner_id) {
+    try {
+      const { data } = await admin
+        .from('profiles')
+        .select('id, name, nickname, first_name, role, ve_todos_os_leads')
+        .in('id', [deal.owner_id]);
+      vendedorNome = nomeDoPerfil(((data ?? []) as PerfilRow[])[0] ?? null);
+    } catch (err) {
+      console.error('[deals/proximo-funil] perfil do carimbo sem move falhou (não-fatal):', err);
+    }
+  }
+
+  const agora = new Date().toISOString();
+  const venda: CarimboVenda = {
+    vendedor_id: deal.owner_id,
+    vendedor_nome: vendedorNome,
+    vendido_em: agora,
+    board_id_da_venda: boardOrigemId,
+    funil_da_venda: origem?.name ?? 'Funil',
+    etapa_da_venda: etapaNome,
+    valor_na_venda: deal.value ?? 0,
+  };
+  customFields.venda = venda;
+
+  const { data: gravadoRaw, error: carimboErr } = await admin
+    .from('deals')
+    .update({ custom_fields: customFields, updated_at: agora })
+    .eq('id', deal.id)
+    .eq('organization_id', orgId)
+    .select('id');
+  if (carimboErr || ((gravadoRaw ?? []) as { id: string }[]).length === 0) {
+    console.error(
+      '[deals/proximo-funil] carimbo sem move falhou:',
+      carimboErr?.message ?? 'update de 0 linhas',
+    );
+    return null;
+  }
+
+  // Nota best-effort: a jornada é registro, e esta venda não gera nota de move.
+  try {
+    const { error: notaErr } = await admin.from('activities').insert({
+      organization_id: orgId,
+      deal_id: deal.id,
+      owner_id: deal.owner_id,
+      type: 'STATUS_CHANGE',
+      title: 'Venda registrada',
+      description: `Venda fechada em "${origem?.name ?? 'este funil'}"`
+        + `${vendedorNome ? `, creditada a ${vendedorNome}` : ''}. O funil não tem próximo funil`
+        + ' configurado, então o card fica aqui. Falta informar o prêmio do plano vendido.',
+      date: agora,
+      completed: true,
+    });
+    if (notaErr) console.error('[deals/proximo-funil] nota do carimbo sem move falhou (não-fatal):', notaErr.message);
+  } catch (err) {
+    console.error('[deals/proximo-funil] nota do carimbo sem move falhou (não-fatal):', err);
+  }
+
+  return venda;
+}
+
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ dealId: string }> }) {
   const { dealId } = await params;
   if (!dealId || !uuidRegex.test(dealId)) {
@@ -165,8 +268,18 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     // Sem próximo funil configurado não é erro: a maioria dos funis termina neles mesmos. Funil que
     // aponta para si mesmo cai aqui também — mover para a própria etapa de entrada seria zerar o
     // card no lugar de entregá-lo.
+    //
+    // MAS A VENDA É CARIMBADA MESMO ASSIM. Ganho em funil de ponta (Nutrição, Clientes
+    // Ativos) ficava `is_won` no board e SEM carimbo — e desde que a barra de meta e o
+    // "Já ganho no mês" leem o CARIMBO (não `is_won`), essa venda não existia em relatório
+    // nenhum, nem gerava a pendência de prêmio fechado. O card não sai do lugar; a venda
+    // fica registrada onde todos os painéis leem.
     if (!nextBoardId || nextBoardId === boardOrigemId) {
-      return NextResponse.json({ movido: false, motivo: 'sem_proximo_funil' }, { status: 200 });
+      const vendaCarimbada = await carimbarVendaSemMover(admin, deal, origem, orgId, boardOrigemId);
+      return NextResponse.json(
+        { movido: false, motivo: 'sem_proximo_funil', venda: vendaCarimbada },
+        { status: 200 },
+      );
     }
 
     // ------------------------------------------------- 2) a etapa ATUAL do card (antes do move)

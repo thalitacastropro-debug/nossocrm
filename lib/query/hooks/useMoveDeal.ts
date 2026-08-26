@@ -309,7 +309,12 @@ export const useMoveDeal = () => {
         targetStage?.linkedLifecycleStage === 'MQL' ||
         targetStage?.linkedLifecycleStage === 'SALES_QUALIFIED';
 
-      if (isSuccessStage && board.nextBoardId) {
+      // GANHO chama a rota SEMPRE, com ou sem próximo funil: em funil de ponta (Nutrição,
+      // Clientes Ativos) a rota não move nada, mas CARIMBA a venda — sem o carimbo, o ganho
+      // não existe para a barra de meta, para o "Já ganho no mês" nem para a pendência de
+      // prêmio. Para promoção de lead (MQL/SALES_QUALIFIED), sem próximo funil não há nada a
+      // fazer no servidor, e aí sim o gate economiza a request.
+      if (isSuccessStage && (isWon || board.nextBoardId)) {
         // AGUARDA (antes era um `(async () => {...})()` solto): fire-and-forget morria junto com a
         // aba se a pessoa fechasse a tela logo depois do drag, e o card ficava preso no ganho do
         // funil de origem. O try/catch garante que uma falha aqui não derruba o drag — o deal já

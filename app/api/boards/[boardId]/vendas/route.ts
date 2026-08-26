@@ -42,6 +42,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
+import { lerPremioFechado } from '@/lib/deals/premioFechado';
 
 export const maxDuration = 30;
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -56,6 +57,7 @@ interface PerfilRow {
 /** Linha crua do PostgREST: `venda` é o objeto JSON do carimbo, do jeito que estiver. */
 interface LinhaDeVenda {
   id: string | null;
+  title: string | null;
   value: number | null;
   venda: Record<string, unknown> | null;
 }
@@ -63,10 +65,19 @@ interface LinhaDeVenda {
 /** Item da lista enxuta que a tela consome (o hook useVendasDoFunil espelha isto). */
 interface VendaDaResposta {
   deal_id: string;
+  /** Título do card — é como a pendência de prêmio aparece nomeada no topo do funil. */
+  titulo: string | null;
   vendedor_id: string | null;
   vendedor_nome: string | null;
   vendido_em: string;
+  /** Mensalidade do plano ANTIGO do lead no momento do ganho (`deals.value` congelado). */
   valor_na_venda: number;
+  /** Prêmio do plano VENDIDO — a receita de verdade. null enquanto ninguém informar. */
+  premio_mensal: number | null;
+  operadora: string | null;
+  vigencia_em: string | null;
+  /** true = venda carimbada sem prêmio: pendência visível, nunca número inventado. */
+  pendente_premio: boolean;
 }
 
 /** Campo de texto do carimbo; devolve null quando veio vazio, nulo ou de outro tipo. */
@@ -148,7 +159,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       // (rede de segurança quando o carimbo veio sem `valor_na_venda`) e o próprio
       // carimbo. Nada de `select('*')`: o card ganho mora em outro funil, e devolver a
       // linha inteira daqui seria entregar pelo servidor o que a RLS esconde na tela.
-      .select('id, value, venda:custom_fields->venda')
+      .select('id, title, value, venda:custom_fields->venda')
       // Organização é o cerco obrigatório: service role ignora RLS.
       .eq('organization_id', orgId)
       // O CARIMBO manda: `board_id` diria onde o card está HOJE (Implantação), e é
@@ -177,6 +188,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     const vendas: VendaDaResposta[] = [];
     let valorTotal = 0;
+    // Soma dos PRÊMIOS dos planos vendidos — a receita de verdade do mês. Venda sem prêmio
+    // informado fica de fora e é contada em `pendentesDePremio`.
+    let valorTotalPremio = 0;
+    let pendentesDePremio = 0;
     let ignorados = 0;
 
     for (const linha of linhas) {
@@ -218,14 +233,27 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       const valorDoCarimbo = Number(bruto.valor_na_venda ?? NaN);
       const valor = Number.isFinite(valorDoCarimbo) ? valorDoCarimbo : Number(linha.value) || 0;
 
+      // O prêmio do plano VENDIDO, se alguém já informou (PATCH /api/deals/[dealId]/venda).
+      const premio = lerPremioFechado(bruto);
+
       vendas.push({
         deal_id: dealId,
+        titulo: texto(linha.title),
         vendedor_id: vendedorId,
         vendedor_nome: texto(bruto.vendedor_nome),
         vendido_em: vendidoEm,
         valor_na_venda: valor,
+        premio_mensal: premio?.premio_mensal ?? null,
+        operadora: premio?.operadora ?? null,
+        vigencia_em: premio?.vigencia_em ?? null,
+        pendente_premio: premio === null,
       });
       valorTotal += valor;
+      // "Já ganho no mês" DE VERDADE soma o prêmio do plano vendido. Venda sem prêmio não
+      // entra na soma — vira pendência contada, nunca número inventado com a mensalidade
+      // antiga do lead (niva-os-visao.md §1).
+      if (premio) valorTotalPremio += premio.premio_mensal;
+      else pendentesDePremio += 1;
     }
 
     // Mais recente primeiro (a lista é curta: a meta da Niva é 7 vendas/mês).
@@ -245,6 +273,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         vendas,
         contagem: vendas.length,
         valorTotal,
+        valorTotalPremio,
+        pendentesDePremio,
         ignorados,
       },
       { status: 200 },

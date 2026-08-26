@@ -49,14 +49,24 @@ export interface CarimboDaVenda {
   vendedor_nome: string | null;
   /** ISO de quando a venda foi dada como ganha. */
   vendido_em: string;
-  /** `deals.value` no momento do ganho (o card pode mudar de valor depois). */
+  /** `deals.value` no momento do ganho — a mensalidade do plano ANTIGO do lead. */
   valor_na_venda: number;
+  /**
+   * Prêmio do plano VENDIDO (`custom_fields.venda.premio_mensal`) — a receita de
+   * verdade. `null` enquanto ninguém informar via `PATCH /api/deals/[dealId]/venda`;
+   * nesse caso a venda vira pendência visível, nunca número inventado.
+   */
+  premio_mensal: number | null;
+  operadora: string | null;
+  vigencia_em: string | null;
 }
 
 /** Uma venda do funil: o carimbo + o card que o carrega (que pode estar em outro funil). */
 export interface VendaCarimbada {
   /** Id do deal que carrega o carimbo — hoje possivelmente já na Implantação. */
   dealId: string;
+  /** Título do card — nomeia a pendência de prêmio no topo do funil. */
+  titulo: string | null;
   carimbo: CarimboDaVenda;
 }
 
@@ -66,8 +76,12 @@ export interface VendasDoFunil {
   vendas: VendaCarimbada[];
   /** Quantas vendas — é o número da barra de meta "Fechamentos / mês". */
   contagem: number;
-  /** Soma de `valor_na_venda` — é o "Já ganho no mês" do header do funil. */
+  /** Soma de `valor_na_venda` (mensalidade ANTIGA). Não usar como receita. */
   valorTotal: number;
+  /** Soma dos PRÊMIOS informados — o "Já ganho no mês" de verdade. */
+  valorTotalPremio: number;
+  /** Vendas do período ainda sem prêmio — a pendência do topo do funil. */
+  pendentesDePremio: VendaCarimbada[];
 }
 
 /** Período de leitura (ISO). Normalmente o mês corrente (ver getCurrentMonthRange). */
@@ -79,10 +93,15 @@ export interface PeriodoDaVenda {
 /** Item da lista enxuta devolvida por `GET /api/boards/[boardId]/vendas`. */
 interface ItemDaRota {
   deal_id?: unknown;
+  titulo?: unknown;
   vendedor_id?: unknown;
   vendedor_nome?: unknown;
   vendido_em?: unknown;
   valor_na_venda?: unknown;
+  premio_mensal?: unknown;
+  operadora?: unknown;
+  vigencia_em?: unknown;
+  pendente_premio?: unknown;
 }
 
 /** Corpo da rota. Vem de `fetch`, então nada aqui é confiável antes de checar. */
@@ -161,6 +180,8 @@ export const useVendasDoFunil = (
 
       const vendas: VendaCarimbada[] = [];
       let valorTotal = 0;
+      let valorTotalPremio = 0;
+      const pendentesDePremio: VendaCarimbada[] = [];
 
       for (const item of itens) {
         const dealId = texto(item.deal_id);
@@ -172,23 +193,35 @@ export const useVendasDoFunil = (
         const valorBruto = Number(item.valor_na_venda ?? NaN);
         const valor = Number.isFinite(valorBruto) ? valorBruto : 0;
 
-        vendas.push({
+        // Prêmio do plano vendido: só é número quando alguém informou. Prêmio inválido
+        // vindo da rota (não deveria acontecer) cai em pendência, nunca em soma errada.
+        const premioBruto = Number(item.premio_mensal ?? NaN);
+        const premio = Number.isFinite(premioBruto) && premioBruto > 0 ? premioBruto : null;
+
+        const venda: VendaCarimbada = {
           dealId,
+          titulo: texto(item.titulo),
           carimbo: {
             vendedor_id: texto(item.vendedor_id),
             vendedor_nome: texto(item.vendedor_nome),
             vendido_em: vendidoEm,
             valor_na_venda: valor,
+            premio_mensal: premio,
+            operadora: texto(item.operadora),
+            vigencia_em: texto(item.vigencia_em),
           },
-        });
+        };
+        vendas.push(venda);
         valorTotal += valor;
+        if (premio !== null) valorTotalPremio += premio;
+        else pendentesDePremio.push(venda);
       }
 
       // Contagem e soma saem da lista VALIDADA, não dos agregados que a rota mandou: se
       // um item cair na peneira acima, o número do topo tem que continuar batendo com a
       // lista que a tela usa. Número que não fecha com o que está na tela é o tipo de
       // coisa que faz a dona perder a confiança no CRM inteiro.
-      return { vendas, contagem: vendas.length, valorTotal };
+      return { vendas, contagem: vendas.length, valorTotal, valorTotalPremio, pendentesDePremio };
     },
     // Mesmo fôlego dos deals: o número muda quando alguém dá um card como ganho.
     staleTime: 2 * 60 * 1000,

@@ -21,7 +21,6 @@ import React, { useEffect, useId, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
-  ClipboardList,
   ExternalLink,
   Film,
   Handshake,
@@ -79,13 +78,6 @@ interface OrigemDoLeadPanelProps {
    */
   onSalvarOrigemComercial: (valor: OrigemComercial) => Promise<unknown> | void;
 }
-
-/**
- * Chaves de ATRIBUIÇÃO do formulário. Ficam de fora da lista de respostas
- * porque já aparecem no bloco "De onde veio" — repetir id de anúncio embaixo
- * das respostas do lead só confunde quem está lendo antes de ligar.
- */
-const CHAVES_ATRIBUICAO = new Set(['anuncio', 'conjunto', 'campanha', 'channel_id', 'form_id']);
 
 const ROTULO_ORIGEM: Record<string, string> = {
   meta_lead_ads: 'Meta Lead Ads (anúncio)',
@@ -213,16 +205,6 @@ export function OrigemDoLeadPanel({
   })();
   const recebidoEm = formatarDataHora(leadForm?.received_at);
   const conjunto = texto(leadForm?.fields?.conjunto) ?? texto(leadForm?.raw?.conjunto);
-
-  // Respostas do formulário, já sem as chaves de atribuição (bloco de cima).
-  const respostas = useMemo<Array<[string, string]>>(() => {
-    const campos = leadForm?.fields;
-    if (!campos || typeof campos !== 'object') return [];
-    return Object.entries(campos)
-      .filter(([chave]) => !CHAVES_ATRIBUICAO.has(chave))
-      .map(([chave, valor]) => [chave, texto(valor)] as [string, string | null])
-      .filter((par): par is [string, string] => par[1] !== null);
-  }, [leadForm]);
 
   const {
     data: criativo,
@@ -409,24 +391,12 @@ export function OrigemDoLeadPanel({
         </div>
       )}
 
-      {/* (c) RESPOSTAS DO FORMULÁRIO */}
-      {respostas.length > 0 && (
-        <div className={CARTAO_CLASSES}>
-          <div className="flex items-center gap-2 mb-3">
-            <ClipboardList className="w-4 h-4 text-slate-400" aria-hidden="true" />
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Respostas do formulário
-            </h4>
-          </div>
-          <dl className="space-y-1.5">
-            {respostas.map(([chave, valor]) => (
-              <Linha key={chave} rotulo={chave} valor={valor} />
-            ))}
-          </dl>
-        </div>
-      )}
+      {/* As RESPOSTAS do formulário NÃO aparecem aqui de propósito (pedido da Thalita,
+          26/08): elas já estão na aba IA Insights (QualificacaoSDRPanel) — repetir o
+          mesmo bloco em duas abas só confundia. Esta aba é ATRIBUIÇÃO: de onde o lead
+          veio, não o que ele respondeu. */}
 
-      {/* (d) ORIGEM COMERCIAL — tráfego pago x carteira própria.
+      {/* (c) ORIGEM COMERCIAL — tráfego pago x carteira própria.
           POR QUE existe: cliente de carteira própria não entra na conta do tráfego
           pago (senão o custo por lead do anúncio sai mentiroso) e a comissão é
           diferente — 140% para quem TRAZ o cliente, 100% para venda de lead da casa. */}
@@ -438,8 +408,9 @@ export function OrigemDoLeadPanel({
           </h4>
         </div>
         <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">
-          Lead da casa (tráfego pago) ou cliente que alguém do time trouxe? A marcação separa o que
-          entra na conta do anúncio do que é carteira própria.
+          Todo lead que cai no CRM nasce como <strong>tráfego pago</strong> — é o caminho normal.
+          Só troque para <strong>carteira própria</strong> quando alguém do time trouxe o cliente
+          (esses entram à mão): a marcação separa o que conta no anúncio do que é carteira.
         </p>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -451,21 +422,25 @@ export function OrigemDoLeadPanel({
           </label>
           <select
             id={idSelectTipo}
-            value={atual?.tipo ?? ''}
+            /* SEM marcação gravada, o card É tráfego pago (pedido da Thalita, 26/08:
+               "todo lead que cai no CRM vem do tráfego") — o select já nasce em
+               Tráfego e ninguém precisa clicar para confirmar o caso normal. A escolha
+               só é GRAVADA quando alguém troca para Carteira própria (ou de volta):
+               card sem marcação continua sem marcação, e o selo "Carteira" do kanban
+               segue aparecendo só no caso raro. */
+            value={atual?.tipo ?? 'trafego'}
             disabled={salvando}
             onChange={(e) => {
               const escolhido = e.target.value;
               if (escolhido !== 'trafego' && escolhido !== 'carteira_propria') return;
               if (escolhido === atual?.tipo) return;
+              // Card sem marcação já se apresenta como tráfego: "trocar" para tráfego
+              // não grava nada (evita encher o banco de marcação que é só o padrão).
+              if (!atual && escolhido === 'trafego') return;
               void salvar(escolhido, atual?.quem_trouxe ?? null);
             }}
             className={SELECT_CLASSES}
           >
-            {/* Desabilitado de propósito: não existe "desmarcar" — pra corrigir,
-                escolhe-se a outra opção. */}
-            <option value="" disabled>
-              Não definido
-            </option>
             <option value="trafego">Tráfego pago</option>
             <option value="carteira_propria">Carteira própria</option>
           </select>

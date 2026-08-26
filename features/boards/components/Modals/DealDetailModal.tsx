@@ -75,6 +75,7 @@ import {
   OrigemDoLeadPanel,
   type OrigemComercial,
 } from '@/features/deals/components/OrigemDoLeadPanel';
+import { PremioFechadoPanel } from '@/features/deals/components/PremioFechadoPanel';
 import { useMarkMeetingHeld } from '@/lib/query/hooks/useMarkMeetingHeld';
 import { useCancelMeeting } from '@/lib/query/hooks/useCancelMeeting';
 import { CONSULTOR_BOARD_ID } from '@/lib/config/boards';
@@ -1293,6 +1294,10 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
 
                 {activeTab === 'info' && (
                   <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+                    {/* VENDA FECHADA: só em card carimbado (chegou à Implantação pela
+                        automação de ganho). Vem PRIMEIRO porque carrega a pendência do
+                        prêmio fechado — o número que a operação deve preencher. */}
+                    <PremioFechadoPanel dealId={deal.id} customFields={deal.customFields} />
                     {sdrPanelHasData(deal.customFields) && (
                       <div className="bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl p-5 shadow-sm">
                         <QualificacaoSDRPanel customFields={deal.customFields} />

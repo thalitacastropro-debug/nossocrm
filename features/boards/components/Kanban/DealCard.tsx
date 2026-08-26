@@ -5,6 +5,7 @@ import { Building2, CalendarCheck, CalendarX, Clock, Hourglass, MessageCircle, P
 import { ActivityStatusIcon } from './ActivityStatusIcon';
 import { priorityAriaLabelPtBr } from '@/lib/utils/priority';
 import { formatPhoneBR } from '@/lib/phone';
+import { precisaInformarPremio } from '@/lib/deals/premioFechado';
 
 interface DealCardProps {
   deal: DealView;
@@ -190,6 +191,15 @@ const ehCarteiraPropria = (deal: DealView): boolean => {
   return origem?.tipo === 'carteira_propria';
 };
 
+/**
+ * Venda carimbada SEM o prêmio do plano vendido (`custom_fields.venda.premio_mensal`).
+ * Enquanto o prêmio não for informado, a venda não entra no "Já ganho no mês" nem em
+ * relatório de comissão — o selo âmbar é a pendência combinada em niva-os-visao.md §1
+ * (avisar sem travar a operação). Preenche-se abrindo o card, aba IA Insights.
+ */
+const faltaPremioDaVenda = (deal: DealView): boolean =>
+  precisaInformarPremio(deal.customFields?.venda);
+
 const DealCardComponent: React.FC<DealCardProps> = ({
   deal,
   isRotting,
@@ -230,6 +240,7 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   const telefoneCard = telefoneParaExibir(deal, waPhone);
   const tier = tierBadge(deal);
   const carteiraPropria = ehCarteiraPropria(deal);
+  const pendentePremio = faltaPremioDaVenda(deal);
 
   const handleMarkNoShow = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -451,6 +462,17 @@ const DealCardComponent: React.FC<DealCardProps> = ({
             title="Reunião agendada"
           >
             Agendado
+          </span>
+        )}
+        {/* Selo "Falta prêmio": venda carimbada sem o prêmio do plano vendido. A venda não
+            entra no "Já ganho no mês" enquanto isto estiver aqui — abre o card e preenche
+            (aba IA Insights). Pendência, não trava: o card se move normalmente. */}
+        {pendentePremio && (
+          <span
+            className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 ring-1 ring-black/5 dark:ring-white/10"
+            title="Venda fechada sem o prêmio do plano vendido — abra o card e informe (aba IA Insights). Sem o prêmio, a venda não entra no 'Já ganho no mês' nem em relatório de comissão."
+          >
+            Falta prêmio
           </span>
         )}
         {/* Selo "Carteira": cliente trazido por alguém do time, não veio do tráfego pago.
