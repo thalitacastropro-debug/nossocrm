@@ -16,17 +16,17 @@ alter table public.boards
 comment on column public.boards.responsavel_user_id is
   'Quem assume o card ao ENTRAR neste funil. Null = mantem o dono que o card ja tinha.';
 
--- Backfill do time atual da Niva (26/08/2026). Por NOME de propósito: os UUIDs de perfil nao existem
--- num banco recem-criado, e `where exists` faz a migracao virar no-op em vez de estourar.
+-- Backfill do time atual da Niva (26/08/2026). Por E-MAIL de propósito: UUID de perfil nao existe
+-- num banco recem-criado, e o join com profiles faz a migracao virar no-op em vez de estourar.
+--
+-- REGRA DA THALITA (26/08): responsavel de funil e papel de DONO DA OPERACAO — nenhum colaborador
+-- assume funil. Por isso TODOS os funis ficam com o Denilson, e nao um responsavel por funil.
 update public.boards b
    set responsavel_user_id = p.id
   from public.profiles p
  where b.responsavel_user_id is null
    and b.organization_id = p.organization_id
-   and (
-        (b.name in ('Comercial — Consultor', 'Nutrição — Reativação') and p.email = 'pedrotiozzo22@hotmail.com')
-     or (b.name in ('SDR — IA Qualificação', 'Implantação — ADM', 'Clientes Ativos') and p.email = 'denilsonnivaconsultoria@gmail.com')
-   );
+   and p.email = 'denilsonnivaconsultoria@gmail.com';
 
 -- ROLLBACK
 -- alter table public.boards drop column if exists responsavel_user_id;
