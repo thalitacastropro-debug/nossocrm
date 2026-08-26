@@ -17,6 +17,8 @@ exports[`Cache Integrity - Snapshot > deve gerar um snapshot das query keys usad
     "DEALS_VIEW_KEY",
     "queryKeys.deals.detail(dealId",
     "DEALS_VIEW_KEY",
+    "queryKeys.deals.detail(dealId",
+    "DEALS_VIEW_KEY",
     "queryKeys.deals.detail(deal.id",
   ],
   "useRealtimeSync.ts": [

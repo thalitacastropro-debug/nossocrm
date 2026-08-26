@@ -14,6 +14,7 @@ import { Board, Activity, DealView } from '@/types';
 import { useUpdateBoard } from '@/lib/query/hooks/useBoardsQuery';
 import { useDealsByBoard } from '@/lib/query/hooks/useDealsQuery';
 import { useActivities } from '@/lib/query/hooks';
+import { useVendasDoFunil, type VendasDoFunil } from '@/lib/query/hooks/useVendasDoFunilQuery';
 import { getCurrentMonthRange, countScheduledMeetings } from '@/lib/boards/goalMetrics';
 import { matchesOwnerFilter } from '@/features/boards/hooks/useBoardsController';
 import { useAuth } from '@/context/AuthContext';
@@ -23,6 +24,9 @@ import { useUIState } from '@/store/uiState';
 const BRL_CURRENCY_FORMATTER = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 // Ref estável p/ fallback vazio: evita um novo [] por render (que derrotaria o memo do progresso).
 const EMPTY_ACTIVITIES: Activity[] = [];
+// Mesmo motivo do EMPTY_ACTIVITIES: enquanto as vendas carimbadas não chegam, o memo
+// precisa de um objeto com identidade estável.
+const SEM_VENDAS: VendasDoFunil = { vendas: [], contagem: 0, valorTotal: 0 };
 
 interface BoardStrategyHeaderProps {
   board: Board;
@@ -69,6 +73,19 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
   );
   // Fallback com ref ESTÁVEL (não `= []` na destruturação) p/ preservar o memo nos outros boards.
   const monthActivities = monthActivitiesData ?? EMPTY_ACTIVITIES;
+  /**
+   * Vendas CARIMBADAS deste funil no mês — a nova fonte dos números de fechamento do topo.
+   *
+   * Desde o conserto de 26/08/2026, ganhar um card o MOVE para o próximo funil (a
+   * Implantação) e o reabre lá (`is_won = false`): quem contasse `is_won` no Comercial
+   * marcaria zero para sempre. O carimbo (`custom_fields.venda`) viaja com o card e diz
+   * em que funil a venda foi fechada, por quem e por quanto. Ver useVendasDoFunilQuery.
+   */
+  const { data: vendasDoMesData } = useVendasDoFunil(board.id, {
+    inicio: monthRange.start,
+    fim: monthRange.end,
+  });
+  const vendasDoMes = vendasDoMesData ?? SEM_VENDAS;
   const { setIsGlobalAIOpen } = useUIState();
   const [isEditing, setIsEditing] = useState(false);
   const [editedBoard, setEditedBoard] = useState(board);
@@ -115,14 +132,46 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
       };
     }
 
-    // 'count': metas de fechamento (ex. "Fechamentos / mês", alvo 7). O progresso
-    // deve refletir apenas os deals GANHOS (is_won), não o total de cards do board.
-    // Antes esse tipo caía no default e contava TODOS os cards, inflando o número
-    // (55/83) e travando a barra em 100%.
+    // 'count': metas de fechamento (ex. "Fechamentos / mês", alvo 7).
+    //
+    // FONTE NOVA = carimbo da venda (`custom_fields.venda`), NÃO `is_won`. Desde
+    // 26/08/2026 o card ganho sai deste funil para a Implantação e volta a
+    // `is_won = false` lá — contar `is_won` aqui zeraria a barra para sempre. O
+    // número é do funil inteiro (não segue o filtro de consultor da tela), igual ao
+    // que a barra sempre fez.
+    //
+    // PONTE (morre sozinha quando não sobrar ganho sem carimbo): ganho ANTERIOR ao
+    // carimbo ainda vive como `is_won` parado neste funil. Ele SOMA ao carimbo, e só se
+    // fechou DENTRO DO MÊS — o mesmo recorte do "Já ganho no mês" logo abaixo, para os
+    // dois números do topo não estarem contando coisas diferentes.
+    //
+    // NÃO usar o `wonCount` acumulado como fallback de "mês sem carimbo": no dia 1º a
+    // contagem carimbada é 0 e a barra passaria a mostrar o histórico inteiro do funil
+    // (os ganhos velhos parados aqui viram, por exemplo, 12/7 = barra cheia num mês em
+    // que ninguém vendeu nada) e depois CAIRIA para 1 na primeira venda carimbada do mês.
+    // O KPI é "Fechamentos / MÊS": o número é sempre do mês, inclusive quando é zero.
     if (type === 'count') {
+      const inicioMes = Date.parse(monthRange.start);
+      const fimMes = Date.parse(monthRange.end);
+      const jaContadosPeloCarimbo = new Set(vendasDoMes.vendas.map(v => v.dealId));
+
+      let ganhosSemCarimbo = 0;
+      for (const d of deals) {
+        if (d.boardId !== board.id) continue;
+        if (jaContadosPeloCarimbo.has(d.id)) continue;
+        // Sem data de fechamento não dá para dizer que caiu neste mês — não conta (mesma
+        // regra do resumo de dinheiro: melhor faltar do que inflar a meta).
+        if (!d.isWon || !d.closedAt) continue;
+        const fechadoEm = Date.parse(d.closedAt);
+        if (Number.isNaN(fechadoEm) || fechadoEm < inicioMes || fechadoEm > fimMes) continue;
+        ganhosSemCarimbo += 1;
+      }
+
+      const fechamentosNoMes = vendasDoMes.contagem + ganhosSemCarimbo;
       return {
-        value: wonCount,
-        display: wonCount.toString(),
+        value: fechamentosNoMes,
+        display: fechamentosNoMes.toString(),
+        label: 'este mês',
       };
     }
 
@@ -147,7 +196,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
       value: dealCount,
       display: dealCount.toString(),
     };
-  }, [deals, board.id, board.goal?.type, monthActivities]);
+  }, [deals, board.id, board.goal?.type, monthActivities, vendasDoMes, monthRange]);
 
   // Performance: parse target once per goal change (instead of per render).
   // Hook must live before any early returns (rules-of-hooks).
@@ -189,19 +238,37 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
    * DE ONDE VEM CADA NÚMERO:
    * - "em jogo" sai de `filteredDeals` (a mesma lista das colunas) para bater com o board na
    *   tela e respeitar o filtro por consultor de graça.
-   * - "já ganho" NÃO pode sair de `filteredDeals`: o filtro de status da tela nasce em 'open',
-   *   que esconde justamente os cards ganhos — o mês apareceria sempre zerado. Então usamos a
-   *   query do board e aplicamos à mão o MESMO filtro de dono da tela.
+   * - "já ganho" NÃO pode sair de `filteredDeals` nem de `is_won`: o filtro de status da tela
+   *   nasce em 'open' (esconde os ganhos) e, desde 26/08/2026, o card ganho SAI deste funil
+   *   para a Implantação e é reaberto lá. Sai do CARIMBO DA VENDA (`vendasDoMes`), que fica
+   *   com o card e guarda quanto e quem vendeu; o filtro por consultor da tela é aplicado à
+   *   mão sobre `vendedor_id` do carimbo — não sobre o dono ATUAL do card, que na Implantação
+   *   já é outra pessoa ("quando o card for pra implantação já tem que identificar quem fez a
+   *   venda", pedido da dona em 26/08).
    */
   const resumoFinanceiro = React.useMemo<{ mensalidadesEmJogo: number; ganhoNoMes: number } | null>(() => {
     const inicioMes = Date.parse(monthRange.start);
     const fimMes = Date.parse(monthRange.end);
 
-    let funilTemValor = false;
+    // 1) Vendas carimbadas do mês: a fonte de verdade. Já vêm recortadas por funil da
+    // venda e por período pelo hook; aqui só falta o filtro por consultor da tela.
     let ganhoNoMes = 0;
+    const jaContadosPeloCarimbo = new Set<string>();
+    for (const venda of vendasDoMes.vendas) {
+      jaContadosPeloCarimbo.add(venda.dealId);
+      if (!matchesOwnerFilter(venda.carimbo.vendedor_id ?? undefined, ownerFilter, profile?.id)) continue;
+      ganhoNoMes += venda.carimbo.valor_na_venda;
+    }
+
+    // 2) MESMA PONTE TEMPORÁRIA da barra de meta: ganho ANTERIOR ao carimbo ainda vive
+    // como `is_won` parado neste funil e não tem de onde ser reconstruído. Some também,
+    // pulando quem já entrou pelo carimbo — senão a mesma venda contaria duas vezes no
+    // mês da virada. Quando não sobrar ganho sem carimbo, este trecho morre.
+    let funilTemValor = false;
     for (const d of deals) {
       if (d.boardId !== board.id) continue;
       if ((d.value || 0) > 0) funilTemValor = true;
+      if (jaContadosPeloCarimbo.has(d.id)) continue;
       // Sem data de fechamento não dá para dizer que caiu neste mês — não conta (melhor
       // faltar do que inflar o "já ganho" com fechamento antigo sem carimbo).
       if (!d.isWon || !d.closedAt) continue;
@@ -212,8 +279,9 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
     }
 
     // Funil sem nenhum card com valor (SDR, nutrição...) não ganha o bloco: "R$ 0,00" só
-    // ocuparia espaço no topo sem dizer nada.
-    if (!funilTemValor) return null;
+    // ocuparia espaço no topo sem dizer nada. Com venda carimbada no mês o bloco aparece
+    // mesmo que os cards ganhos já tenham saído daqui — é justamente o que se quer ver.
+    if (!funilTemValor && vendasDoMes.contagem === 0) return null;
 
     let mensalidadesEmJogo = 0;
     for (const d of filteredDeals) {
@@ -225,7 +293,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
     }
 
     return { mensalidadesEmJogo, ganhoNoMes };
-  }, [deals, filteredDeals, board.id, monthRange, ownerFilter, profile?.id]);
+  }, [deals, filteredDeals, board.id, monthRange, ownerFilter, profile?.id, vendasDoMes]);
 
   const hasStrategy = board.goal || board.agentPersona || board.entryTrigger;
 
@@ -531,7 +599,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
                     </div>
                     <div
                       className="min-w-0 cursor-help"
-                      title="Soma das mensalidades dos cards marcados como GANHO com data de fechamento dentro do mês corrente. Segue o filtro por consultor, mas ignora a busca e o filtro de situação: é o total do mês, não o que está desenhado nas colunas. Card ganho sem data de fechamento não entra."
+                      title="Soma das vendas fechadas NESTE funil dentro do mês corrente, pelo carimbo da venda: a venda continua contando aqui mesmo depois de o card ir para a Implantação. Segue o filtro por consultor comparando QUEM VENDEU (não o dono atual do card), mas ignora a busca e o filtro de situação: é o total do mês, não o que está desenhado nas colunas. Ganhos antigos, anteriores ao carimbo, ainda entram pela data de fechamento do card."
                     >
                       <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">
                         Já ganho no mês

@@ -85,6 +85,12 @@ export interface DbBoard {
   linked_lifecycle_stage: string | null;
   /** ID do próximo board na jornada. */
   next_board_id: string | null;
+  /**
+   * Dono padrão do funil. Quem assume o card quando ele entra neste board vindo de outro
+   * (ex.: ganhou no Comercial → Implantação, que é do Denilson). Opcional para não quebrar
+   * bases antigas sem a coluna.
+   */
+  responsavel_user_id?: string | null;
   /** ID do estágio de Ganho (Win). */
   won_stage_id: string | null;
   /** ID do estágio de Perda (Lost). */
@@ -197,6 +203,7 @@ const transformBoard = (db: DbBoard, stages: DbBoardStage[]): Board => {
     template: (db.template as Board['template']) || undefined,
     linkedLifecycleStage: db.linked_lifecycle_stage || undefined,
     nextBoardId: db.next_board_id || undefined,
+    responsavelUserId: db.responsavel_user_id || undefined,
     wonStageId: db.won_stage_id || undefined,
     lostStageId: db.lost_stage_id || undefined,
     wonStayInStage: db.won_stay_in_stage || false,

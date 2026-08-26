@@ -338,7 +338,13 @@ export interface Board {
   description?: string;
   linkedStage?: ContactStage; // Quando mover para etapa final, atualiza o stage do contato
   linkedLifecycleStage?: string; // Qual lifecycle stage este board gerencia (ex: 'LEAD', 'MQL', 'CUSTOMER')
-  nextBoardId?: string; // Quando mover para etapa final (Ganho), cria um card neste board
+  nextBoardId?: string; // Quando mover para etapa final (Ganho), MOVE o card para este board
+  /**
+   * Dono padrão deste funil (`boards.responsavel_user_id`). Quando o card entra aqui vindo de
+   * outro funil, ele passa a ser desta pessoa — regra da Thalita (26/08): "cada funil vai ser um
+   * dono diferente; assim que é dado como ganho, o time de implantação é o novo responsável".
+   */
+  responsavelUserId?: string;
   wonStageId?: string; // Estágio de Ganho
   lostStageId?: string; // Estágio de Perda
   wonStayInStage?: boolean; // Se true, "Arquiva" na etapa atual (status Won) em vez de mover

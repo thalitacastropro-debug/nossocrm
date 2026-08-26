@@ -243,6 +243,19 @@ export const queryKeys = {
      * Org-level + user settings query keys.
      */
     orgSettings: createQueryKeys('orgSettings'),
+
+    /**
+     * Vendas CARIMBADAS de um funil (`deals.custom_fields.venda`), por período.
+     *
+     * Não entra na árvore de `deals` de propósito: a venda é contada pelo funil ONDE
+     * FOI FECHADA, enquanto o card já pode ter mudado de `board_id` (vai para a
+     * Implantação ao ganhar). O período faz parte da key porque a leitura é do mês.
+     */
+    vendasDoFunil: {
+        all: ['vendasDoFunil'] as const,
+        byBoard: (boardId: string, inicio: string, fim: string) =>
+            ['vendasDoFunil', boardId, inicio, fim] as const,
+    },
 };
 
 /**
