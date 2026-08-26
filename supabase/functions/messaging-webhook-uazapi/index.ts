@@ -837,11 +837,20 @@ Deno.serve(async (req) => {
 
   // Normalize event name. Aceita `event` (estilo Evolution) e `EventType` (UAZAPI nativo);
   // NUNCA deixa undefined derrubar a função (o 500 de 2026-07-04 morria aqui).
+  // No ReadReceipt (entregue/lido) a UAZAPI usa `event` como OBJETO — e `EventType` como nome.
+  // Sem esta guarda, String({...}) virava "[object Object]", o evento caia em "Unhandled" e a
+  // confirmacao de entrega/leitura era descartada: a bolha ficava com o reloginho para sempre e o
+  // consultor concluia que a mensagem nao tinha ido (reclamacao do Pedro, 26/08/2026).
+  const eventoBruto = (payload as Record<string, unknown>).event;
   const rawEvent =
-    (payload as Record<string, unknown>).event ??
+    (typeof eventoBruto === "string" ? eventoBruto : undefined) ??
     (payload as Record<string, unknown>).EventType ??
     "";
   let eventNorm = String(rawEvent).toLowerCase().replace(/_/g, ".");
+
+  // Marca o receipt antes de qualquer adaptacao: ele compartilha o EventType "messages_update"
+  // com o formato Evolution, mas tem outro shape (event.Type + event.MessageIDs).
+  const ehReadReceipt = (payload as Record<string, unknown>).type === "ReadReceipt";
 
   // Payload nativo da UAZAPI ("messages" + message{}) → adapta pro formato interno.
   if ((eventNorm === "messages" || eventNorm === "messages.upsert") && !(payload as Record<string, unknown>).data) {
@@ -863,7 +872,7 @@ Deno.serve(async (req) => {
     .from("messaging_webhook_events")
     .insert({
       channel_id: channelId,
-      event_type: determineEventType(eventNorm),
+      event_type: ehReadReceipt ? "read.receipt" : determineEventType(eventNorm),
       external_event_id: externalEventId,
       payload: payload as unknown as Record<string, unknown>,
       processed: false,
@@ -881,7 +890,9 @@ Deno.serve(async (req) => {
   }
 
   try {
-    if (eventNorm === "messages.upsert") {
+    if (ehReadReceipt) {
+      await handleReadReceipt(supabase, channel, payload as unknown as Record<string, unknown>);
+    } else if (eventNorm === "messages.upsert") {
       await handleMessagesUpsert(supabase, channel, payload as UazAPIUpsertPayload);
     } else if (eventNorm === "messages.update") {
       await handleMessagesUpdate(supabase, channel, payload as UazAPIUpdatePayload);
@@ -1271,6 +1282,99 @@ function mediaPlaceholder(contentType: string): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * ReadReceipt da UAZAPI — o "entregue" e o "lido" do WhatsApp.
+ *
+ * POR QUE ISTO EXISTE (26/08/2026): o Pedro avisou que "as mensagens nao estao indo pelo CRM"
+ * porque a bolha ficava com o RELOGINHO para sempre. A mensagem ia — a da Elisangela foi
+ * entregue as 11:34:01 e LIDA as 11:34:17 —, mas o CRM jogava a confirmacao fora e nunca saia
+ * do estado inicial. Sem tique duplo, o consultor nao tem como saber se falou com o lead.
+ *
+ * O payload real desta instancia e:
+ *   { type: "ReadReceipt", EventType: "messages_update",
+ *     event: { Type: "Delivered" | "Read", MessageIDs: [...], IsFromMe: false, ... } }
+ *
+ * Repare que `event` aqui e um OBJETO, nao o nome do evento. O normalizador do dispatcher fazia
+ * `String(payload.event)` e obtinha "[object Object]" — o receipt caia no galho "Unhandled event"
+ * e sumia. `handleMessagesUpdate` tambem nao servia: ele espera o formato Evolution
+ * (`data[].key.id` + status numerico), que a UAZAPI nao manda aqui.
+ *
+ * NUNCA REBAIXA O STATUS: os receipts chegam fora de ordem e o "Read" costuma vir carregando um
+ * lote inteiro de ids antigos (a lead abriu a conversa e leu tudo de uma vez). Sem o guard de
+ * precedencia, um "Delivered" atrasado apagaria o "lido" que ja estava na tela.
+ */
+const PRECEDENCIA_DE_STATUS: Record<string, number> = {
+  pending: 0,
+  queued: 1,
+  sent: 2,
+  delivered: 3,
+  read: 4,
+};
+
+async function handleReadReceipt(
+  supabase: ReturnType<typeof createClient>,
+  channel: { id: string },
+  payload: Record<string, unknown>
+) {
+  const evento = payload.event as Record<string, unknown> | undefined;
+  if (!evento) return;
+
+  // IsFromMe = true significa que NOS lemos a mensagem do lead — nao diz nada sobre a entrega
+  // do que a gente mandou, que e o que interessa aqui.
+  if (evento.IsFromMe === true) return;
+
+  const tipo = String(evento.Type ?? payload.state ?? "").toLowerCase();
+  const novoStatus = tipo === "read" ? "read" : tipo === "delivered" ? "delivered" : null;
+  if (!novoStatus) {
+    console.log(`[UazAPI] ReadReceipt de tipo desconhecido: ${tipo}`);
+    return;
+  }
+
+  const ids = Array.isArray(evento.MessageIDs) ? (evento.MessageIDs as unknown[]) : [];
+  if (ids.length === 0) return;
+
+  const externalIds = ids
+    .map((id) => normalizeExternalMessageId(String(id)))
+    .filter((id): id is string => !!id);
+  if (externalIds.length === 0) return;
+
+  // Uma consulta so para o lote inteiro: o "Read" costuma trazer dezenas de ids.
+  // O join com a conversa mantem o isolamento por canal (defesa alem da RLS).
+  const { data: linhas, error: selErr } = await supabase
+    .from("messaging_messages")
+    .select("id, status, external_id, messaging_conversations!inner(channel_id)")
+    .in("external_id", externalIds)
+    .eq("messaging_conversations.channel_id", channel.id);
+
+  if (selErr) {
+    console.error("[UazAPI] ReadReceipt: falha ao buscar as mensagens:", selErr);
+    return;
+  }
+  if (!linhas || linhas.length === 0) return;
+
+  const agora = new Date().toISOString();
+  const alvo = PRECEDENCIA_DE_STATUS[novoStatus] ?? 0;
+
+  for (const linha of linhas as { id: string; status: string | null }[]) {
+    const atual = PRECEDENCIA_DE_STATUS[linha.status ?? "pending"] ?? 0;
+    if (atual >= alvo) continue; // ja esta igual ou adiante — receipt fora de ordem
+
+    const { error } = await supabase
+      .from("messaging_messages")
+      .update({
+        status: novoStatus,
+        ...(novoStatus === "delivered" ? { delivered_at: agora } : {}),
+        // Lido implica entregue: se o "Delivered" se perdeu, preenche os dois de uma vez.
+        ...(novoStatus === "read" ? { read_at: agora, delivered_at: agora } : {}),
+      })
+      .eq("id", linha.id);
+
+    if (error) console.error(`[UazAPI] ReadReceipt: falha ao atualizar ${linha.id}:`, error);
+  }
+
+  console.log(`[UazAPI] ReadReceipt: ${linhas.length} mensagem(ns) -> ${novoStatus}`);
 }
 
 async function handleMessagesUpdate(

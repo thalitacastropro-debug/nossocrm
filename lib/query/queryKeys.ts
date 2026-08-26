@@ -232,6 +232,14 @@ export const queryKeys = {
     products: createQueryKeys('products'),
 
     /**
+     * Cadastro de criativos de anúncio (Configurações → Anúncios).
+     *
+     * De qual vídeo o lead veio — a lista é curta e muda pouco (só a dona
+     * cadastra), então uma key simples de lista já basta.
+     */
+    adCreatives: createQueryKeys('adCreatives'),
+
+    /**
      * Org-level + user settings query keys.
      */
     orgSettings: createQueryKeys('orgSettings'),

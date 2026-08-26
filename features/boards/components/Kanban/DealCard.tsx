@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { DealView } from '@/types';
-import { Building2, CalendarCheck, CalendarX, Clock, Hourglass, MessageCircle, PhoneMissed, Trophy, XCircle } from 'lucide-react';
+import { Building2, CalendarCheck, CalendarX, Clock, Hourglass, MessageCircle, Phone, PhoneMissed, Trophy, XCircle } from 'lucide-react';
 import { ActivityStatusIcon } from './ActivityStatusIcon';
 import { priorityAriaLabelPtBr } from '@/lib/utils/priority';
+import { formatPhoneBR } from '@/lib/phone';
 
 interface DealCardProps {
   deal: DealView;
@@ -111,6 +112,27 @@ const telefoneWhatsApp = (deal: DealView): string | null => {
 };
 
 /**
+ * Telefone que APARECE escrito no card. Recebe o mesmo `waPhone` que decide o ícone
+ * verde do WhatsApp, para as duas coisas nunca divergirem de fonte.
+ *
+ * Devolve null quando o próprio título já é o telefone: em 46 dos 173 cards o
+ * backfill entrou sem nome e gravou o número cru como título — a linha nova só
+ * repetiria a informação logo abaixo dela. A comparação é por SUFIXO porque um
+ * lado costuma trazer o DDI 55 e o outro não (5511999990000 x 11999990000).
+ */
+const telefoneParaExibir = (deal: DealView, waPhone: string | null): string | null => {
+  if (!waPhone) return null;
+  const digitosTitulo = (deal.title || '').replace(/\D/g, '');
+  // O piso de 8 dígitos evita dois falsos positivos que escondiam a linha à toa:
+  // título sem dígito nenhum (endsWith('') é sempre true) e título com número
+  // solto no meio do nome (ex.: "Plano 2024").
+  const mesmoNumero =
+    digitosTitulo.length >= 8 &&
+    (digitosTitulo.endsWith(waPhone) || waPhone.endsWith(digitosTitulo));
+  return mesmoNumero ? null : formatPhoneBR(waPhone);
+};
+
+/**
  * Tempo que o lead está no CRM (desde createdAt), compacto e em pt-BR.
  * Ajuda a bater o olho e ver há quanto tempo o lead está parado conosco.
  */
@@ -157,6 +179,17 @@ const tierBadge = (
   return { ...style, provisorio: tier?.provisorio === true };
 };
 
+/**
+ * Cliente de carteira própria (custom_fields.origem_comercial, marcado na aba
+ * "Origem" do card). Só ESTE caso ganha selo: tráfego pago é o normal e um selo
+ * em 95% dos cards viraria ruído. A comissão NÃO aparece no card — decisão
+ * explícita da Thalita; o board não é lugar de número de comissão.
+ */
+const ehCarteiraPropria = (deal: DealView): boolean => {
+  const origem = deal.customFields?.origem_comercial as { tipo?: unknown } | undefined;
+  return origem?.tipo === 'carteira_propria';
+};
+
 const DealCardComponent: React.FC<DealCardProps> = ({
   deal,
   isRotting,
@@ -192,7 +225,11 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   const isClosed = isDealClosed(deal);
   const age = tempoNoCrm(deal.createdAt);
   const waPhone = telefoneWhatsApp(deal);
+  // Telefone na cara do card: hoje o consultor abre o card só pra ler o número
+  // antes de ligar (pedido do Pedro).
+  const telefoneCard = telefoneParaExibir(deal, waPhone);
   const tier = tierBadge(deal);
+  const carteiraPropria = ehCarteiraPropria(deal);
 
   const handleMarkNoShow = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -306,6 +343,10 @@ const DealCardComponent: React.FC<DealCardProps> = ({
     // a tag saiu, anunciamos o tier a partir do selo pra não perder pro leitor de tela.
     if (tier) parts.push(`Tier ${tier.label}${tier.provisorio ? ' provisório' : ''}`);
 
+    // O selo "Carteira" é texto visível no card — sem isto o leitor de tela perde
+    // justamente o que separa o cliente trazido pelo time do lead do anúncio.
+    if (carteiraPropria) parts.push('carteira própria');
+
     // Tags (visible text) - include all shown tags
     const shownTags = deal.tags.slice(0, isClosed ? 1 : 2);
     if (shownTags.length > 0) {
@@ -315,6 +356,9 @@ const DealCardComponent: React.FC<DealCardProps> = ({
     // Main content
     parts.push(deal.title);
     if (deal.companyName) parts.push(deal.companyName);
+    // O telefone só existe na linha nova (o título só o repete nos cards do backfill),
+    // então sem isto o leitor de tela pula justamente o dado que veio buscar aqui.
+    if (telefoneCard) parts.push(`telefone ${telefoneCard}`);
     parts.push(`$${deal.value.toLocaleString()}`);
 
     // Additional context
@@ -409,6 +453,16 @@ const DealCardComponent: React.FC<DealCardProps> = ({
             Agendado
           </span>
         )}
+        {/* Selo "Carteira": cliente trazido por alguém do time, não veio do tráfego pago.
+            Some do card quando a origem é tráfego (o normal) — ver ehCarteiraPropria. */}
+        {carteiraPropria && (
+          <span
+            className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 ring-1 ring-black/5 dark:ring-white/10"
+            title="Carteira própria — cliente trazido por alguém do time (não veio do tráfego pago)"
+          >
+            Carteira
+          </span>
+        )}
         {/* Won/Lost status badge */}
         {deal.isWon && (
           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-800/40 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-700">
@@ -436,9 +490,18 @@ const DealCardComponent: React.FC<DealCardProps> = ({
       >
         {deal.title}
       </h4>
-      <p className="text-xs text-slate-500 dark:text-slate-400 mb-3 flex items-center gap-1">
+      <p
+        className={`text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1 ${telefoneCard ? 'mb-0.5' : 'mb-3'}`}
+      >
         <Building2 size={10} aria-hidden="true" /> {deal.companyName}
       </p>
+      {/* Telefone do lead: mesma pegada visual da linha da empresa. A margem de baixo
+          migra pra cá quando a linha existe, pra não abrir um buraco antes do rodapé. */}
+      {telefoneCard && (
+        <p className="text-xs text-slate-500 dark:text-slate-400 mb-3 flex items-center gap-1">
+          <Phone size={10} aria-hidden="true" /> {telefoneCard}
+        </p>
+      )}
 
       <div className="flex justify-between items-center pt-2 border-t border-slate-100 dark:border-white/5">
         <div className="flex items-center gap-2 min-w-0">

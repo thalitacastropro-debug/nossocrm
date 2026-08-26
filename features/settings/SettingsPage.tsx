@@ -15,8 +15,9 @@ import { ProductsCatalogManager } from './components/ProductsCatalogManager';
 import { AICenterSettings } from './AICenterSettings';
 
 import { UsersPage } from './UsersPage';
+import { AdCreativesPage } from './AdCreativesPage';
 import { useAuth } from '@/context/AuthContext';
-import { Settings as SettingsIcon, Users, Database, Sparkles, Plug, Package, Building2 } from 'lucide-react';
+import { Settings as SettingsIcon, Users, Database, Sparkles, Plug, Package, Building2, Megaphone } from 'lucide-react';
 import { SelectField } from '@/components/ui/FormField';
 import { Button } from '@/components/ui/button';
 import {
@@ -248,6 +249,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ tab: initialTab }) => {
   const allTabs: { id: SettingsTab; name: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'general', name: 'Geral', icon: SettingsIcon },
     { id: 'products', name: 'Produtos/Serviços', icon: Package },
+    { id: 'ad-creatives', name: 'Anúncios', icon: Megaphone },
     { id: 'business-units', name: 'Unidades', icon: Building2 },
     { id: 'integrations', name: 'Integrações', icon: Plug },
     { id: 'ai', name: 'Central de I.A', icon: Sparkles },
@@ -267,6 +269,8 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ tab: initialTab }) => {
     switch (activeTab) {
       case 'products':
         return <ProductsSettings />;
+      case 'ad-creatives':
+        return <AdCreativesPage />;
       case 'business-units':
         return (
           <div className="pb-10 space-y-8">

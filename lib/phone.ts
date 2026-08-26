@@ -104,3 +104,48 @@ export function toWhatsAppPhone(input?: string | null, opts?: { defaultCountry?:
   if (!e164) return '';
   return e164.replace(/^\+/, '');
 }
+
+/**
+ * Telefone brasileiro em formato de LEITURA: "(11) 99999-0000" / "(11) 9999-0000".
+ *
+ * Nasceu do card do kanban (o Pedro precisava abrir o card só pra ver o número):
+ * o telefone chega ora em E.164 (+5511999990000), ora como dígito cru do webhook
+ * (5511999990000), ora já sem DDI (11999990000) — os três têm que virar a mesma
+ * linha na tela.
+ *
+ * Quando não dá pra formatar (número de outro país, dado sujo), devolve o input
+ * trimado em vez de ''. Devolver vazio apagaria da tela justamente a informação
+ * que a linha existe pra mostrar.
+ *
+ * @param input Telefone em E.164, em dígitos crus ou com máscara.
+ * @returns Telefone formatado, ou o próprio input trimado quando não é BR reconhecível.
+ */
+export function formatPhoneBR(input?: string | null): string {
+  const limpo = (input ?? '').trim();
+  if (!limpo) return '';
+
+  // E.164 de outro país sai como veio: sem isto um +1 555 123 4567 (11 dígitos,
+  // igual a um celular BR) seria formatado como "(15) 55123-4567".
+  if (limpo.startsWith('+') && !limpo.replace(/[^\d+]/g, '').startsWith('+55')) return limpo;
+
+  let digitos = limpo.replace(/\D/g, '');
+  // Só descarta o 55 da frente quando sobra um número BR plausível: com 11 dígitos
+  // ou menos, esse "55" é DDD (Campinas/Sorocaba) e não código de país.
+  if (digitos.length > 11 && digitos.startsWith('55')) digitos = digitos.slice(2);
+
+  if (digitos.length === 10 || digitos.length === 11) {
+    const ddd = digitos.slice(0, 2);
+    const assinante = digitos.slice(2);
+    // A guarda do '+' acima não protege o card: `telefoneWhatsApp` entrega o telefone
+    // só em DÍGITOS (o '+' já foi comido). Vale aqui a mesma regra que `brPhoneVariants`
+    // assume: assinante de 9 dígitos no Brasil SEMPRE começa com 9. Sem isto, um
+    // +1 555 123 4567 — que chega como 15551234567 — viraria "(15) 55123-4567" no card,
+    // um número inventado com cara de válido.
+    if (assinante.length === 9 && !assinante.startsWith('9')) return limpo;
+    // 9 dígitos = celular com o nono dígito (5+4); 8 = fixo ou celular antigo (4+4).
+    const corte = assinante.length === 9 ? 5 : 4;
+    return `(${ddd}) ${assinante.slice(0, corte)}-${assinante.slice(corte)}`;
+  }
+
+  return limpo;
+}

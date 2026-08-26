@@ -307,6 +307,22 @@ export function useSendMessage() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.messagingConversations.detail(input.conversationId),
       });
+
+      // REDE DE SEGURANÇA DO TIQUE (26/08/2026).
+      //
+      // A rota POST /api/messaging/messages responde na hora com a mensagem em 'pending' e só
+      // depois, em background, envia ao provedor e grava 'sent'/'failed'. Quem tira o reloginho da
+      // tela é o evento de realtime — e quando ele não chega (RLS na entrega, socket caído, aba
+      // dormindo), a bolha fica com o RELÓGIO para sempre, mesmo com a mensagem entregue e lida no
+      // WhatsApp. Foi exatamente o que o Pedro viu: concluiu que "as mensagens não estão indo".
+      //
+      // Este refetch atrasado reconcilia com o banco de qualquer jeito. 4s cobre o envio típico da
+      // UAZAPI (1-2s) com folga; se ainda estiver em 'queued', o realtime ou a próxima interação
+      // resolvem. É barato: uma consulta por mensagem enviada.
+      const chaveDasMensagens = queryKeys.messagingMessages.byConversation(input.conversationId);
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: chaveDasMensagens });
+      }, 4000);
     },
   });
 }

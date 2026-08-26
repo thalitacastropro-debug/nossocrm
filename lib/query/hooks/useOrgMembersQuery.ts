@@ -17,6 +17,12 @@ export interface OrgMember {
   name: string;
   /** Avatar do perfil, quando houver — usado para mostrar o dono no card do funil. */
   avatar?: string;
+  /**
+   * Papel da pessoa ('admin' | 'vendedor' | 'trafego'). Quem lista PESSOAS PARA
+   * RECEBER LEAD precisa filtrar: 'trafego' (a agência) nem abre /boards, então
+   * atribuir um card a essa pessoa some com o lead sem ninguém perceber.
+   */
+  role?: string;
 }
 
 export function useOrgMembersQuery() {
@@ -28,7 +34,7 @@ export function useOrgMembersQuery() {
     queryFn: async (): Promise<OrgMember[]> => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, name, first_name, nickname, avatar_url')
+        .select('id, name, first_name, nickname, avatar_url, role')
         .eq('organization_id', orgId!)
         .order('name');
 
@@ -38,6 +44,7 @@ export function useOrgMembersQuery() {
         // Ordem de preferência: como a pessoa se chama > nome completo.
         name: p.nickname || p.name || p.first_name || 'Sem nome',
         avatar: p.avatar_url || undefined,
+        role: p.role || undefined,
       }));
     },
     enabled: !!orgId,

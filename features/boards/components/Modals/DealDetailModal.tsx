@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useId, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   useContacts,
   useActivities,
@@ -14,6 +14,10 @@ import {
   useDeleteActivity,
   useMoveDealToBoard,
 } from '@/lib/query/hooks';
+// Caminho DIRETO, não pelo barrel acima: os testes do modal mockam
+// '@/lib/query/hooks' com factory (lista fixa de hooks), e todo hook novo pedido
+// pelo barrel derruba a suíte com "No export is defined on the mock".
+import { useOrgMembersQuery } from '@/lib/query/hooks/useOrgMembersQuery';
 import { useUIState } from '@/store/uiState';
 import { sortActivitiesTimeline } from '@/lib/utils/activitySort';
 import { useActiveProducts } from '@/lib/query/hooks/useProductsQuery';
@@ -22,7 +26,7 @@ import { useToast } from '@/context/ToastContext';
 import { ConfirmDialog as ConfirmModal } from '@/components/ui/confirm-dialog';
 import { LossReasonModal } from '@/components/ui/LossReasonModal';
 import { useMoveDealSimple } from '@/lib/query/hooks';
-import { DEALS_VIEW_KEY } from '@/lib/query';
+import { DEALS_VIEW_KEY, queryKeys } from '@/lib/query';
 import { FocusTrap, useFocusReturn } from '@/lib/a11y';
 import { Activity, Board, DealView } from '@/types';
 import { usePersistedState } from '@/hooks/usePersistedState';
@@ -57,6 +61,7 @@ import {
   CalendarCheck,
   CalendarX,
   ArrowRightLeft,
+  UserCircle,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { StageProgressBar } from '../StageProgressBar';
@@ -66,6 +71,11 @@ import { BriefingDrawer } from '@/features/deals/components/BriefingDrawer';
 import { AIExtractedFields } from '@/features/deals/components/AIExtractedFields';
 import { QualificacaoSDRPanel, sdrPanelHasData } from '@/features/deals/components/QualificacaoSDRPanel';
 import { VoiceOutcomeCapture } from '@/features/deals/components/VoiceOutcomeCapture';
+import { DealOwnerSelect, podeTrocarResponsavel } from '@/features/deals/components/DealOwnerSelect';
+import {
+  OrigemDoLeadPanel,
+  type OrigemComercial,
+} from '@/features/deals/components/OrigemDoLeadPanel';
 import { useMarkMeetingHeld } from '@/lib/query/hooks/useMarkMeetingHeld';
 import { useCancelMeeting } from '@/lib/query/hooks/useCancelMeeting';
 import { CONSULTOR_BOARD_ID } from '@/lib/config/boards';
@@ -138,6 +148,9 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const { profile } = useAuth();
   const { addToast } = useToast();
   const router = useRouter();
+  // Time da org: dá nome ao dono do card para quem NÃO pode trocar (leitura).
+  const { data: orgMembers = [], isLoading: carregandoTime } = useOrgMembersQuery();
+  const queryClient = useQueryClient();
 
   // Subscribe to the same cache the Kanban uses (DEALS_VIEW_KEY).
   // This ensures newly-created deals (written there by the optimistic insert in CRMContext.addDeal)
@@ -177,7 +190,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const [newNote, setNewNote] = useState('');
   // Abre em "IA Insights": é o resumo do lead, o que se quer ver primeiro ao abrir
   // o card (decisão da Thalita, 25/08/2026).
-  const [activeTab, setActiveTab] = useState<'timeline' | 'products' | 'info'>('info');
+  const [activeTab, setActiveTab] = useState<'timeline' | 'products' | 'info' | 'origem'>('info');
   const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [objection, setObjection] = useState('');
@@ -262,6 +275,30 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   }, [activities, deal]);
 
   if (!isOpen || !deal) return null;
+
+  // Responsável do card. Quem enxerga a carteira do time troca; os demais leem.
+  const podeTrocarDono = podeTrocarResponsavel(profile);
+  // "Fora do time" só DEPOIS que a lista do time chegou: com o cache frio (abrir
+  // o card pelo Inbox, por exemplo) o find não acha ninguém e o card acusaria,
+  // falsamente, que o dono saiu da organização.
+  const donoNome = !deal.ownerId
+    ? 'Sem dono'
+    : (orgMembers.find((m) => m.id === deal.ownerId)?.name
+      ?? (carregandoTime ? 'Carregando...' : 'Fora do time'));
+
+  /**
+   * A troca de dono mexe em card, contato, conversa e timeline de uma vez — e
+   * a rota escreve direto no banco, sem passar por mutation. Sem invalidar
+   * tudo isto o card continua mostrando o dono antigo até o F5.
+   */
+  const handleOwnerChanged = () => {
+    queryClient.invalidateQueries({ queryKey: DEALS_VIEW_KEY });
+    queryClient.invalidateQueries({ queryKey: queryKeys.deals.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.contacts.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.activities.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.messagingConversations.all });
+    addToast('Responsável atualizado.', 'success');
+  };
 
   // Move entre funis (feature de move manual): nome de quem move + portão de dados.
   const moverName =
@@ -477,6 +514,16 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
     updateDeal(deal.id, { customFields: updatedFields });
   };
 
+  /**
+   * Origem comercial (tráfego pago x carteira própria) da aba "Origem".
+   *
+   * MESMO caminho de escrita dos campos customizados acima (updateCustomField):
+   * merge em `deals.custom_fields` via useUpdateDeal. O valor aqui é um objeto,
+   * por isso o merge é explícito em vez de reusar a função de campo escalar.
+   */
+  const salvarOrigemComercial = (valor: OrigemComercial) =>
+    updateDeal(deal.id, { customFields: { ...deal.customFields, origem_comercial: valor } });
+
   // dealActivities memoized above.
 
   // Handle escape key to close modal
@@ -555,6 +602,22 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                     title="Clique para editar valor"
                   >
                     ${deal.value.toLocaleString()}
+                  </p>
+                )}
+                {/* Responsável, ao lado do valor. O repasse de lead não existia na
+                    interface até 26/08/2026 — só por UPDATE no banco. O Denilson
+                    passa a receber todo lead novo e repassa daqui para o consultor. */}
+                {podeTrocarDono ? (
+                  <DealOwnerSelect
+                    dealId={deal.id}
+                    ownerId={deal.ownerId ?? null}
+                    onChanged={handleOwnerChanged}
+                  />
+                ) : (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                    <UserCircle className="w-4 h-4 text-slate-400 shrink-0" aria-hidden="true" />
+                    Responsável:{' '}
+                    <span className="font-medium text-slate-700 dark:text-slate-300">{donoNome}</span>
                   </p>
                 )}
                 {/* A data/hora da reunião aparece na PRÓPRIA atividade "Ligação diagnóstica"
@@ -998,6 +1061,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                 <div className="flex gap-6">
                   {([
                     { id: 'info', rotulo: 'IA Insights' },
+                    { id: 'origem', rotulo: 'Origem' },
                     { id: 'timeline', rotulo: 'Timeline' },
                     { id: 'products', rotulo: 'Produtos' },
                   ] as const).map(({ id, rotulo }) => (
@@ -1377,6 +1441,18 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                       )}
                     </div>
                   </div>
+                )}
+
+                {/* ORIGEM: de onde o lead veio (anúncio + criativo + formulário) e
+                    como ele chegou comercialmente (tráfego pago x carteira própria).
+                    Nasceu em 26/08/2026, quando um lead falou do "vídeo do anúncio"
+                    e o Pedro não sabia qual vídeo era nem o que ele prometia. */}
+                {activeTab === 'origem' && (
+                  <OrigemDoLeadPanel
+                    dealId={deal.id}
+                    customFields={deal.customFields}
+                    onSalvarOrigemComercial={salvarOrigemComercial}
+                  />
                 )}
 
               </div>

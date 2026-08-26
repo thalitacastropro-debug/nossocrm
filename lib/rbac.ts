@@ -110,6 +110,7 @@ export function homeRouteFor(role: Role): string {
 export type SettingsTabId =
   | 'general'
   | 'products'
+  | 'ad-creatives'
   | 'business-units'
   | 'integrations'
   | 'ai'
@@ -131,7 +132,7 @@ export const INTEGRATIONS_SUBTABS: readonly IntegrationsSubTabId[] = [
  * Um papel pode VER a aba de Configurações informada?
  * - `general`: todos (contém a preferência pessoal "Página Inicial").
  * - `integrations`: `admin` e `trafego` (é onde vivem Webhooks + Canais).
- * - `ai` / `data` / `products` / `business-units` / `users`: só `admin`.
+ * - `ai` / `data` / `products` / `ad-creatives` / `business-units` / `users`: só `admin`.
  *
  * `ai` e `data` eram visíveis para `vendedor` até 24/08/2026. Decisão da Thalita
  * ao trazer o Pedro para o time — um consultor fica com "Geral" e o próprio
@@ -141,6 +142,12 @@ export const INTEGRATIONS_SUBTABS: readonly IntegrationsSubTabId[] = [
  *   nela quebra o atendimento da operação inteira.
  * Nenhuma das duas é blindagem sozinha: a RLS é quem barra de fato (ver a
  * migração `20260824230000_fecha_credenciais_e_organizacao`). Isto aqui evita
+ * oferecer o caminho.
+ *
+ * `ad-creatives` (cadastro de qual criativo o lead veio) é só `admin` por
+ * decisão da Thalita em 26/08/2026: o consultor LÊ a promessa do anúncio no
+ * card, mas quem cadastra id -> vídeo é ela. A RLS da tabela `ad_creatives`
+ * é quem barra de fato (escrita exige `e_admin()`); isto aqui só evita
  * oferecer o caminho.
  *
  * Default-deny: papel/aba não mapeado retorna `false`.
@@ -158,6 +165,7 @@ export function canSeeSettingsTab(role: Role | undefined, tab: SettingsTabId): b
     case 'ai':
     case 'data':
     case 'products':
+    case 'ad-creatives':
     case 'business-units':
     case 'users':
       return role === 'admin';

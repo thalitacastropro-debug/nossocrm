@@ -10,11 +10,13 @@ import {
   ChevronRight,
   MessageSquare,
 } from 'lucide-react';
-import { Board, Activity } from '@/types';
+import { Board, Activity, DealView } from '@/types';
 import { useUpdateBoard } from '@/lib/query/hooks/useBoardsQuery';
 import { useDealsByBoard } from '@/lib/query/hooks/useDealsQuery';
 import { useActivities } from '@/lib/query/hooks';
 import { getCurrentMonthRange, countScheduledMeetings } from '@/lib/boards/goalMetrics';
+import { matchesOwnerFilter } from '@/features/boards/hooks/useBoardsController';
+import { useAuth } from '@/context/AuthContext';
 import { useUIState } from '@/store/uiState';
 
 // Performance: reuse formatter instances.
@@ -24,17 +26,31 @@ const EMPTY_ACTIVITIES: Activity[] = [];
 
 interface BoardStrategyHeaderProps {
   board: Board;
+  /**
+   * Os MESMOS cards que estão desenhados nas colunas (já passaram por busca, dono e
+   * status em useBoardsController). O header tem a query própria `useDealsByBoard`, que
+   * ignora os filtros da tela — se o resumo de dinheiro saísse dela, o total do topo não
+   * bateria com a soma das colunas assim que alguém filtrasse por consultor.
+   */
+  filteredDeals: DealView[];
+  /** Filtro de dono ativo na tela ('all' | 'mine' | 'sem-dono' | id do membro). */
+  ownerFilter: string;
 }
 
 /**
  * Componente React `BoardStrategyHeader`.
  *
- * @param {BoardStrategyHeaderProps} { board } - Parâmetro `{ board }`.
+ * @param {BoardStrategyHeaderProps} { board, filteredDeals, ownerFilter } - Parâmetro `{ board, filteredDeals, ownerFilter }`.
  * @returns {Element} Retorna um valor do tipo `Element`.
  */
-export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board }) => {
+export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
+  board,
+  filteredDeals,
+  ownerFilter,
+}) => {
   const updateBoardMutation = useUpdateBoard();
   const { data: deals = [] } = useDealsByBoard(board.id);
+  const { profile } = useAuth();
   // Meta 'meetings_scheduled' (agendamentos/mês): conta atividades CALL do mês, igual ao
   // dashboard. Só busca quando o board usa essa meta (gate `enabled`) — não onera os demais.
   const isMeetingsGoal = board.goal?.type === 'meetings_scheduled';
@@ -150,6 +166,66 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board 
     const current = calculatedProgress.value;
     return Math.min(100, Math.max(0, (current / targetValueNumber) * 100));
   }, [calculatedProgress.value, targetValueNumber]);
+
+  /**
+   * Resumo de dinheiro do funil (pedido da Thalita em 26/08/2026: "quero ver o total de
+   * mensalidade que está em jogo e quanto já foi ganho, filtrando por vendedor").
+   *
+   * SEMÂNTICA (não mexer sem falar com a dona): na Niva, `deal.value` é A MENSALIDADE QUE O
+   * LEAD PAGA HOJE no plano atual — vem de `custom_fields.qualificacao.valor_pago_exato`, é o
+   * que a Ana apura na qualificação. NÃO é valor de proposta nem receita fechada. Por isso o
+   * rótulo é "Mensalidades em jogo": chamar de "valor do pipeline" ou "receita prevista"
+   * seria mentira em cima do mesmo número.
+   *
+   * COMISSÃO: NÃO existe número de comissão aqui, e o tooltip não pode prometer que este
+   * valor "é" a comissão. Dois motivos, os dois checados no modelo financeiro da Niva
+   * (HANDOFF): (1) a comissão é um percentual do prêmio do plano VENDIDO e varia por
+   * operadora — Porto 250%, AMIL 260%, Sulamérica 250%, Alice 220%, Bradesco 330% (média
+   * 262%) —, nunca 100%; (2) o prêmio do plano vendido não existe em campo nenhum do CRM
+   * hoje, e `deal.value` é o que o lead paga na apólice ANTIGA. Derivar comissão daqui
+   * seria inventar dinheiro na tela. Quando nascer o campo de prêmio FECHADO, a comissão
+   * vira uma linha própria, calculada pelo percentual da operadora.
+   *
+   * DE ONDE VEM CADA NÚMERO:
+   * - "em jogo" sai de `filteredDeals` (a mesma lista das colunas) para bater com o board na
+   *   tela e respeitar o filtro por consultor de graça.
+   * - "já ganho" NÃO pode sair de `filteredDeals`: o filtro de status da tela nasce em 'open',
+   *   que esconde justamente os cards ganhos — o mês apareceria sempre zerado. Então usamos a
+   *   query do board e aplicamos à mão o MESMO filtro de dono da tela.
+   */
+  const resumoFinanceiro = React.useMemo<{ mensalidadesEmJogo: number; ganhoNoMes: number } | null>(() => {
+    const inicioMes = Date.parse(monthRange.start);
+    const fimMes = Date.parse(monthRange.end);
+
+    let funilTemValor = false;
+    let ganhoNoMes = 0;
+    for (const d of deals) {
+      if (d.boardId !== board.id) continue;
+      if ((d.value || 0) > 0) funilTemValor = true;
+      // Sem data de fechamento não dá para dizer que caiu neste mês — não conta (melhor
+      // faltar do que inflar o "já ganho" com fechamento antigo sem carimbo).
+      if (!d.isWon || !d.closedAt) continue;
+      if (!matchesOwnerFilter(d.ownerId, ownerFilter, profile?.id)) continue;
+      const fechadoEm = Date.parse(d.closedAt);
+      if (Number.isNaN(fechadoEm) || fechadoEm < inicioMes || fechadoEm > fimMes) continue;
+      ganhoNoMes += d.value || 0;
+    }
+
+    // Funil sem nenhum card com valor (SDR, nutrição...) não ganha o bloco: "R$ 0,00" só
+    // ocuparia espaço no topo sem dizer nada.
+    if (!funilTemValor) return null;
+
+    let mensalidadesEmJogo = 0;
+    for (const d of filteredDeals) {
+      if (d.boardId !== board.id) continue;
+      // "Em jogo" = aberto. Ganho já virou receita e perdido não volta; contar os dois aqui
+      // dobraria o número quando a pessoa trocasse o filtro de status para "todos".
+      if (d.isWon || d.isLost) continue;
+      mensalidadesEmJogo += d.value || 0;
+    }
+
+    return { mensalidadesEmJogo, ganhoNoMes };
+  }, [deals, filteredDeals, board.id, monthRange, ownerFilter, profile?.id]);
 
   const hasStrategy = board.goal || board.agentPersona || board.entryTrigger;
 
@@ -436,6 +512,36 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({ board 
                     </div>
                   </div>
                 </div>
+
+                {/* Dinheiro do funil, logo abaixo da meta. Fica DENTRO da coluna do objetivo
+                    de propósito: acrescenta uma linha sem mexer no grid 4/3/5 do header. Só
+                    renderiza nos funis que têm valor nos cards (ver resumoFinanceiro). */}
+                {resumoFinanceiro && (
+                  <div className="mt-2 pt-2 border-t border-slate-100 dark:border-white/5 flex items-center gap-5">
+                    <div
+                      className="min-w-0 cursor-help"
+                      title="Soma da mensalidade que os leads pagam hoje no plano atual, somando só os cards ABERTOS deste funil. Segue os filtros da tela (busca, consultor e situação) — por isso zera se você filtrar por Ganhos ou Perdidos. Não é receita prevista nem comissão: a comissão é um percentual do prêmio do plano vendido, que o CRM ainda não guarda."
+                    >
+                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">
+                        Mensalidades em jogo
+                      </div>
+                      <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                        {BRL_CURRENCY_FORMATTER.format(resumoFinanceiro.mensalidadesEmJogo)}
+                      </div>
+                    </div>
+                    <div
+                      className="min-w-0 cursor-help"
+                      title="Soma das mensalidades dos cards marcados como GANHO com data de fechamento dentro do mês corrente. Segue o filtro por consultor, mas ignora a busca e o filtro de situação: é o total do mês, não o que está desenhado nas colunas. Card ganho sem data de fechamento não entra."
+                    >
+                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">
+                        Já ganho no mês
+                      </div>
+                      <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400 truncate">
+                        {BRL_CURRENCY_FORMATTER.format(resumoFinanceiro.ganhoNoMes)}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* AGENT - Spans 3 cols */}

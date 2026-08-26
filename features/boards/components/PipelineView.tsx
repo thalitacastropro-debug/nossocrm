@@ -332,7 +332,15 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             onNewDeal={() => setIsCreateModalOpen(true)}
           />
 
-          <BoardStrategyHeader board={activeBoard} />
+          {/* Passamos `filteredDeals` (e não deixamos o header usar só a query própria) para o
+              resumo de mensalidades do topo bater com a soma das colunas, e `ownerFilter` para
+              o "já ganho no mês" — que sai dos cards GANHOS, escondidos pelo filtro de status
+              padrão 'open' — seguir o mesmo consultor selecionado na tela. */}
+          <BoardStrategyHeader
+            board={activeBoard}
+            filteredDeals={filteredDeals}
+            ownerFilter={ownerFilter}
+          />
 
           <div className="flex-1 overflow-hidden">
             {viewMode === 'kanban' ? (
