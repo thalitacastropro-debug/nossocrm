@@ -11,7 +11,6 @@ import {
   useRemoveDealItem,
   useCreateActivity,
   useUpdateActivity,
-  useDeleteActivity,
   useMoveDealToBoard,
 } from '@/lib/query/hooks';
 // Caminho DIRETO, não pelo barrel acima: os testes do modal mockam
@@ -139,10 +138,8 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const cancelMeeting = useCancelMeeting();
   const moveDealToBoard = useMoveDealToBoard();
   const updateActivityMutation = useUpdateActivity();
-  const deleteActivityMutation = useDeleteActivity();
   const addActivity = (activity: Omit<import('@/types').Activity, 'id' | 'createdAt'>) => createActivityMutation.mutateAsync({ activity });
   const updateActivity = (id: string, updates: Partial<import('@/types').Activity>) => updateActivityMutation.mutateAsync({ id, updates });
-  const deleteActivity = (id: string) => deleteActivityMutation.mutateAsync(id);
   const { data: products = [] } = useActiveProducts();
   const customFieldDefinitions: import('@/types').CustomFieldDefinition[] = [];
   const { profile } = useAuth();
@@ -284,7 +281,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const donoNome = !deal.ownerId
     ? 'Sem dono'
     : (orgMembers.find((m) => m.id === deal.ownerId)?.name
-      ?? (carregandoTime ? 'Carregando...' : 'Fora do time'));
+      ?? (carregandoTime || orgMembers.length === 0 ? 'Carregando...' : 'Fora do time'));
 
   /**
    * A troca de dono mexe em card, contato, conversa e timeline de uma vez — e
@@ -1127,8 +1124,10 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                             const act = activitiesById.get(id);
                             if (act) updateActivity(id, { completed: !act.completed });
                           }}
-                          onEdit={() => { }} // Edit not implemented in modal yet
-                          onDelete={id => deleteActivity(id)}
+                          // A jornada do lead é registro: nada de editar nem apagar passo daqui
+                          // (Thalita, 26/08). Marcar como concluída continua valendo — é andar
+                          // para a frente, não reescrever o que já aconteceu.
+                          somenteLeitura
                         />
                       ))}
                     </div>

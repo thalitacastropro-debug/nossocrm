@@ -247,6 +247,7 @@ const transformToDb = (board: Omit<Board, 'id' | 'createdAt'>, order?: number): 
   // "Could not find the '<col>' column of '<table>' in the schema cache".
   // To keep backwards-compat during rollout, we omit optional columns when not set.
   const defaultProductId = sanitizeUUID(board.defaultProductId);
+  const responsavelUserId = sanitizeUUID(board.responsavelUserId);
 
   const db: Partial<DbBoard> = {
     name: board.name,
@@ -273,6 +274,14 @@ const transformToDb = (board: Omit<Board, 'id' | 'createdAt'>, order?: number): 
 
   if (defaultProductId) {
     db.default_product_id = defaultProductId;
+  }
+
+  // Mesma compatibilidade do default_product_id: `responsavel_user_id` nasceu em 26/08/2026
+  // (migração 20260826140000_boards_responsavel) e pode não existir numa base que ficou para
+  // trás. Só mandamos a coluna quando o funil realmente tem responsável escolhido — funil sem
+  // responsável não precisa da coluna para nada (o card entra mantendo o dono que já tinha).
+  if (responsavelUserId) {
+    db.responsavel_user_id = responsavelUserId;
   }
 
   const key = normalizeBoardKey((board as any).key);
@@ -446,6 +455,14 @@ export const boardsService = {
           insert = await supabase.from('boards').insert(retryData).select().single();
         }
 
+        // Backwards-compat: base sem a migração 20260826140000_boards_responsavel não tem
+        // `responsavel_user_id`. O funil inteiro não pode deixar de ser criado por causa dela.
+        if (insert.error && isMissingColumnInSchemaCache(insert.error, 'boards', 'responsavel_user_id')) {
+          const retryData = { ...(boardData as any) };
+          delete retryData.responsavel_user_id;
+          insert = await supabase.from('boards').insert(retryData).select().single();
+        }
+
         // Backwards-compat: DB may not have key yet (migration not applied).
         if (insert.error && isMissingColumnInSchemaCache(insert.error, 'boards', 'key')) {
           const retryData = { ...(boardData as any) };
@@ -566,6 +583,16 @@ export const boardsService = {
       if (updates.wonStayInStage !== undefined) dbUpdates.won_stay_in_stage = updates.wonStayInStage;
       if (updates.lostStayInStage !== undefined) dbUpdates.lost_stay_in_stage = updates.lostStayInStage;
       if (updates.defaultProductId !== undefined) dbUpdates.default_product_id = sanitizeUUID(updates.defaultProductId as any);
+      // "Ninguém" é escolha VÁLIDA de responsável do funil (o card entra e MANTÉM o dono que já
+      // tinha), e `Board.responsavelUserId` é opcional: pelo teste `!== undefined` usado nos
+      // campos acima, limpar o campo seria lido como "não mexe" e o funil ficaria preso no
+      // responsável antigo para sempre. Por isso aqui o teste é de PRESENÇA DA CHAVE — quem manda
+      // a chave (a tela de Estratégia do Funil sempre manda) grava o valor, null inclusive; quem
+      // não manda não encosta na coluna. Nenhum caller hoje despeja um Board inteiro aqui, então
+      // ninguém apaga o responsável sem querer.
+      if ('responsavelUserId' in updates) {
+        dbUpdates.responsavel_user_id = sanitizeUUID(updates.responsavelUserId ?? null);
+      }
       if (updates.entryTrigger !== undefined) dbUpdates.entry_trigger = updates.entryTrigger || null;
       if (updates.agentGoalStageId !== undefined) (dbUpdates as any).agent_goal_stage_id = updates.agentGoalStageId || null;
       if (updates.automationSuggestions !== undefined) dbUpdates.automation_suggestions = updates.automationSuggestions || null;
@@ -606,6 +633,21 @@ export const boardsService = {
       if (error && isMissingColumnInSchemaCache(error, 'boards', 'default_product_id')) {
         const retryUpdates = { ...(dbUpdates as any) };
         delete retryUpdates.default_product_id;
+
+        const retry = await supabase
+          .from('boards')
+          .update(retryUpdates)
+          .eq('id', id);
+
+        error = retry.error as any;
+      }
+
+      // Backwards-compat: base sem a migração 20260826140000_boards_responsavel não tem a coluna.
+      // O resto do formulário (meta, agente, gatilho de entrada) não pode ir para o ralo por causa
+      // dela — repete o update sem o campo, igual ao que já se faz com key/default_product_id.
+      if (error && isMissingColumnInSchemaCache(error, 'boards', 'responsavel_user_id')) {
+        const retryUpdates: Partial<DbBoard> = { ...dbUpdates };
+        delete retryUpdates.responsavel_user_id;
 
         const retry = await supabase
           .from('boards')

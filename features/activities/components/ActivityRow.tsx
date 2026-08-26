@@ -10,8 +10,22 @@ interface ActivityRowProps {
     contact?: Contact;
     company?: Company;
     onToggleComplete: (id: string) => void;
-    onEdit: (activity: Activity) => void;
-    onDelete: (id: string) => void;
+    /** Opcional: sem ele o lápis não aparece. */
+    onEdit?: (activity: Activity) => void;
+    /** Opcional: sem ele a lixeira não aparece. */
+    onDelete?: (id: string) => void;
+    /**
+     * Linha do tempo do CARD: a jornada do lead é registro, não rascunho.
+     *
+     * Pedido da Thalita em 26/08/2026 — "tudo que aparece na timeline é editável, prefiro que não
+     * seja e que não dê para deletar os passos da jornada lá". Some com o lápis e a lixeira. A
+     * tela de Atividades (a agenda) NÃO passa esta prop e continua editável, porque lá são
+     * tarefas, não histórico.
+     *
+     * O lápis, aliás, já era um botão morto no card: o modal passava `onEdit={() => {}}` com o
+     * comentário "Edit not implemented in modal yet".
+     */
+    somenteLeitura?: boolean;
     isSelected?: boolean;
     onSelect?: (id: string, selected: boolean) => void;
 }
@@ -28,6 +42,7 @@ const ActivityRowComponent: React.FC<ActivityRowProps> = ({
     onToggleComplete,
     onEdit,
     onDelete,
+    somenteLeitura = false,
     isSelected = false,
     onSelect
 }) => {
@@ -221,22 +236,28 @@ const ActivityRowComponent: React.FC<ActivityRowProps> = ({
                 </div>
             </div>
 
-            <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                    onClick={() => onEdit(activity)}
-                    className="p-2 text-slate-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors"
-                    title="Editar"
-                >
-                    <Edit2 size={16} />
-                </button>
-                <button
-                    onClick={() => onDelete(activity.id)}
-                    className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
-                    title="Excluir"
-                >
-                    <Trash2 size={16} />
-                </button>
-            </div>
+            {!somenteLeitura && (onEdit || onDelete) && (
+                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {onEdit && (
+                        <button
+                            onClick={() => onEdit(activity)}
+                            className="p-2 text-slate-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors"
+                            title="Editar"
+                        >
+                            <Edit2 size={16} />
+                        </button>
+                    )}
+                    {onDelete && (
+                        <button
+                            onClick={() => onDelete(activity.id)}
+                            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
+                            title="Excluir"
+                        >
+                            <Trash2 size={16} />
+                        </button>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

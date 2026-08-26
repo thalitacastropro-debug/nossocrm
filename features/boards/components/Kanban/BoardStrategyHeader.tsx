@@ -9,11 +9,17 @@ import {
   X,
   ChevronRight,
   MessageSquare,
+  UserCog,
+  AlertTriangle,
 } from 'lucide-react';
 import { Board, Activity, DealView } from '@/types';
 import { useUpdateBoard } from '@/lib/query/hooks/useBoardsQuery';
 import { useDealsByBoard } from '@/lib/query/hooks/useDealsQuery';
 import { useActivities } from '@/lib/query/hooks';
+// Caminho DIRETO de propósito (não pelo barrel '@/lib/query/hooks'): os testes mockam o barrel
+// com factory e o componente inteiro quebraria ao pedir este hook por lá.
+import { useOrgMembersQuery } from '@/lib/query/hooks/useOrgMembersQuery';
+import { boardAccessService } from '@/lib/supabase/boardAccess';
 import { useVendasDoFunil, type VendasDoFunil } from '@/lib/query/hooks/useVendasDoFunilQuery';
 import { getCurrentMonthRange, countScheduledMeetings } from '@/lib/boards/goalMetrics';
 import { matchesOwnerFilter } from '@/features/boards/hooks/useBoardsController';
@@ -89,6 +95,18 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
   const { setIsGlobalAIOpen } = useUIState();
   const [isEditing, setIsEditing] = useState(false);
   const [editedBoard, setEditedBoard] = useState(board);
+  /**
+   * Time da organização: alimenta o select de responsável do funil e resolve o nome que aparece
+   * no cabeçalho em modo leitura.
+   */
+  const { data: orgMembers = [], isLoading: carregandoTime } = useOrgMembersQuery();
+  /**
+   * A RLS de `boards` (policy `boards_update`) exige `e_admin()`: só admin grava a estratégia
+   * do funil. Sem este gate o vendedor via o lápis, preenchia o formulário inteiro, clicava em
+   * salvar e o banco recusava CALADO — o mesmo padrão de falha silenciosa que a dona já pegou
+   * duas vezes em 26/08/2026.
+   */
+  const ehAdmin = profile?.role === 'admin';
 
   // Calculate Progress Automatically
   const calculatedProgress = React.useMemo<{ value: number; display: string; label?: string }>(() => {
@@ -295,13 +313,85 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
     return { mensalidadesEmJogo, ganhoNoMes };
   }, [deals, filteredDeals, board.id, monthRange, ownerFilter, profile?.id, vendasDoMes]);
 
+  /**
+   * Quem enxerga ESTE funil (`board_access`), para avisar ANTES de salvar um responsável que
+   * não veria o card — mesmo cuidado da rota `/api/deals/[dealId]/owner`. Card no nome de quem
+   * não tem acesso ao funil some da operação sem ninguém perceber.
+   *
+   * Só busca em modo de edição e só para admin: é a única situação em que o aviso serve, e a
+   * RLS de `board_access` só devolve as concessões da equipe inteira para o admin.
+   */
+  const [acessosDesteFunil, setAcessosDesteFunil] = useState<Set<string> | null>(null);
+  React.useEffect(() => {
+    if (!isEditing || !ehAdmin) {
+      setAcessosDesteFunil(null);
+      return;
+    }
+    let ativo = true;
+    boardAccessService
+      .getAll()
+      .then(({ data, error }) => {
+        // Sem a lista o aviso simplesmente não aparece (fica null): melhor calar do que acusar
+        // uma falta de acesso que pode não existir.
+        if (!ativo || error) return;
+        setAcessosDesteFunil(new Set(data.filter(r => r.boardId === board.id).map(r => r.userId)));
+      })
+      .catch(() => undefined);
+    return () => {
+      ativo = false;
+    };
+  }, [isEditing, ehAdmin, board.id]);
+
+  /**
+   * Candidatos a responsável. Fica de fora quem é 'trafego' (a agência): essa pessoa nem abre a
+   * tela de funis, então um card no nome dela sumiria da operação. Exceção para quem JÁ está
+   * gravado no funil — sem a opção, o select não teria como exibir o valor atual e um "Salvar"
+   * distraído trocaria o responsável por engano.
+   */
+  const membrosElegiveis = React.useMemo(
+    () => orgMembers.filter(m => m.role !== 'trafego' || m.id === board.responsavelUserId),
+    [orgMembers, board.responsavelUserId],
+  );
+
+  /**
+   * A lista do time ainda não está em mãos.
+   *
+   * NÃO basta olhar `isLoading`: `useOrgMembersQuery` é `enabled: !!organization_id` e, no
+   * React Query v5, query DESABILITADA devolve `isLoading = false` com `data` vazio — é o que
+   * acontece no primeiro paint do funil, enquanto o `profile` do AuthContext não chegou. Query
+   * com ERRO idem. Nos dois casos a lista vem vazia sem ninguém ter "carregado" nada, e quem
+   * confia só no `isLoading` conclui coisa errada sobre o responsável gravado.
+   */
+  const timeIndisponivel = carregandoTime || orgMembers.length === 0;
+
+  /**
+   * Nome do responsável no modo leitura. "Fora do time" só DEPOIS que a lista do time chegou:
+   * com a lista vazia o find não acha ninguém e o cabeçalho acusaria, falsamente, que a pessoa
+   * saiu da organização (bug que já apareceu no DealDetailModal em 26/08/2026). Lista vazia
+   * quer dizer "ainda não sei", nunca "a pessoa sumiu".
+   */
+  const nomeDoResponsavel = !board.responsavelUserId
+    ? 'Sem responsável'
+    : (orgMembers.find(m => m.id === board.responsavelUserId)?.name
+      ?? (timeIndisponivel ? 'Carregando...' : 'Fora do time'));
+
   const hasStrategy = board.goal || board.agentPersona || board.entryTrigger;
 
   if (!hasStrategy && !isEditing) {
+    // Vendedor não vê o convite para criar estratégia: `boards_update` é `e_admin()` e o
+    // salvamento voltaria recusado pela RLS, sem mensagem nenhuma na tela.
+    if (!ehAdmin) return null;
+
     return (
       <div className="mb-4">
         <button
-          onClick={() => setIsEditing(true)}
+          onClick={() => {
+            // Recarrega do funil ATUAL antes de abrir: `editedBoard` nasce no mount e o
+            // componente não remonta ao trocar de funil — sem isto o formulário abriria com os
+            // dados do funil anterior e o Salvar gravaria eles aqui.
+            setEditedBoard(board);
+            setIsEditing(true);
+          }}
           className="w-full py-3 border-2 border-dashed border-slate-200 dark:border-white/10 rounded-xl flex items-center justify-center gap-2 text-slate-500 dark:text-slate-400 hover:border-primary-500 dark:hover:border-primary-500 hover:text-primary-600 dark:hover:text-primary-400 transition-all group bg-slate-50/50 dark:bg-white/5"
         >
           <div className="p-1.5 bg-white dark:bg-slate-800 rounded-lg shadow-sm group-hover:scale-110 transition-transform">
@@ -323,15 +413,45 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
         agentPersona: editedBoard.agentPersona,
         entryTrigger: editedBoard.entryTrigger,
         nextBoardId: editedBoard.nextBoardId,
+        // Chave SEMPRE presente, mesmo valendo undefined: é assim que boardsService.update
+        // distingue "escolhi Ninguém" (grava null) de "esta tela nem toca no campo".
+        responsavelUserId: editedBoard.responsavelUserId,
       },
     });
     setIsEditing(false);
   };
 
   const handleCancel = () => {
+    // Restaura o board inteiro vindo da prop — o responsável escolhido e não salvo vai junto.
     setEditedBoard(board);
     setIsEditing(false);
   };
+
+  const responsavelSelecionadoId = editedBoard.responsavelUserId;
+  /**
+   * Responsável gravado que NÃO tem opção correspondente no select (time ainda carregando, lista
+   * que não veio, ou perfil removido da organização). Sem uma opção para ele o `<select>` cai no
+   * primeiro item e a tela MENTE "Ninguém" para um funil que tem responsável — e o primeiro
+   * "Salvar Alterações" distraído zera a coluna. Mesmo tratamento do `donoForaDaLista` do
+   * DealOwnerSelect.
+   */
+  const responsavelForaDaLista =
+    responsavelSelecionadoId !== undefined &&
+    !membrosElegiveis.some(m => m.id === responsavelSelecionadoId);
+  const responsavelEscolhido = responsavelSelecionadoId
+    ? orgMembers.find(m => m.id === responsavelSelecionadoId)
+    : undefined;
+  /**
+   * Admin enxerga todo funil sem precisar de linha em `board_access`; os demais papéis só o que
+   * foi concedido. O aviso só sai com as duas listas em mãos (time e acessos) para não piscar
+   * alarme falso enquanto carrega.
+   */
+  const responsavelSemAcesso =
+    responsavelSelecionadoId !== undefined &&
+    responsavelEscolhido !== undefined &&
+    responsavelEscolhido.role !== 'admin' &&
+    acessosDesteFunil !== null &&
+    !acessosDesteFunil.has(responsavelSelecionadoId);
 
   return (
     <div className="relative mb-4 group/header z-20">
@@ -339,10 +459,14 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
       <div className="absolute -inset-1 bg-gradient-to-r from-blue-500/5 via-purple-500/5 to-orange-500/5 rounded-xl blur-xl opacity-50 group-hover/header:opacity-100 transition-opacity duration-700"></div>
 
       <div className="relative px-5 py-3 bg-white dark:bg-[#0B1120] rounded-lg border border-slate-100 dark:border-white/5 shadow-sm transition-all duration-300 hover:shadow-md">
-        {/* Edit Button - Only visible on hover */}
-        {!isEditing && (
+        {/* Edit Button - Only visible on hover (e só para admin: a RLS recusa o resto) */}
+        {!isEditing && ehAdmin && (
           <button
-            onClick={() => setIsEditing(true)}
+            onClick={() => {
+              // Mesmo motivo do bloco vazio: abrir sempre com o funil que está na tela.
+              setEditedBoard(board);
+              setIsEditing(true);
+            }}
             className="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-full transition-all opacity-0 group-hover/header:opacity-100"
             title="Editar Estratégia"
           >
@@ -403,6 +527,56 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
                     A IA usará isso para filtrar leads
                   </div>
                 </div>
+              </div>
+
+              {/* RESPONSÁVEL DO FUNIL (quem recebe o card que chega aqui) */}
+              <div className="space-y-3">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
+                  <UserCog size={12} /> Responsável do Funil
+                </label>
+                {/* `disabled` enquanto a lista do time não está em mãos: sem ela não há escolha
+                    honesta a oferecer, e é melhor travar o campo do que deixar um clique gravar
+                    "Ninguém" em cima de um responsável que a tela nem conseguiu mostrar. O resto
+                    do formulário (meta, agente, gatilho) continua salvando normalmente. */}
+                <select
+                  className="w-full bg-slate-50 dark:bg-white/5 rounded-xl p-3 text-sm text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-white/5 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all disabled:opacity-60"
+                  value={responsavelSelecionadoId || ''}
+                  disabled={timeIndisponivel}
+                  onChange={e =>
+                    setEditedBoard({
+                      ...editedBoard,
+                      responsavelUserId: e.target.value || undefined,
+                    })
+                  }
+                >
+                  <option value="">Ninguém (mantém o dono atual)</option>
+                  {/* Opção espelhando o valor gravado quando ele não está na lista: sem ela o
+                      select cai no "Ninguém" e um Salvar apressado apagaria o responsável. */}
+                  {responsavelForaDaLista && (
+                    <option value={responsavelSelecionadoId}>
+                      {timeIndisponivel ? 'Carregando...' : 'Responsável atual (fora do time)'}
+                    </option>
+                  )}
+                  {membrosElegiveis.map(membro => (
+                    <option key={membro.id} value={membro.id}>
+                      {membro.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Quem assume o card que CHEGA neste funil. Ao ganhar, o card sai do funil anterior
+                  e passa para esta pessoa.
+                </p>
+                {responsavelSemAcesso && (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3">
+                    <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <p className="text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed">
+                      <strong>{responsavelEscolhido?.name}</strong> não enxerga este funil: o card
+                      entraria no nome dessa pessoa e sumiria da operação. Libere o acesso em
+                      Configurações › Equipe.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* BOTTOM SECTION: GOAL & AGENT (Side by Side) */}
@@ -664,6 +838,21 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
                   <div className="absolute right-0 top-full mt-2 hidden group-hover/trigger:block w-80 p-4 bg-slate-900 text-slate-300 text-xs rounded-lg shadow-2xl z-[100] border border-slate-700 max-h-64 overflow-y-auto">
                     {board.entryTrigger}
                   </div>
+                </div>
+
+                {/* Responsável do funil, em texto discreto: é metadado de operação (quem recebe o
+                    card que chega aqui), no mesmo tom dos outros rótulos do cabeçalho. */}
+                <div
+                  className="mt-2 flex items-center gap-1.5 min-w-0"
+                  title="Quem assume o card que chega neste funil. Ao ganhar, o card sai do funil anterior e passa para esta pessoa."
+                >
+                  <UserCog size={10} className="text-slate-400 shrink-0" />
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400 shrink-0">
+                    Responsável
+                  </span>
+                  <span className="text-[10px] font-medium text-slate-600 dark:text-slate-300 truncate">
+                    {nomeDoResponsavel}
+                  </span>
                 </div>
               </div>
             </div>
