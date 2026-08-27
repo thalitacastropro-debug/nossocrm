@@ -59,6 +59,7 @@ interface LinhaDeVenda {
   id: string | null;
   title: string | null;
   value: number | null;
+  is_lost: boolean | null;
   venda: Record<string, unknown> | null;
 }
 
@@ -159,7 +160,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       // (rede de segurança quando o carimbo veio sem `valor_na_venda`) e o próprio
       // carimbo. Nada de `select('*')`: o card ganho mora em outro funil, e devolver a
       // linha inteira daqui seria entregar pelo servidor o que a RLS esconde na tela.
-      .select('id, title, value, venda:custom_fields->venda')
+      .select('id, title, value, is_lost, venda:custom_fields->venda')
       // Organização é o cerco obrigatório: service role ignora RLS.
       .eq('organization_id', orgId)
       // O CARIMBO manda: `board_id` diria onde o card está HOJE (Implantação), e é
@@ -192,6 +193,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // informado fica de fora e é contada em `pendentesDePremio`.
     let valorTotalPremio = 0;
     let pendentesDePremio = 0;
+    let desfeitas = 0;
     let ignorados = 0;
 
     for (const linha of linhas) {
@@ -226,6 +228,18 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       // com `vendedor_id` nulo ou malformado sumiria do recorte sem aparecer em
       // `ignorados` — o que a gente esconde do consultor tem que ser decisão explícita.
       if (!veTudo && vendedorId !== user.id) continue;
+
+      // VENDA DESFEITA (caso Richard, 27/08): o cliente fechou, a venda foi carimbada, e
+      // durante a implantação caiu — o card que CARREGA o carimbo foi marcado perdido.
+      // Ela sai da contagem, das somas e da pendência de prêmio; `desfeitas` mostra a
+      // queda ao gestor. O check fica DEPOIS do recorte de período e do gate de
+      // isolamento, de propósito: antes deles, uma desfeita de março apareceria em todo
+      // mês consultado para sempre, e a desfeita de um vendedor vazaria na contagem do
+      // outro (a revisão adversarial de 27/08 pegou as duas coisas).
+      if (linha.is_lost === true) {
+        desfeitas += 1;
+        continue;
+      }
 
       // Carimbo sem valor cai no valor atual do card: melhor um número aproximado do que
       // sumir com a venda da soma do mês. O `?? NaN` é para o carimbo escrito à mão sem o
@@ -275,6 +289,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         valorTotal,
         valorTotalPremio,
         pendentesDePremio,
+        desfeitas,
         ignorados,
       },
       { status: 200 },

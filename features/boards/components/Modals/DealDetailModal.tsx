@@ -1297,7 +1297,11 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                     {/* VENDA FECHADA: só em card carimbado (chegou à Implantação pela
                         automação de ganho). Vem PRIMEIRO porque carrega a pendência do
                         prêmio fechado — o número que a operação deve preencher. */}
-                    <PremioFechadoPanel dealId={deal.id} customFields={deal.customFields} />
+                    <PremioFechadoPanel
+                      dealId={deal.id}
+                      customFields={deal.customFields}
+                      vendaDesfeita={deal.isLost}
+                    />
                     {sdrPanelHasData(deal.customFields) && (
                       <div className="bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl p-5 shadow-sm">
                         <QualificacaoSDRPanel customFields={deal.customFields} />

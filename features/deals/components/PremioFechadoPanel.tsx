@@ -25,6 +25,12 @@ import { PremioFechadoForm } from './PremioFechadoForm';
 interface PremioFechadoPanelProps {
   dealId: string;
   customFields: Record<string, unknown> | undefined;
+  /**
+   * true = o card que carrega o carimbo foi marcado PERDIDO (venda desfeita — caso
+   * Richard, 27/08). O painel vira um aviso e NÃO cobra prêmio: as rotas de meta excluem
+   * venda desfeita, então preencher aqui seria trabalho inútil gravado num carimbo morto.
+   */
+  vendaDesfeita?: boolean;
 }
 
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -32,7 +38,11 @@ const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' 
 /** `2026-09-01` → `01/09/2026` (a vigência é gravada no formato do input date). */
 const dataCurta = (iso: string): string => iso.split('-').reverse().join('/');
 
-export const PremioFechadoPanel: React.FC<PremioFechadoPanelProps> = ({ dealId, customFields }) => {
+export const PremioFechadoPanel: React.FC<PremioFechadoPanelProps> = ({
+  dealId,
+  customFields,
+  vendaDesfeita = false,
+}) => {
   const queryClient = useQueryClient();
   const [editando, setEditando] = useState(false);
   // Eco local do que acabou de ser salvo: o modal recebe customFields por props e o
@@ -68,7 +78,13 @@ export const PremioFechadoPanel: React.FC<PremioFechadoPanelProps> = ({ dealId, 
         {vendidoEm ? ` em ${new Date(vendidoEm).toLocaleDateString('pt-BR')}` : ''}.
       </p>
 
-      {premio && !editando ? (
+      {vendaDesfeita ? (
+        <p className="text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2">
+          <strong>Venda desfeita</strong> — o card foi marcado como perdido depois do ganho
+          (a implantação caiu). Ela não conta na meta nem no &quot;Já ganho no mês&quot;, e o
+          prêmio não precisa ser informado.
+        </p>
+      ) : premio && !editando ? (
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           <div>
             <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">

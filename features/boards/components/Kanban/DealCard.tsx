@@ -240,7 +240,10 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   const telefoneCard = telefoneParaExibir(deal, waPhone);
   const tier = tierBadge(deal);
   const carteiraPropria = ehCarteiraPropria(deal);
-  const pendentePremio = faltaPremioDaVenda(deal);
+  // Venda DESFEITA (card perdido depois do ganho) não cobra prêmio: as rotas de meta a
+  // excluem, então o selo induziria trabalho inútil — preencher um número que não aparece
+  // em lugar nenhum (revisão adversarial de 27/08, caso Richard).
+  const pendentePremio = !deal.isLost && faltaPremioDaVenda(deal);
 
   const handleMarkNoShow = (e: React.MouseEvent) => {
     e.stopPropagation();

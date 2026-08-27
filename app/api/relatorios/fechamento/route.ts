@@ -75,7 +75,28 @@ const PERCENTUAL_POR_OPERADORA: Array<[chave: string, multiplicador: number]> = 
   ['sulamerica', 2.5],
   ['sula', 2.5],
   ['alice', 2.2],
+  // MedSênior repassa só 100% (Thalita, 27/08) — e por isso o colaborador que vende
+  // MedSênior recebe 50%, não os 100%/140% padrão (ver COLABORADOR_MEDSENIOR abaixo).
+  ['medsenior', 1.0],
 ];
+
+/**
+ * Multiplicador do COLABORADOR quando a operadora é MedSênior (Thalita, 27/08): "o
+ * vendedor que vender MedSênior recebe uma comissão menor, de 50%" — o repasse da
+ * operadora é 100%, então pagar 100%/140% deixaria a casa no negativo. Aplicado aos
+ * DOIS casos de colaborador (lead da casa E trouxe o cliente); se ela quiser distinguir,
+ * é uma constante a mais.
+ */
+const MULT_COLABORADOR_MEDSENIOR = 0.5;
+const ehMedSenior = (operadora: string | null): boolean => {
+  if (!operadora) return false;
+  // Mesma disciplina do matcher principal: token exato + pares adjacentes COLADOS, nunca
+  // substring do nome inteiro colado — "Unimed Sênior" colapsada contém 'medsenior' e
+  // derrubaria a comissão do colaborador pela metade numa operadora que nem é MedSênior.
+  const tokens = normalizar(operadora).split(/[^a-z0-9]+/).filter(Boolean);
+  const pares = tokens.slice(0, -1).map((t, i) => t + tokens[i + 1]);
+  return [...tokens, ...pares].includes('medsenior');
+};
 
 /**
  * Operadoras que a Niva conhece e que NÃO estão na tabela de repasse. A presença de
@@ -84,7 +105,7 @@ const PERCENTUAL_POR_OPERADORA: Array<[chave: string, multiplicador: number]> = 
  */
 const OPERADORAS_FORA_DA_TABELA = [
   'unimed', 'hapvida', 'notredame', 'notre', 'intermedica', 'gndi',
-  'medsenior', 'medsênior', 'prevent', 'samel', 'cassi', 'geap', 'ampla', 'seguros unimed',
+  'prevent', 'samel', 'cassi', 'geap', 'ampla', 'seguros unimed',
 ];
 
 /** Sem acentos, minúsculo — o que "SulAmérica Saúde" precisa para casar com 'sulamerica'. */
@@ -128,6 +149,7 @@ interface LinhaDeVenda {
   id: string | null;
   title: string | null;
   value: number | null;
+  is_lost: boolean | null;
   venda: Record<string, unknown> | null;
   origem_comercial: Record<string, unknown> | null;
 }
@@ -151,6 +173,13 @@ interface VendaDoFechamento {
   pessoa_da_comissao_nome: string | null;
   /** null = regra sem número (sócio/casa) ou prêmio pendente. */
   comissao: number | null;
+  /**
+   * O multiplicador APLICADO nesta linha (1.4, 1.0, 0.5 na exceção MedSênior, ou o % da
+   * operadora na carteira de sócio). null quando não há comissão a calcular. Existe para
+   * a tela não mentir o percentual quando a exceção muda a conta — esta rota é admin-only,
+   * então o número pode viajar.
+   */
+  multiplicador: number | null;
   /** null = não dá para dizer (carteira sem "quem trouxe"). */
   conta_na_meta: boolean | null;
 }
@@ -198,7 +227,7 @@ export async function GET(request: NextRequest) {
     // corta no banco quem nunca teve venda; o recorte de período fica no JS (ver o topo).
     const { data, error } = await admin
       .from('deals')
-      .select('id, title, value, venda:custom_fields->venda, origem_comercial:custom_fields->origem_comercial')
+      .select('id, title, value, is_lost, venda:custom_fields->venda, origem_comercial:custom_fields->origem_comercial')
       .eq('organization_id', orgId)
       .not('custom_fields->venda', 'is', null)
       .is('deleted_at', null);
@@ -221,6 +250,7 @@ export async function GET(request: NextRequest) {
 
     const linhas = (data ?? []) as unknown as LinhaDeVenda[];
     const vendas: VendaDoFechamento[] = [];
+    let desfeitas = 0;
     let ignorados = 0;
 
     for (const linha of linhas) {
@@ -240,6 +270,14 @@ export async function GET(request: NextRequest) {
         continue;
       }
       if (quando < de || quando > ate) continue;
+
+      // VENDA DESFEITA (caso Richard, 27/08): o card que carrega o carimbo foi marcado
+      // perdido depois do ganho — a venda caiu na implantação. Sai do fechamento inteiro
+      // (contagem, prêmio, comissão, meta); `desfeitas` dá visibilidade da queda.
+      if (linha.is_lost === true) {
+        desfeitas += 1;
+        continue;
+      }
 
       const vendedorId = texto(bruto.vendedor_id);
       const premio = lerPremioFechado(bruto);
@@ -278,7 +316,11 @@ export async function GET(request: NextRequest) {
           regra = 'colaborador_trouxe_140';
           pessoaId = quemTrouxe;
           contaNaMeta = true;
-          multiplicador = MULT_COLABORADOR_TROUXE;
+          // MedSênior repassa só 100%: o colaborador cai para 50% (Thalita, 27/08) —
+          // 140% seria maior do que a casa recebe.
+          multiplicador = ehMedSenior(premio?.operadora ?? null)
+            ? MULT_COLABORADOR_MEDSENIOR
+            : MULT_COLABORADOR_TROUXE;
         }
       } else if (ehSocio(vendedorId)) {
         // Sócio fechando lead da casa: a receita é da casa; não existe comissão de pessoa.
@@ -289,7 +331,10 @@ export async function GET(request: NextRequest) {
         regra = 'colaborador_casa_100';
         pessoaId = vendedorId;
         contaNaMeta = true;
-        multiplicador = MULT_COLABORADOR_CASA;
+        // Mesma exceção da MedSênior do branch acima.
+        multiplicador = ehMedSenior(premio?.operadora ?? null)
+          ? MULT_COLABORADOR_MEDSENIOR
+          : MULT_COLABORADOR_CASA;
       }
 
       const comissao =
@@ -313,6 +358,7 @@ export async function GET(request: NextRequest) {
         pessoa_da_comissao_id: pessoaId,
         pessoa_da_comissao_nome: nomeDoPerfil(pessoaId ? time.get(pessoaId) : undefined),
         comissao,
+        multiplicador,
         conta_na_meta: contaNaMeta,
       });
     }
@@ -357,6 +403,7 @@ export async function GET(request: NextRequest) {
         repasseSocios,
         pendentesDePremio,
         vendasNaMeta,
+        desfeitas,
         ignorados,
       },
       { status: 200 },

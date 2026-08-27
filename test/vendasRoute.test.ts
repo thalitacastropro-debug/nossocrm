@@ -129,4 +129,38 @@ describe('GET /api/boards/[boardId]/vendas — prêmio fechado', () => {
     const corpo = await (await chamar()).json();
     expect(corpo.valorTotal).toBe(350 + 4295);
   });
+
+  it('venda DESFEITA (card marcado perdido) sai da contagem e das somas — caso Richard 27/08', async () => {
+    // O cliente fechou, a venda foi carimbada, e DEPOIS a implantação caiu (concorrente
+    // ativou primeiro). O card virou is_lost — a venda não existe mais: não conta, não
+    // soma, não gera pendência de prêmio. Aparece só em `desfeitas`, para o gestor ver.
+    linhasDeVenda[0].is_lost = true;
+    const corpo = await (await chamar()).json();
+    expect(corpo.contagem).toBe(1);
+    expect(corpo.vendas.map((v: { deal_id: string }) => v.deal_id)).toEqual([DEAL_B]);
+    expect(corpo.valorTotalPremio).toBe(0);
+    expect(corpo.pendentesDePremio).toBe(1);
+    expect(corpo.desfeitas).toBe(1);
+  });
+
+  it('venda desfeita FORA do período consultado não entra em `desfeitas`', async () => {
+    // A query da rota varre o histórico inteiro do funil de propósito (recorte de data é
+    // no JS); sem o recorte também em `desfeitas`, uma venda desfeita em março apareceria
+    // como "queda do mês" para sempre, em todo mês consultado.
+    linhasDeVenda[0].is_lost = true;
+    (linhasDeVenda[0].venda as Record<string, unknown>).vendido_em = '2026-03-10T12:00:00.000Z';
+    const corpo = await (await chamar()).json();
+    expect(corpo.desfeitas).toBe(0);
+    expect(corpo.contagem).toBe(1);
+  });
+
+  it('desfeita de OUTRO vendedor não vaza para consultor comum', async () => {
+    // O gate de isolamento (sem ve_tudo, só as próprias vendas) tem que valer também
+    // para a contagem de desfeitas — senão a rota vaza atividade da carteira alheia.
+    perfil = { id: USER_ID, role: 'vendedor', ve_todos_os_leads: false, organization_id: ORG_ID };
+    linhasDeVenda[0].is_lost = true;
+    (linhasDeVenda[0].venda as Record<string, unknown>).vendedor_id = 'e5f6a7b8-c9d0-4e1f-8a2b-c3d4e5f6a7b8';
+    const corpo = await (await chamar()).json();
+    expect(corpo.desfeitas).toBe(0);
+  });
 });

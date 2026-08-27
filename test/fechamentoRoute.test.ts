@@ -236,6 +236,56 @@ describe('GET /api/relatorios/fechamento', () => {
     expect(corpo.repasseSocios).toBe(9900);
   });
 
+  it('venda DESFEITA (card perdido) sai do fechamento — caso Richard 27/08', async () => {
+    const desfeita = venda({ premio_mensal: 2000, operadora: 'AMIL' });
+    desfeita.is_lost = true;
+    linhas = [desfeita];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas).toHaveLength(0);
+    expect(corpo.desfeitas).toBe(1);
+  });
+
+  it('MedSênior: operadora repassa 100% — comissão cheia de sócio = 1× o prêmio', async () => {
+    linhas = [venda(
+      { premio_mensal: 2000, operadora: 'MedSênior', vendedor_id: ADMIN_ID, vendedor_nome: 'Denilson Silva' },
+      { tipo: 'carteira_propria', quem_trouxe: ADMIN_ID },
+    )];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'socio_carteira_cheia', comissao: 2000 });
+  });
+
+  it('MedSênior: colaborador em lead da casa recebe 50% (não os 100% padrão)', async () => {
+    // Regra da Thalita (27/08): a MedSênior repassa só 100%, então o colaborador que
+    // vende MedSênior recebe 50% do prêmio — senão a casa pagaria mais do que recebe.
+    linhas = [venda({ premio_mensal: 2000, operadora: 'MedSenior' })];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'colaborador_casa_100', comissao: 1000 });
+  });
+
+  it('MedSênior: colaborador que TROUXE também cai para 50% (140% seria maior que o repasse)', async () => {
+    linhas = [venda(
+      { premio_mensal: 2000, operadora: 'MedSênior' },
+      { tipo: 'carteira_propria', quem_trouxe: PEDRO_ID },
+    )];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'colaborador_trouxe_140', comissao: 1000 });
+  });
+
+  it('"Unimed Sênior" NÃO é MedSênior — colaborador mantém os 100% padrão', async () => {
+    // 'unimed senior' colado contém 'medsenior' — substring atravessando fronteira de
+    // palavra derrubaria a comissão do colaborador pela metade numa operadora que nem
+    // está na tabela. Mesmo veneno do "Unimed Porto Alegre".
+    linhas = [venda({ premio_mensal: 2000, operadora: 'Unimed Sênior' })];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'colaborador_casa_100', comissao: 2000 });
+  });
+
+  it('"Med Senior" com espaço continua caindo na exceção dos 50%', async () => {
+    linhas = [venda({ premio_mensal: 2000, operadora: 'Med Senior' })];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'colaborador_casa_100', comissao: 1000 });
+  });
+
   it('venda fora do período não entra', async () => {
     linhas = [venda({ vendido_em: '2026-07-10T12:00:00.000Z', premio_mensal: 2000, operadora: 'AMIL' })];
     const corpo = await (await chamar()).json();

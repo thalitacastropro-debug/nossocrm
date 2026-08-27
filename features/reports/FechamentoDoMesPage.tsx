@@ -44,6 +44,8 @@ interface VendaDoFechamento {
   pessoa_da_comissao_id: string | null;
   pessoa_da_comissao_nome: string | null;
   comissao: number | null;
+  /** Multiplicador aplicado (1.4, 1.0, 0.5 na exceção MedSênior, % da operadora no sócio). */
+  multiplicador: number | null;
   conta_na_meta: boolean | null;
 }
 
@@ -57,14 +59,27 @@ interface CorpoDoFechamento {
   repasseSocios: number;
   pendentesDePremio: number;
   vendasNaMeta: number;
+  /** Vendas do período cujo card foi marcado PERDIDO depois do ganho (implantação caiu). */
+  desfeitas: number;
 }
 
 const ROTULO_REGRA: Record<VendaDoFechamento['regra'], string> = {
-  colaborador_trouxe_140: 'Trouxe o cliente (140%)',
-  colaborador_casa_100: 'Lead da casa (100%)',
-  socio_carteira_cheia: 'Carteira de sócio — comissão cheia (% da operadora)',
+  colaborador_trouxe_140: 'Trouxe o cliente',
+  colaborador_casa_100: 'Lead da casa',
+  socio_carteira_cheia: 'Carteira de sócio — comissão cheia',
   casa_sem_comissao: 'Lead da casa fechado por sócio — receita da casa',
   indefinida: 'Carteira própria sem "quem trouxe" — marque na aba Origem do card',
+};
+
+/**
+ * Rótulo da regra + o percentual REALMENTE aplicado na linha. O % não é fixo no rótulo
+ * porque existe exceção (MedSênior paga 50% ao colaborador, não 100%/140%) e a carteira
+ * de sócio varia por operadora — rótulo fixo mentiria exatamente no caso raro.
+ */
+const rotuloComPercentual = (v: VendaDoFechamento): string => {
+  const base = ROTULO_REGRA[v.regra];
+  if (v.multiplicador === null) return base;
+  return `${base} (${Math.round(v.multiplicador * 100)}%)`;
 };
 
 /** Primeiro e último instante do mês de referência, em ISO UTC. */
@@ -232,6 +247,18 @@ const FechamentoDoMesPage: React.FC = () => {
             </p>
           )}
 
+          {data.desfeitas > 0 && (
+            <p className="flex items-start gap-1.5 text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2">
+              <AlertTriangle size={14} className="shrink-0 mt-0.5 text-slate-400" aria-hidden="true" />
+              <span>
+                {data.desfeitas === 1
+                  ? '1 venda do período foi DESFEITA (o card foi marcado como perdido depois do ganho)'
+                  : `${data.desfeitas} vendas do período foram DESFEITAS (cards marcados como perdidos depois do ganho)`}
+                {' '}— ela não conta nas somas nem na meta.
+              </span>
+            </p>
+          )}
+
           {/* Por pessoa */}
           {porPessoa.length === 0 ? (
             <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -298,7 +325,7 @@ const FechamentoDoMesPage: React.FC = () => {
                           </td>
                           <td className="px-4 py-2">{v.operadora ?? '—'}</td>
                           <td className="px-4 py-2 max-w-64">
-                            <span className="text-[11px]">{ROTULO_REGRA[v.regra]}</span>
+                            <span className="text-[11px]">{rotuloComPercentual(v)}</span>
                           </td>
                           <td className="px-4 py-2 text-right whitespace-nowrap font-medium">
                             {v.comissao !== null ? BRL.format(v.comissao) : '—'}
