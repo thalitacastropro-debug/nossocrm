@@ -83,9 +83,9 @@ const PERCENTUAL_POR_OPERADORA: Array<[chave: string, multiplicador: number]> = 
 /**
  * Multiplicador do COLABORADOR quando a operadora é MedSênior (Thalita, 27/08): "o
  * vendedor que vender MedSênior recebe uma comissão menor, de 50%" — o repasse da
- * operadora é 100%, então pagar 100%/140% deixaria a casa no negativo. Aplicado aos
- * DOIS casos de colaborador (lead da casa E trouxe o cliente); se ela quiser distinguir,
- * é uma constante a mais.
+ * operadora é 100%, então pagar 100%/140% deixaria a casa no negativo.
+ * ✅ CONFIRMADO por ela em 27/08: vale para os DOIS casos de colaborador — lead da casa E
+ * quando ele TROUXE o cliente. Não existe exceção do 140% na MedSênior.
  */
 const MULT_COLABORADOR_MEDSENIOR = 0.5;
 const ehMedSenior = (operadora: string | null): boolean => {
