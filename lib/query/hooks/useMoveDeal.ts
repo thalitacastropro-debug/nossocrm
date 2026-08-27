@@ -19,6 +19,7 @@ import { dealsService } from '@/lib/supabase';
 import { activitiesService } from '@/lib/supabase/activities';
 import { contactsService } from '@/lib/supabase/contacts';
 import type { Deal, DealView, Board, Activity } from '@/types';
+import { conferirCoerenciaDoMove } from '@/lib/deals/coerenciaDoMove';
 
 interface MoveDealParams {
   dealId: string;
@@ -185,6 +186,15 @@ export const useMoveDeal = () => {
 
   return useMutation<MoveDealResult, Error, MoveDealParams, MoveDealContext>({
     mutationFn: async ({ dealId, targetStageId, lossReason, deal, board, lifecycleStages, explicitWin, explicitLost }) => {
+      // TRAVA DO CARD ÓRFÃO (27/08/2026, caso Richard Gois): este update grava `stage_id`
+      // e NUNCA `board_id` — mover de funil é outro caminho. Se a tela estiver mostrando
+      // um funil do qual o card já saiu no servidor (foi o que a automação de desfecho da
+      // call fez 84 segundos antes), gravaríamos a etapa de um funil por cima do board de
+      // outro, e o card sumiria de todo kanban. Falhar aqui é barato: o onError já desfaz
+      // o otimismo e a pessoa recarrega a página.
+      const coerencia = conferirCoerenciaDoMove({ deal, board, targetStageId });
+      if (!coerencia.ok) throw new Error(coerencia.erro);
+
       const targetStage = board.stages.find(s => s.id === targetStageId);
 
       // Determine isWon/isLost based on params OR linkedLifecycleStage

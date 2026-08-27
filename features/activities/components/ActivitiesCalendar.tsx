@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Phone, Users, Mail, CheckSquare, X, Pencil, Clock, Briefcase } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Phone, Users, Mail, CheckSquare, X, Pencil, Clock, Briefcase } from 'lucide-react';
 import { Activity, Deal } from '@/types';
 
 interface ActivitiesCalendarProps {
@@ -244,6 +244,28 @@ export const ActivitiesCalendar: React.FC<ActivitiesCalendarProps> = ({
         setCurrentDate(nova);
     };
 
+    /**
+     * Pular direto para uma data (pedido da Thalita, 27/08/2026: *"no calendário eu não
+     * consigo passar pra outro mês ou escolher qualquer outra data se não criar outra
+     * atividade ou passar as setinhas que mudam por semana"*). Ela queria conferir uma
+     * tarefa de reabordagem agendada para julho/2027 — 48 cliques na setinha semanal.
+     * `type="date"` é o seletor nativo: teclado, calendário e troca de ano de uma vez.
+     */
+    const irParaData = (valor: string) => {
+        // Input limpo (ou meio digitado) manda string vazia/incompleta: não mexer no mês.
+        if (!valor) return;
+        const [ano, mes, dia] = valor.split('-').map(Number);
+        if (!ano || !mes || !dia) return;
+        // Construção por PARTES, não `new Date('2027-07-27')`: a string ISO pura é lida
+        // como UTC e, no fuso do Brasil, cairia no dia ANTERIOR.
+        const nova = new Date(ano, mes - 1, dia, 12, 0, 0, 0);
+        if (Number.isNaN(nova.getTime())) return;
+        setCurrentDate(nova);
+    };
+
+    /** Valor do seletor: o domingo da semana que está na tela. */
+    const dataDoInput = `${inicioDaSemana.getFullYear()}-${String(inicioDaSemana.getMonth() + 1).padStart(2, '0')}-${String(inicioDaSemana.getDate()).padStart(2, '0')}`;
+
     return (
         <div className="bg-white dark:bg-dark-card rounded-2xl border border-slate-200 dark:border-white/10 overflow-hidden">
             {/* Cabeçalho */}
@@ -261,6 +283,15 @@ export const ActivitiesCalendar: React.FC<ActivitiesCalendarProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1">
+                    {/* Mês: pula 4 semanas de uma vez. */}
+                    <button
+                        onClick={() => mover(-28)}
+                        aria-label="Mês anterior"
+                        title="Mês anterior"
+                        className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
+                    >
+                        <ChevronsLeft size={18} />
+                    </button>
                     <button
                         onClick={() => mover(-7)}
                         aria-label="Semana anterior"
@@ -281,6 +312,27 @@ export const ActivitiesCalendar: React.FC<ActivitiesCalendarProps> = ({
                     >
                         <ChevronRight size={18} />
                     </button>
+                    <button
+                        onClick={() => mover(28)}
+                        aria-label="Próximo mês"
+                        title="Próximo mês"
+                        className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
+                    >
+                        <ChevronsRight size={18} />
+                    </button>
+                    {/* Salto livre: qualquer dia, mês ou ano — sem contar cliques. */}
+                    <label className="flex items-center gap-1.5 ml-1">
+                        <span className="sr-only">Ir para uma data</span>
+                        <CalendarDays size={16} className="text-slate-400" aria-hidden="true" />
+                        <input
+                            type="date"
+                            aria-label="Ir para uma data"
+                            title="Ir para uma data (qualquer mês ou ano)"
+                            value={dataDoInput}
+                            onChange={(e) => irParaData(e.target.value)}
+                            className="px-2 py-1.5 text-sm text-slate-700 dark:text-slate-200 bg-transparent border border-slate-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                    </label>
                 </div>
             </div>
 

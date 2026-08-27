@@ -170,8 +170,21 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const deal = dealId ? dealsById.get(dealId) : undefined;
   const contact = deal ? (contactsById.get(deal.contactId) ?? null) : null;
 
-  // Determine the correct board for this deal
-  const dealBoard = deal ? (boardsById.get(deal.boardId) ?? activeBoard) : activeBoard;
+  /**
+   * O funil DESTE card — nunca o funil da tela por acidente.
+   *
+   * O `?? activeBoard` que existia aqui foi a ORIGEM do card órfão de 27/08/2026 (Richard
+   * Gois): quando o card muda de funil pelas costas da tela (a automação de desfecho da
+   * call mandou o card para a Nutrição) e a pessoa não tem `board_access` do funil novo, o
+   * `boardsById.get()` devolve undefined e o fallback entregava o funil ATIVO. A barra de
+   * etapas então desenhava as etapas do funil ERRADO, e clicar em uma delas gravava
+   * `stage_id` de um funil num card que já pertencia a outro — card invisível em todo
+   * kanban. Sem o fallback, o componente cai no caminho "Board não encontrado para este
+   * negócio", que já existe e desabilita a troca de etapa: o certo é não deixar mover.
+   *
+   * `activeBoard` continua valendo para o card que ainda não carregou (deal undefined).
+   */
+  const dealBoard = deal ? (boardsById.get(deal.boardId) ?? null) : activeBoard;
 
   // Use unified TanStack Query hook for moving deals
   const { moveDeal } = useMoveDealSimple(dealBoard, lifecycleStages);
