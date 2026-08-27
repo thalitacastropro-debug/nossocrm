@@ -259,22 +259,20 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
 
   /**
    * Resumo de dinheiro do funil (pedido da Thalita em 26/08/2026: "quero ver o total de
-   * mensalidade que está em jogo e quanto já foi ganho, filtrando por vendedor").
+   * valor que está em jogo e quanto já foi ganho, filtrando por vendedor").
    *
-   * SEMÂNTICA (não mexer sem falar com a dona): na Niva, `deal.value` é A MENSALIDADE QUE O
-   * LEAD PAGA HOJE no plano atual — vem de `custom_fields.qualificacao.valor_pago_exato`, é o
-   * que a Ana apura na qualificação. NÃO é valor de proposta nem receita fechada. Por isso o
-   * rótulo é "Mensalidades em jogo": chamar de "valor do pipeline" ou "receita prevista"
-   * seria mentira em cima do mesmo número.
+   * SEMÂNTICA (não mexer sem falar com a dona): na Niva, `deal.value` é O QUE O LEAD PAGA
+   * HOJE no plano atual — vem de `custom_fields.qualificacao.valor_pago_exato`, é o que a
+   * Ana apura na qualificação. NÃO é valor de proposta nem receita fechada. Por isso o
+   * rótulo é "Valor em jogo" (era "Mensalidades em jogo"; a palavra saiu a pedido dela em
+   * 26/08 à noite): chamar de "valor do pipeline" ou "receita prevista" seria mentira em
+   * cima do mesmo número.
    *
    * COMISSÃO: NÃO existe número de comissão aqui, e o tooltip não pode prometer que este
-   * valor "é" a comissão. Dois motivos, os dois checados no modelo financeiro da Niva
-   * (HANDOFF): (1) a comissão é um percentual do prêmio do plano VENDIDO e varia por
-   * operadora — Porto 250%, AMIL 260%, Sulamérica 250%, Alice 220%, Bradesco 330% (média
-   * 262%) —, nunca 100%; (2) o prêmio do plano vendido não existe em campo nenhum do CRM
-   * hoje, e `deal.value` é o que o lead paga na apólice ANTIGA. Derivar comissão daqui
-   * seria inventar dinheiro na tela. Quando nascer o campo de prêmio FECHADO, a comissão
-   * vira uma linha própria, calculada pelo percentual da operadora.
+   * valor "é" a comissão. A comissão depende do PRÊMIO do plano vendido e do percentual
+   * por operadora — e a tabela de percentuais é confidencial: vive só na rota do
+   * fechamento (`/api/relatorios/fechamento`), atrás do gate de admin. Este header é
+   * visível pelo time inteiro.
    *
    * DE ONDE VEM CADA NÚMERO:
    * - "em jogo" sai de `filteredDeals` (a mesma lista das colunas) para bater com o board na
@@ -288,7 +286,7 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
    *   venda", pedido da dona em 26/08).
    */
   const resumoFinanceiro = React.useMemo<{
-    mensalidadesEmJogo: number;
+    valorEmJogo: number;
     ganhoNoMes: number;
     pendenciasDePremio: typeof vendasDoMes.pendentesDePremio;
   } | null>(() => {
@@ -327,16 +325,16 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
     // mesmo que os cards ganhos já tenham saído daqui — é justamente o que se quer ver.
     if (!funilTemValor && vendasDoMes.contagem === 0) return null;
 
-    let mensalidadesEmJogo = 0;
+    let valorEmJogo = 0;
     for (const d of filteredDeals) {
       if (d.boardId !== board.id) continue;
       // "Em jogo" = aberto. Ganho já virou receita e perdido não volta; contar os dois aqui
       // dobraria o número quando a pessoa trocasse o filtro de status para "todos".
       if (d.isWon || d.isLost) continue;
-      mensalidadesEmJogo += d.value || 0;
+      valorEmJogo += d.value || 0;
     }
 
-    return { mensalidadesEmJogo, ganhoNoMes, pendenciasDePremio };
+    return { valorEmJogo, ganhoNoMes, pendenciasDePremio };
   }, [deals, filteredDeals, board.id, monthRange, ownerFilter, profile?.id, vendasDoMes]);
 
   /**
@@ -788,13 +786,13 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
                   <div className="mt-2 pt-2 border-t border-slate-100 dark:border-white/5 flex items-center gap-5">
                     <div
                       className="min-w-0 cursor-help"
-                      title="Soma da mensalidade que os leads pagam hoje no plano atual, somando só os cards ABERTOS deste funil. Segue os filtros da tela (busca, consultor e situação) — por isso zera se você filtrar por Ganhos ou Perdidos. Não é receita prevista nem comissão: a comissão é um percentual do prêmio do plano vendido, que o CRM ainda não guarda."
+                      title="Soma do valor que os leads pagam hoje no plano ATUAL deles, somando só os cards ABERTOS deste funil. Segue os filtros da tela (busca, consultor e situação) — por isso zera se você filtrar por Ganhos ou Perdidos. Não é receita: o que a venda rendeu entra no 'Já ganho no mês' pelo prêmio informado no fechamento."
                     >
                       <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">
-                        Mensalidades em jogo
+                        Valor em jogo
                       </div>
                       <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                        {BRL_CURRENCY_FORMATTER.format(resumoFinanceiro.mensalidadesEmJogo)}
+                        {BRL_CURRENCY_FORMATTER.format(resumoFinanceiro.valorEmJogo)}
                       </div>
                     </div>
                     <div
@@ -924,8 +922,8 @@ export const BoardStrategyHeader: React.FC<BoardStrategyHeaderProps> = ({
             <div className="space-y-3">
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 Venda de {pendencia.carimbo.vendedor_nome ?? 'responsável não identificado'} em{' '}
-                {new Date(pendencia.carimbo.vendido_em).toLocaleDateString('pt-BR')}. Informe a
-                mensalidade do plano que o cliente COMPROU — é ela que entra no
+                {new Date(pendencia.carimbo.vendido_em).toLocaleDateString('pt-BR')}. Informe o
+                valor do plano que o cliente COMPROU (o prêmio mensal) — é ele que entra no
                 &quot;Já ganho no mês&quot; e nos relatórios.
               </p>
               <PremioFechadoForm

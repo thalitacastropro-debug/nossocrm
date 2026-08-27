@@ -128,7 +128,9 @@ describe('GET /api/relatorios/fechamento', () => {
     });
   });
 
-  it('carteira própria de sócio: fora da meta e SEM número de comissão (tabela a confirmar)', async () => {
+  it('carteira própria de sócio: fora da meta, comissão CHEIA pela tabela da operadora', async () => {
+    // Bradesco = 330% (tabela do modelo financeiro, corrigida pela Thalita em 09/07):
+    // prêmio 3.000 → comissão cheia 9.900.
     linhas = [venda(
       { premio_mensal: 3000, operadora: 'Bradesco', vendedor_id: ADMIN_ID, vendedor_nome: 'Denilson Silva' },
       { tipo: 'carteira_propria', quem_trouxe: ADMIN_ID },
@@ -136,9 +138,63 @@ describe('GET /api/relatorios/fechamento', () => {
     const corpo = await (await chamar()).json();
     expect(corpo.vendas[0]).toMatchObject({
       regra: 'socio_carteira_cheia',
-      comissao: null,
+      comissao: 9900,
       conta_na_meta: false,
     });
+  });
+
+  it('nome de operadora com variação de grafia acha o percentual (SulAmérica = 250%)', async () => {
+    linhas = [venda(
+      { premio_mensal: 2000, operadora: 'SulAmérica Saúde', vendedor_id: ADMIN_ID, vendedor_nome: 'Denilson Silva' },
+      { tipo: 'carteira_propria', quem_trouxe: ADMIN_ID },
+    )];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'socio_carteira_cheia', comissao: 5000 });
+  });
+
+  it('operadora fora da tabela: comissão de sócio fica null (número não inventado)', async () => {
+    linhas = [venda(
+      { premio_mensal: 2000, operadora: 'Unimed', vendedor_id: ADMIN_ID, vendedor_nome: 'Denilson Silva' },
+      { tipo: 'carteira_propria', quem_trouxe: ADMIN_ID },
+    )];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'socio_carteira_cheia', comissao: null });
+  });
+
+  it('"Unimed Porto Alegre" NÃO vira Porto Seguro — cidade no nome não é operadora', async () => {
+    linhas = [venda(
+      { premio_mensal: 2000, operadora: 'Unimed Porto Alegre', vendedor_id: ADMIN_ID, vendedor_nome: 'Denilson Silva' },
+      { tipo: 'carteira_propria', quem_trouxe: ADMIN_ID },
+    )];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'socio_carteira_cheia', comissao: null });
+  });
+
+  it('"GNDI Família" NÃO casa com AMIL por substring', async () => {
+    linhas = [venda(
+      { premio_mensal: 2000, operadora: 'GNDI Família', vendedor_id: ADMIN_ID, vendedor_nome: 'Denilson Silva' },
+      { tipo: 'carteira_propria', quem_trouxe: ADMIN_ID },
+    )];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'socio_carteira_cheia', comissao: null });
+  });
+
+  it('"Sul América" escrito com espaço também casa (250%)', async () => {
+    linhas = [venda(
+      { premio_mensal: 2000, operadora: 'Sul América', vendedor_id: ADMIN_ID, vendedor_nome: 'Denilson Silva' },
+      { tipo: 'carteira_propria', quem_trouxe: ADMIN_ID },
+    )];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'socio_carteira_cheia', comissao: 5000 });
+  });
+
+  it('"Porto Seguro Saúde" continua casando (250%)', async () => {
+    linhas = [venda(
+      { premio_mensal: 2000, operadora: 'Porto Seguro Saúde', vendedor_id: ADMIN_ID, vendedor_nome: 'Denilson Silva' },
+      { tipo: 'carteira_propria', quem_trouxe: ADMIN_ID },
+    )];
+    const corpo = await (await chamar()).json();
+    expect(corpo.vendas[0]).toMatchObject({ regra: 'socio_carteira_cheia', comissao: 5000 });
   });
 
   it('sócio vendendo lead da casa: receita da casa, sem comissão de pessoa', async () => {
@@ -161,6 +217,23 @@ describe('GET /api/relatorios/fechamento', () => {
     linhas = [venda({ premio_mensal: 900, operadora: 'AMIL' }, { tipo: 'carteira_propria', quem_trouxe: null })];
     const corpo = await (await chamar()).json();
     expect(corpo.vendas[0]).toMatchObject({ regra: 'indefinida', comissao: null, conta_na_meta: null });
+  });
+
+  it('agregados separam comissão do TIME de repasse de SÓCIO — naturezas diferentes', async () => {
+    // Pedro vende lead da casa (AMIL, 100%) = repasse ao time de 2.000.
+    // Denilson fecha carteira própria (Bradesco, comissão cheia 330%) = repasse de sócio 9.900.
+    // Somar os dois num único "comissão a pagar" esconderia que 9.900 é a receita da venda
+    // passando direto pro sócio (niva-os-visao §3), não despesa de comissão do time.
+    linhas = [
+      venda({ premio_mensal: 2000, operadora: 'AMIL' }),
+      venda(
+        { premio_mensal: 3000, operadora: 'Bradesco', vendedor_id: ADMIN_ID, vendedor_nome: 'Denilson Silva' },
+        { tipo: 'carteira_propria', quem_trouxe: ADMIN_ID },
+      ),
+    ];
+    const corpo = await (await chamar()).json();
+    expect(corpo.comissaoTime).toBe(2000);
+    expect(corpo.repasseSocios).toBe(9900);
   });
 
   it('venda fora do período não entra', async () => {

@@ -8,10 +8,10 @@
  * ([[feedback_niva_dados_confidenciais_crm]]); "admin = quem pode ver o caixa" (§4b).
  *
  * O que a tela responde, por pessoa: quantas vendas, quanto de prêmio, quanto de comissão
- * (pelas regras decididas em 26/08 — 140% quando o colaborador trouxe, 100% em lead da
- * casa) e o que ainda está DEVENDO: prêmio não informado e carteira sem "quem trouxe".
- * Carteira própria de sócio aparece FORA da meta e sem número de comissão — o percentual
- * por operadora ainda está a confirmar com a Thalita; número não confirmado não aparece.
+ * (140% quando o colaborador trouxe, 100% em lead da casa, % da operadora na carteira
+ * própria de sócio) e o que ainda está DEVENDO: prêmio não informado e carteira sem
+ * "quem trouxe". Carteira própria de sócio fica FORA da meta. A tabela por operadora vive
+ * SÓ na rota (servidor, atrás do gate de admin) — nunca neste componente.
  */
 
 import React, { useMemo, useState } from 'react';
@@ -51,7 +51,10 @@ interface CorpoDoFechamento {
   vendas: VendaDoFechamento[];
   contagem: number;
   premioTotal: number;
-  comissaoTotal: number;
+  /** Repasse a COLABORADOR (140%/100%) — despesa de comissão do time. */
+  comissaoTime: number;
+  /** Comissão cheia de carteira própria de SÓCIO — receita distribuída, não despesa. */
+  repasseSocios: number;
   pendentesDePremio: number;
   vendasNaMeta: number;
 }
@@ -59,7 +62,7 @@ interface CorpoDoFechamento {
 const ROTULO_REGRA: Record<VendaDoFechamento['regra'], string> = {
   colaborador_trouxe_140: 'Trouxe o cliente (140%)',
   colaborador_casa_100: 'Lead da casa (100%)',
-  socio_carteira_cheia: 'Carteira de sócio — comissão cheia (tabela da operadora, a confirmar)',
+  socio_carteira_cheia: 'Carteira de sócio — comissão cheia (% da operadora)',
   casa_sem_comissao: 'Lead da casa fechado por sócio — receita da casa',
   indefinida: 'Carteira própria sem "quem trouxe" — marque na aba Origem do card',
 };
@@ -193,12 +196,15 @@ const FechamentoDoMesPage: React.FC = () => {
 
       {data && (
         <>
-          {/* Totais do mês */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {/* Totais do mês. "Comissão do time" (140%/100%, despesa de repasse) fica
+              separada de "Carteira de sócios" (comissão cheia — receita da venda
+              distribuída ao sócio): somar as duas num "a pagar" único inflaria a despesa. */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {[
               { rotulo: 'Vendas', valor: String(data.contagem) },
               { rotulo: 'Prêmio (soma)', valor: BRL.format(data.premioTotal) },
-              { rotulo: 'Comissão a pagar', valor: BRL.format(data.comissaoTotal) },
+              { rotulo: 'Comissão do time', valor: BRL.format(data.comissaoTime) },
+              { rotulo: 'Carteira de sócios', valor: BRL.format(data.repasseSocios) },
               { rotulo: 'Contam na meta', valor: String(data.vendasNaMeta) },
             ].map(({ rotulo, valor }) => (
               <div

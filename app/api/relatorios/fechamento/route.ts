@@ -14,17 +14,19 @@
  * REGRAS DE COMISSÃO — decididas pela Thalita em 26/08 (roadmap §6c), aplicadas aqui no
  * servidor para nenhuma tabela de percentual viajar ao cliente de quem não deve ver:
  *
- * | situação                                        | regra                     | comissão      |
- * |-------------------------------------------------|---------------------------|---------------|
- * | colaborador TROUXE o cliente (carteira própria) | `colaborador_trouxe_140`  | 140% × prêmio |
- * | colaborador vende lead DA CASA (tráfego)        | `colaborador_casa_100`    | 100% × prêmio |
- * | carteira própria de SÓCIO (admin)               | `socio_carteira_cheia`    | null (¹)      |
- * | sócio vende lead da casa                        | `casa_sem_comissao`       | null          |
- * | carteira própria sem "quem trouxe"              | `indefinida`              | null (²)      |
+ * | situação                                        | regra                     | comissão               |
+ * |-------------------------------------------------|---------------------------|------------------------|
+ * | colaborador TROUXE o cliente (carteira própria) | `colaborador_trouxe_140`  | 140% × prêmio          |
+ * | colaborador vende lead DA CASA (tráfego)        | `colaborador_casa_100`    | 100% × prêmio          |
+ * | carteira própria de SÓCIO (admin)               | `socio_carteira_cheia`    | % da operadora × prêmio (¹) |
+ * | sócio vende lead da casa                        | `casa_sem_comissao`       | null                   |
+ * | carteira própria sem "quem trouxe"              | `indefinida`              | null (²)               |
  *
- * (¹) Comissão cheia da corretora = percentual POR OPERADORA — a tabela ainda está "a
- *     confirmar" com a Thalita (niva-os-visao.md §5). Número não confirmado não aparece:
- *     seria chute vestido de relatório.
+ * (¹) Comissão cheia = o repasse inteiro da operadora, pela tabela do modelo financeiro
+ *     da Niva (memória [[project_niva_modelo_financeiro_metas]], corrigida pela Thalita em
+ *     09/07/2026): Porto 250% · Bradesco 330% · AMIL 260% · Sulamérica 250% · Alice 220%.
+ *     Operadora fora da tabela → comissão null (número não inventado), e a linha aparece
+ *     assim mesmo para a pendência ser visível.
  * (²) Sem saber quem trouxe, não dá para dizer nem a comissão nem se conta na meta
  *     (carteira de sócio fica FORA da meta; de colaborador, DENTRO). `conta_na_meta: null`
  *     é pendência de marcação na aba Origem do card.
@@ -43,9 +45,69 @@ import { lerPremioFechado } from '@/lib/deals/premioFechado';
 
 export const maxDuration = 30;
 
-/** Multiplicadores DECIDIDOS (26/08). A tabela por operadora NÃO entra até ser confirmada. */
+/** Multiplicadores DECIDIDOS (26/08). */
 const MULT_COLABORADOR_TROUXE = 1.4;
 const MULT_COLABORADOR_CASA = 1.0;
+
+/**
+ * Percentual de repasse POR OPERADORA — a "comissão cheia" da carteira própria de sócio.
+ * Fonte: modelo financeiro da Niva, números corrigidos pela Thalita em 09/07/2026
+ * (Porto 250% · Bradesco 330% · AMIL 260% · Sulamérica 250% · Alice 220% — média 262%).
+ * ⚠️ CONFIDENCIAL: esta tabela só vive aqui, atrás do gate de admin. Nunca movê-la para
+ * o cliente nem para campo legível pelo time ([[feedback_niva_dados_confidenciais_crm]]).
+ *
+ * O casamento é por PALAVRA INTEIRA no nome digitado (normalizado sem acento/caixa),
+ * porque o campo de operadora é livre: "Bradesco Saúde", "SulAmérica", "sula" — tudo acha.
+ * NÃO é substring: a revisão adversarial de 27/08 provou que `includes` fazia
+ * "Unimed Porto Alegre" virar Porto Seguro (a CIDADE contém 'porto') e "GNDI Família"
+ * virar AMIL ('família' contém 'amil') — comissão inventada exatamente onde vive a
+ * carteira antiga de sócio, que tem operadora de todo tipo. Duas defesas:
+ * 1. GUARDA: nome que contém uma operadora conhecida FORA da tabela (Unimed, Hapvida,
+ *    NotreDame/GNDI, MedSênior...) devolve null na hora, antes de qualquer casamento.
+ * 2. TOKEN EXATO: a chave precisa ser uma palavra inteira do nome ('porto' casa em
+ *    "Porto Seguro Saúde", não dentro de "aeroporto"; 'amil' não casa em 'familia').
+ * Operadora fora da tabela → null, e a comissão fica em branco em vez de virar chute.
+ */
+const PERCENTUAL_POR_OPERADORA: Array<[chave: string, multiplicador: number]> = [
+  ['porto', 2.5],
+  ['bradesco', 3.3],
+  ['amil', 2.6],
+  ['sulamerica', 2.5],
+  ['sula', 2.5],
+  ['alice', 2.2],
+];
+
+/**
+ * Operadoras que a Niva conhece e que NÃO estão na tabela de repasse. A presença de
+ * qualquer uma no nome derruba o casamento inteiro — é o que impede a cidade em
+ * "Unimed Porto Alegre" de virar Porto Seguro.
+ */
+const OPERADORAS_FORA_DA_TABELA = [
+  'unimed', 'hapvida', 'notredame', 'notre', 'intermedica', 'gndi',
+  'medsenior', 'medsênior', 'prevent', 'samel', 'cassi', 'geap', 'ampla', 'seguros unimed',
+];
+
+/** Sem acentos, minúsculo — o que "SulAmérica Saúde" precisa para casar com 'sulamerica'. */
+const normalizar = (texto: string): string =>
+  texto.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+const multiplicadorDaOperadora = (operadora: string | null): number | null => {
+  if (!operadora) return null;
+  const nome = normalizar(operadora);
+  const tokens = nome.split(/[^a-z0-9]+/).filter(Boolean);
+  for (const fora of OPERADORAS_FORA_DA_TABELA) {
+    if (tokens.includes(normalizar(fora)) || nome.includes(normalizar(fora))) return null;
+  }
+  // "Sul América" escrito com espaço tokeniza em ['sul','america'] e nenhum token isolado
+  // é 'sulamerica' — os pares adjacentes COLADOS cobrem a grafia espaçada sem reabrir a
+  // porta do substring (o par ainda é comparação por igualdade).
+  const paresColados = tokens.slice(0, -1).map((t, i) => t + tokens[i + 1]);
+  const candidatos = [...tokens, ...paresColados];
+  for (const [chave, mult] of PERCENTUAL_POR_OPERADORA) {
+    if (candidatos.includes(chave)) return mult;
+  }
+  return null;
+};
 
 type RegraDeComissao =
   | 'colaborador_trouxe_140'
@@ -205,11 +267,13 @@ export async function GET(request: NextRequest) {
           pessoaId = null;
           contaNaMeta = null;
         } else if (ehSocio(quemTrouxe)) {
-          // Comissão cheia da corretora = percentual POR OPERADORA, ainda a confirmar
-          // com a Thalita. Número não confirmado não sai daqui.
+          // Comissão cheia = o repasse inteiro da operadora (tabela lá em cima). Operadora
+          // fora da tabela deixa o multiplicador null e a comissão em branco — visível,
+          // nunca chutada.
           regra = 'socio_carteira_cheia';
           pessoaId = quemTrouxe;
           contaNaMeta = false;
+          multiplicador = multiplicadorDaOperadora(premio?.operadora ?? null);
         } else {
           regra = 'colaborador_trouxe_140';
           pessoaId = quemTrouxe;
@@ -261,14 +325,24 @@ export async function GET(request: NextRequest) {
 
     // Agregados prontos: a tela agrupa por pessoa, mas os totais saem daqui para o número
     // do topo bater com a lista sem depender de JS da tela.
+    //
+    // DOIS TOTAIS DE COMISSÃO, de propósito (achado da revisão adversarial de 27/08):
+    // a comissão do TIME (140%/100%) é despesa de repasse a colaborador; a comissão CHEIA
+    // de sócio é a receita da venda passando direto para o sócio ("o valor cai na conta e
+    // só depois é repassado" — niva-os-visao §3). Somar as duas num único "a pagar"
+    // inflaria a despesa com o que na verdade é distribuição de carteira própria.
     let premioTotal = 0;
-    let comissaoTotal = 0;
+    let comissaoTime = 0;
+    let repasseSocios = 0;
     let pendentesDePremio = 0;
     let vendasNaMeta = 0;
     for (const v of vendas) {
       if (v.premio_mensal !== null) premioTotal += v.premio_mensal;
       else pendentesDePremio += 1;
-      if (v.comissao !== null) comissaoTotal += v.comissao;
+      if (v.comissao !== null) {
+        if (v.regra === 'socio_carteira_cheia') repasseSocios += v.comissao;
+        else comissaoTime += v.comissao;
+      }
       if (v.conta_na_meta === true) vendasNaMeta += 1;
     }
 
@@ -279,7 +353,8 @@ export async function GET(request: NextRequest) {
         vendas,
         contagem: vendas.length,
         premioTotal,
-        comissaoTotal,
+        comissaoTime,
+        repasseSocios,
         pendentesDePremio,
         vendasNaMeta,
         ignorados,

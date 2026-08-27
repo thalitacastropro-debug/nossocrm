@@ -6,17 +6,19 @@
  * - `deals.value` NESTA OPERAÇÃO é **a mensalidade que o lead paga hoje no plano ANTIGO**.
  *   Vem de `custom_fields.qualificacao.valor_pago_exato`, apurado pela Ana na qualificação.
  *   É o gatilho da conversa ("você paga R$ 750 e pode pagar menos"), não receita.
- * - `custom_fields.venda.premio_mensal` é **a mensalidade do plano que o cliente COMPROU**.
+ * - `custom_fields.venda.premio_mensal` é **o valor do plano que o cliente COMPROU**.
  *   É este o número que fecha o mês: "Já ganho no mês" soma ele, e a comissão é um
- *   percentual DELE, variável por operadora (Porto 250%, AMIL 260%, Sulamérica 250%,
- *   Alice 220%, Bradesco 330% — média 262%).
+ *   percentual DELE, variável por operadora.
  *
  * Enquanto o prêmio não existia, o topo do funil somava o plano VELHO do lead e qualquer
  * número de comissão na tela seria chute (niva-os-visao.md §1, roadmap §6c).
  *
- * ⚠️ COMISSÃO NÃO MORA AQUI. A tabela de percentuais é dado confidencial: em 26/08/2026 o
- * `goal_description` do funil expôs pró-labore e comissão média para todo o time. Este
- * módulo guarda o PRÊMIO; o cálculo da comissão vive na tela restrita de fechamento do mês.
+ * ⚠️ COMISSÃO NÃO MORA AQUI — NEM EM COMENTÁRIO. Este módulo é importado por componentes
+ * CLIENTE (DealCard, PremioFechadoPanel): tudo que estiver neste arquivo pode acabar no
+ * bundle do navegador de qualquer papel. A tabela de percentuais por operadora é dado
+ * confidencial (em 26/08/2026 o `goal_description` do funil expôs pró-labore e comissão
+ * média para todo o time) e vive EXCLUSIVAMENTE na rota admin-only
+ * `app/api/relatorios/fechamento/route.ts` — não copiá-la para cá nem em comentário.
  *
  * @module lib/deals/premioFechado
  */
@@ -99,7 +101,7 @@ export const validarPremioFechado = (entrada: EntradaPremioFechado): ResultadoVa
   if (premio > LIMITE_PREMIO_MENSAL) {
     return {
       ok: false,
-      erro: `Confira o valor: ${premio.toLocaleString('pt-BR')} é alto demais para uma mensalidade. `
+      erro: `Confira o valor: ${premio.toLocaleString('pt-BR')} é alto demais para o valor mensal de um plano. `
         + 'O campo é o prêmio MENSAL do plano vendido, não o anual nem a comissão.',
     };
   }
