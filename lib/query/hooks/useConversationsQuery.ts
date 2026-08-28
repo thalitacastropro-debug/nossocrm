@@ -253,8 +253,17 @@ export function useUnreadCount() {
       if (error) throw error;
       return count || 0;
     },
-    staleTime: 60 * 1000, // 60s - realtime subscription handles live updates
-    refetchOnWindowFocus: false,
+    // Este é o badge de mensagem nova no menu — o único aviso de que um cliente respondeu.
+    // A premissa antiga ("60s, o realtime cuida do resto") era falsa FORA da tela de chat:
+    // o Layout monta uma vez e persiste entre navegações, então a query rodava uma vez por
+    // F5 e o badge virava uma foto do carregamento. Foi a queixa do Denilson em 27/08/2026
+    // ("o cliente mandou mensagem, ele tava com o sistema aberto e não viu — teve que dar
+    // F5"). O realtime, agora assinado no Layout, segue sendo o caminho rápido; o intervalo
+    // e o foco de janela são a rede de segurança para quando o socket cair.
+    staleTime: 30 * 1000,
+    refetchInterval: 30 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     enabled: !authLoading && !!user,
   });
 }

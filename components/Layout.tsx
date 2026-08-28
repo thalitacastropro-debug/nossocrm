@@ -56,6 +56,7 @@ import { SkipLink } from '@/lib/a11y';
 import { useResponsiveMode } from '@/hooks/useResponsiveMode';
 import { BottomNav, MoreMenuSheet, NavigationRail } from '@/components/navigation';
 import { useUnreadCount } from '@/lib/query/hooks/useConversationsQuery';
+import { useRealtimeSyncMessaging } from '@/lib/realtime/useRealtimeSync';
 
 // Lazy load AI Assistant (deprecated - using UIChat now)
 // const AIAssistant = lazy(() => import('./AIAssistant'));
@@ -185,6 +186,26 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // Hydration safety: `isDebugMode()` reads localStorage. On SSR it is always false.
   // Initialize deterministically and sync on mount to avoid hydration mismatch warnings.
   const [debugEnabled, setDebugEnabled] = useState(false);
+
+  /**
+   * REALTIME DE MENSAGERIA MORA AQUI, no shell — não na tela de chat.
+   *
+   * Até 27/08/2026 a única assinatura viva de `messaging_conversations`/`messaging_messages`
+   * estava dentro do `MessagingPage`: exatamente onde a pessoa JÁ está olhando a conversa.
+   * Em qualquer outra tela (funil, contatos, dashboard) o CRM não tinha socket de mensageria,
+   * então o cliente respondia e ninguém era avisado. Foi a queixa do Denilson, em áudio:
+   * *"quando o cliente manda a mensagem, chega notificação no CRM? Não"*. (O
+   * `MessagingProvider`, que também assinava, nunca foi montado em lugar nenhum — código morto.)
+   *
+   * `enabled: !!user` é obrigatório: o `subscribe()` lê o access_token de forma SÍNCRONA, e
+   * assinar antes de a sessão existir manda o join SEM token — o Realtime avalia a RLS como
+   * `anon`, as policies são `{authenticated}`, e o canal fica SUBSCRIBED entregando nada.
+   *
+   * ⚠️ Não reintroduzir a assinatura no MessagingPage: o nome do canal deriva da lista de
+   * tabelas, então as duas colidiriam no MESMO tópico — e sair da tela de chat derrubaria a
+   * entrega do shell inteiro.
+   */
+  useRealtimeSyncMessaging({ enabled: !!user });
 
   // Messaging unread count for notification badge
   const { data: unreadMessagesCount = 0 } = useUnreadCount();

@@ -36,7 +36,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Modal } from '@/components/ui/Modal';
-import { useRealtimeSyncMessaging } from '@/lib/realtime/useRealtimeSync';
 import { queryKeys } from '@/lib/query';
 import { useContactPresence } from '@/lib/messaging/hooks/useContactPresence';
 import type { ConversationView } from '@/lib/messaging/types';
@@ -63,7 +62,10 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
   const [replyToMessage, setReplyToMessage] = useState<import('@/lib/messaging/types').MessagingMessage | null>(null);
 
   // Subscribe to realtime updates
-  useRealtimeSyncMessaging();
+  // A assinatura de mensageria subiu para o Layout (shell) em 27/08/2026: assinar aqui
+  // também colidiria no MESMO tópico de canal (o nome deriva da lista de tabelas) e sair
+  // desta tela derrubaria a entrega do app inteiro. O handler do shell já invalida
+  // messagingConversations.all + unreadCount(), então esta tela segue ao vivo.
 
   // Fetch selected conversation details
   const { data: selectedConversation, isLoading: isConversationLoading } = useConversation(selectedConversationId);

@@ -213,7 +213,11 @@ function isMeaningful(v: unknown): boolean {
  * 'vai_abrir_mei' na conversa — deixamos indefinido, mais seguro.
  */
 export function cnpjFromLeadForm(current: Record<string, unknown> | null | undefined): 'pme' | null {
-  const raw = (current?.lead_form as { raw?: Record<string, unknown> } | undefined)?.raw;
+  // `leadFormSource` (raw ?? fields), igual às irmãs desta família. Antes lia SÓ `raw`, e
+  // lead que chega apenas com `fields` — importação manual, intake de outra origem — tinha
+  // o CNPJ ignorado: sem CNPJ o `classifyTier` para em "faltam dados essenciais" e o card
+  // nasce sem selo. Foi o que aconteceu com os leads recuperados à mão em 27/08/2026.
+  const raw = leadFormSource(current);
   if (!raw) return null;
   for (const [k, v] of Object.entries(raw)) {
     if (typeof v !== 'string') continue;
@@ -246,6 +250,36 @@ export function idadesFromLeadForm(current: Record<string, unknown> | null | und
     if (nums.length) return nums;
   }
   return [];
+}
+
+/**
+ * Nº de VIDAS direto do formulário — o campo que o formulário NOVO do Meta passou a usar.
+ *
+ * O formulário antigo perguntava "Quais as idades das pessoas" e as vidas saíam de contar as
+ * idades (`idadesFromLeadForm`). O que estreou em 21/08/2026 ("21.08 FORM VIDEOS") pergunta
+ * **"Quantas vidas você tem para adicionar no plano?"** e responde `4_vidas`. Ninguém lia
+ * isso: `vidas` ficava null e o tier caía em `indefinido` com o motivo "Faltam dados
+ * essenciais (CNPJ e/ou número de vidas)" — foi o que aconteceu com o lead Bruce Mendes em
+ * 27/08 e o que a dona viu como "leads chegando sem categorização".
+ *
+ * Teto de 30: acima disso é digitação errada ou o lead respondendo outra coisa no campo, e
+ * vida demais infla o tier — justamente o erro que faria alguém priorizar o lead errado.
+ * Zero não conta: plano sem vida não existe.
+ */
+export function vidasFromLeadForm(current: Record<string, unknown> | null | undefined): number | null {
+  const src = leadFormSource(current);
+  if (!src) return null;
+  for (const [k, v] of Object.entries(src)) {
+    if (typeof v !== 'string') continue;
+    const key = k.toLowerCase();
+    // Só o campo de VIDAS. "idade" e "quanto paga" têm funções próprias — casar aqui faria
+    // "49,48,26" virar 49 vidas e "3200" virar 3200 vidas.
+    if (!/vida/.test(key)) continue;
+    if (/idade/.test(key) || /quanto/.test(key) || /paga/.test(key)) continue;
+    const n = parseInt((v.match(/\d+/) ?? [''])[0], 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 30) return n;
+  }
+  return null;
 }
 
 /**
@@ -296,7 +330,11 @@ export function seedTierFromLeadForm(
   const temCnpj = cnpjFromLeadForm(current); // 'pme' | null
   const idades = idadesFromLeadForm(current);
   const valor = valorFromLeadForm(current);
-  const vidas = idades.length > 0 ? idades.length : null;
+  // Vidas: as idades são a fonte mais rica (dão o perfil etário junto), mas o formulário
+  // NOVO do Meta (21/08/2026) não pergunta mais idade — pergunta "Quantas vidas". Sem este
+  // fallback o tier nasce `indefinido` em todo lead do formulário novo, que foi o que a
+  // dona viu como "leads chegando sem categorização" (27/08).
+  const vidas = idades.length > 0 ? idades.length : vidasFromLeadForm(current);
 
   // Nenhum sinal útil no form → não semeia.
   if (!temCnpj && vidas == null && valor == null) return null;
@@ -349,6 +387,14 @@ function apply(current: Record<string, unknown>, ext: NivaHealthExtraction): Dom
       merged.idades = idadesForm;
       if (merged.vidas == null) merged.vidas = idadesForm.length; // nº de idades = proxy de vidas
     }
+  }
+  // Vidas pelo campo DIRETO do formulário novo ("Quantas vidas... 4_vidas"). Vem depois das
+  // idades de propósito: quando o lead informou as idades, elas são a fonte mais rica (dão
+  // vidas E perfil etário). Este fallback é o que faz o tier nascer nos leads do formulário
+  // de 21/08 em diante, que não perguntam mais idade nenhuma.
+  if (merged.vidas == null) {
+    const vidasForm = vidasFromLeadForm(current);
+    if (vidasForm != null) merged.vidas = vidasForm;
   }
   if (merged.valor_pago_exato == null) {
     const valorForm = valorFromLeadForm(current);

@@ -858,8 +858,10 @@ async function processIncomingMessageInner(
       decision,
     });
 
-    // 12. Extrair campos BANT automaticamente (fire-and-forget)
-    extractAndUpdateBANT({
+    // 12. Extrair campos BANT automaticamente.
+    // Mesmo motivo do 12b abaixo: fire-and-forget morre no congelamento da instância
+    // serverless. Aguardado desde 27/08/2026.
+    await extractAndUpdateBANT({
       supabase,
       dealId,
       conversationId,
@@ -869,9 +871,26 @@ async function processIncomingMessageInner(
       console.error('[AIAgent] BANT extraction failed:', err);
     });
 
-    // 12b. Extração domain-specific (campos + tier do vertical) — fire-and-forget no respond
-    // (a resposta já foi enviada; aqui pode marcar is_lost quando fora do ICP). Gated por board.
-    runDomainExtraction({
+    // 12b. Extração domain-specific (campos + tier do vertical). Gated por board.
+    //
+    // ⚠️ AWAIT OBRIGATÓRIO — não voltar a soltar sem esperar (27/08/2026).
+    // Isto era fire-and-forget "porque a resposta ao lead já foi enviada". Só que em
+    // serverless a instância CONGELA no return: o round trip do modelo não terminava e NADA
+    // era gravado. O caso que revelou: o lead Bruce Mendes respondeu "Sem" (coparticipação)
+    // e "Sim, 49,48,26" (vidas e idades), e a Ana perguntou as idades DE NOVO no turno
+    // seguinte — as duas respostas nunca chegaram ao card.
+    //
+    // Por que só apareceu agora: no turno 1 (etapa "novo-lead") o passo 13 abaixo faz OUTRA
+    // chamada de LLM com await, e esse await segurava a função aberta tempo suficiente para
+    // a extração terminar POR ACIDENTE. Na etapa "em-qualificação" — onde a qualificação
+    // INTEIRA é coletada — `advancement_criteria` é vazio, o passo 13 é pulado e a extração
+    // morria em todos os turnos. O ramo `observe` já usava await com este mesmo motivo
+    // escrito no comentário; o `respond`, que é o que roda em produção, ficou de fora.
+    //
+    // Custo: alguns segundos a mais na função DEPOIS de a resposta já ter ido ao lead —
+    // ninguém está esperando. O `.catch` mantém a garantia de que falha aqui não derruba o
+    // turno.
+    await runDomainExtraction({
       supabase,
       dealId,
       conversationId,
