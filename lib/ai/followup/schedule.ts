@@ -12,6 +12,9 @@ export interface FollowupState {
   last_sent_at?: string | null;
   stopped?: boolean;
   stopped_reason?: string | null;
+  /** Falhas de ENVIO seguidas (não de cadência). Zera no primeiro envio que dá certo. */
+  fail_count?: number;
+  last_failed_at?: string | null;
 }
 
 const H = 60 * 60 * 1000;
@@ -47,8 +50,57 @@ export interface TouchDecision {
   isLast: boolean; // este envio atinge o máximo
 }
 
+/**
+ * Retry de ENVIO — nasceu do incidente de 28/08/2026 (WhatsApp desconectado).
+ *
+ * Falha de envio reverte a cadência (o toque não foi entregue, não pode ser consumido),
+ * e sem freio o cron retentava o MESMO toque a cada 15 min para sempre. O freio é duplo:
+ * backoff exponencial entre as tentativas e um teto de falhas seguidas que para a
+ * cadência e avisa gente de verdade. Ambos zeram no primeiro envio que dá certo.
+ */
+/**
+ * 3, e não mais: o cron só roda em horário comercial, então cada falha "custa" o backoff
+ * inteiro em tempo de relógio. Com 3 o alarme sai ~1h30 depois da primeira falha; com 5
+ * sairia no fim da tarde — tarde demais para uma queda que começa de manhã.
+ */
+export const MAX_FALHAS_SEGUIDAS = 3;
+export const BACKOFF_BASE_MS = 30 * MIN;
+/** Teto do backoff: além disso o alarme já disparou, esperar mais não ajuda. */
+export const BACKOFF_MAX_MS = 8 * H;
+
+/** Espera exigida DEPOIS da n-ésima falha seguida: 30min, 1h, 2h, 4h… até o teto. */
+export function backoffMs(failCount: number): number {
+  if (failCount <= 0) return 0;
+  return Math.min(BACKOFF_BASE_MS * 2 ** (failCount - 1), BACKOFF_MAX_MS);
+}
+
+export function registerFailure(state: FollowupState, failedAt: Date): FollowupState {
+  const failCount = (state.fail_count ?? 0) + 1;
+  const esgotou = failCount >= MAX_FALHAS_SEGUIDAS;
+  return {
+    ...state,
+    fail_count: failCount,
+    last_failed_at: failedAt.toISOString(),
+    stopped: esgotou ? true : (state.stopped ?? false),
+    stopped_reason: esgotou ? 'falhas_de_envio' : (state.stopped_reason ?? null),
+  };
+}
+
+export function clearFailures(state: FollowupState): FollowupState {
+  if (!state.fail_count && !state.last_failed_at) return state;
+  return { ...state, fail_count: 0, last_failed_at: null };
+}
+
 export function nextDueTouch(state: FollowupState, now: Date): TouchDecision | null {
   if (state.stopped) return null;
+
+  // Backoff: depois de uma falha de envio, o mesmo toque só volta a ser tentado quando a
+  // espera exponencial vencer. Sem isto, o toque devido é retentado a cada rodada do cron.
+  if (state.fail_count && state.last_failed_at) {
+    const failedMs = Date.parse(state.last_failed_at);
+    if (!Number.isNaN(failedMs) && now.getTime() < failedMs + backoffMs(state.fail_count)) return null;
+  }
+
   const schedule = scheduleFor(state.cadence);
   if (state.count >= schedule.length) return null;
   const anchorMs = Date.parse(state.anchor_at);

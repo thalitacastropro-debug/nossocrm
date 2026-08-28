@@ -14,7 +14,11 @@ import { runLeadFollowup, type AnexoDeToque } from '@/lib/ai/followup/run';
 import { generateWarmFollowupBubbles } from '@/lib/ai/followup/generate';
 import { runMeetingReminder } from '@/lib/ai/followup/meeting-reminder';
 import { runHandoffSla } from '@/lib/ai/followup/handoff-sla-run';
-import { formatHandoffEscalationMessage, sendTelegramMessage } from '@/lib/notifications/telegram';
+import {
+  formatHandoffEscalationMessage,
+  formatFollowupFalhasMessage,
+  sendTelegramMessage,
+} from '@/lib/notifications/telegram';
 
 export const maxDuration = 60;
 
@@ -56,11 +60,46 @@ export async function GET(req: Request): Promise<Response> {
 
   const anexo = (cfgAnexo?.followup_anexo ?? null) as AnexoDeToque | null;
 
+  /**
+   * Manda um aviso pro chat do time E pro da dona (quando configurado). Usado pelos dois
+   * alarmes deste cron. Nunca joga: alarme que derruba o lote é pior que alarme perdido.
+   */
+  const avisarNoTelegram = async (message: string, origem: string) => {
+    const { data: cfg } = await supabase
+      .from('organization_settings')
+      .select('telegram_bot_token, telegram_chat_id, telegram_chat_id_alerts')
+      .maybeSingle();
+    if (!cfg?.telegram_bot_token) return;
+    // Set evita mandar 2x quando o chat do time e o da dona são o mesmo.
+    const destinos = new Set(
+      [cfg.telegram_chat_id, cfg.telegram_chat_id_alerts].filter(Boolean) as string[]
+    );
+    await Promise.all(
+      [...destinos].map((chatId) =>
+        sendTelegramMessage(cfg.telegram_bot_token as string, chatId, message).catch((err: unknown) =>
+          console.error(`[Cron:${origem}] Telegram falhou (não-fatal):`, chatId, err)
+        )
+      )
+    );
+  };
+
   const followup = await runLeadFollowup({
     supabase,
     now,
     sendResponse,
     anexo,
+    // Cadência parada por falhas seguidas de envio: quase sempre é a instância do
+    // WhatsApp caída, não o lead. Sem este aviso a Ana retentava calada (28/08/2026).
+    notify: ({ dealId, contactName, falhas }) =>
+      avisarNoTelegram(
+        formatFollowupFalhasMessage({
+          contactName,
+          falhas,
+          appUrl: process.env.NEXT_PUBLIC_APP_URL,
+          dealId,
+        }),
+        'lead-followup'
+      ),
     sendMedia: (conversationId, a) =>
       sendAIMedia({
         supabase,
@@ -85,34 +124,18 @@ export async function GET(req: Request): Promise<Response> {
   const handoffSla = await runHandoffSla({
     supabase,
     now,
-    notify: async ({ dealId, contactName, dealTitle, horasUteis, lastMessage }) => {
-      const { data: cfg } = await supabase
-        .from('organization_settings')
-        .select('telegram_bot_token, telegram_chat_id, telegram_chat_id_alerts')
-        .maybeSingle();
-      if (!cfg?.telegram_bot_token) return;
-
-      const message = formatHandoffEscalationMessage({
-        contactName,
-        dealTitle,
-        horasUteis,
-        lastMessage,
-        appUrl: process.env.NEXT_PUBLIC_APP_URL,
-        dealId: dealId ?? undefined,
-      });
-
-      // Chat do time + chat da dona (quando configurado). Set evita mandar 2x se forem o mesmo.
-      const destinos = new Set(
-        [cfg.telegram_chat_id, cfg.telegram_chat_id_alerts].filter(Boolean) as string[]
-      );
-      await Promise.all(
-        [...destinos].map((chatId) =>
-          sendTelegramMessage(cfg.telegram_bot_token as string, chatId, message).catch((err: unknown) =>
-            console.error('[Cron:handoff-sla] Telegram falhou (não-fatal):', chatId, err)
-          )
-        )
-      );
-    },
+    notify: ({ dealId, contactName, dealTitle, horasUteis, lastMessage }) =>
+      avisarNoTelegram(
+        formatHandoffEscalationMessage({
+          contactName,
+          dealTitle,
+          horasUteis,
+          lastMessage,
+          appUrl: process.env.NEXT_PUBLIC_APP_URL,
+          dealId: dealId ?? undefined,
+        }),
+        'handoff-sla'
+      ),
   });
 
   console.log('[Cron:lead-followup]', JSON.stringify({ followup, reminder, handoffSla }));

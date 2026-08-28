@@ -7,6 +7,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   classifyCadence, computeAnchor, initState, nextDueTouch, advanceState, isReengaged,
+  registerFailure, clearFailures, MAX_FALHAS_SEGUIDAS,
   type FollowupState,
 } from './schedule';
 import { COLD_TOUCHES, WARM_FALLBACK, WARM_FIXED_LAST_INDEX, FOLLOWUP_TAG, renderBubbles } from './copy';
@@ -49,6 +50,13 @@ export interface FollowupDeps {
   generateWarm: (args: {
     organizationId: string; boardId: string; conversationId: string; firstName: string | null; touchIndex: number;
   }) => Promise<string[] | null>;
+  /**
+   * Chamado UMA vez, quando a cadência de um lead para por falhas seguidas de envio.
+   * Ausente = a parada acontece calada (é o que o teste faz). Ver MAX_FALHAS_SEGUIDAS.
+   */
+  notify?: (args: {
+    dealId: string; contactName: string | null; falhas: number;
+  }) => Promise<void>;
 }
 
 export interface FollowupResult { processed: number; failed: number; skipped: number; reset: number; }
@@ -169,15 +177,28 @@ export async function runLeadFollowup(deps: FollowupDeps): Promise<FollowupResul
 
     // Idempotência: PERSISTE o avanço ANTES de enviar. Se a função morrer ou o persist
     // falhar, nunca reenvia o mesmo toque (risco de ban). Se o envio falhar, reverte.
-    const advanced = advanceState(state, now);
+    const advanced = clearFailures(advanceState(state, now));
     const tags = (deal.tags as string[] | null) ?? [];
     const persisted = await persistFollowup(supabase, deal.id as string, cf, advanced, advanced.stopped === true, tags);
     if (!persisted) { res.failed++; continue; } // não envia se não conseguiu registrar
 
     const sent = await deps.sendResponse(convId, message);
     if (!sent.success) {
-      await persistFollowup(supabase, deal.id as string, cf, state, false, tags); // reverte (best-effort)
+      // Reverte o toque (não foi entregue, não pode ser consumido) MAS conta a falha: sem
+      // isso o mesmo toque era retentado a cada 15 min para sempre — foi o que aconteceu
+      // em 28/08/2026 com o WhatsApp fora do ar (Ricardo levou 20 tentativas).
+      const comFalha = registerFailure(state, now);
+      await persistFollowup(supabase, deal.id as string, cf, comFalha, comFalha.stopped === true, tags);
       res.failed++;
+      if (comFalha.stopped === true && deps.notify) {
+        // Parou de vez: alguém precisa olhar (quase sempre é a instância do WhatsApp caída,
+        // não o lead). Falha do aviso não pode derrubar o lote.
+        await deps.notify({
+          dealId: deal.id as string,
+          contactName: (contact.name as string | null) ?? null,
+          falhas: comFalha.fail_count ?? MAX_FALHAS_SEGUIDAS,
+        }).catch((err: unknown) => console.error('[followup] aviso de falhas nao saiu:', err));
+      }
       continue;
     }
     res.processed++;

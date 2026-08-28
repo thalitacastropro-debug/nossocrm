@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatMeetingHandoffMessage, formatRespostaBloqueadaMessage } from '@/lib/notifications/telegram';
+import { formatMeetingHandoffMessage, formatRespostaBloqueadaMessage, formatFollowupFalhasMessage } from '@/lib/notifications/telegram';
 
 describe('formatMeetingHandoffMessage', () => {
   it('monta o aviso positivo com nome + label da reunião', () => {
@@ -77,5 +77,31 @@ describe('formatRespostaBloqueadaMessage', () => {
     const msg = formatRespostaBloqueadaMessage({ contactName: 'João', issues: [] });
     expect(msg).toContain('João');
     expect(typeof msg).toBe('string');
+  });
+});
+
+describe('formatFollowupFalhasMessage', () => {
+  it('diz o lead, o número de falhas e aponta o suspeito de sempre (WhatsApp caído)', () => {
+    const msg = formatFollowupFalhasMessage({
+      contactName: 'Maria Silva',
+      falhas: 5,
+      appUrl: 'https://crm.nivaconsultoria.com.br',
+      dealId: 'd1',
+    });
+    expect(msg).toContain('Maria Silva');
+    expect(msg).toContain('5');
+    expect(msg).toMatch(/WhatsApp/i);
+    expect(msg).toContain('https://crm.nivaconsultoria.com.br/deals/d1');
+  });
+
+  it('sem nome de contato não quebra', () => {
+    const msg = formatFollowupFalhasMessage({ contactName: null, falhas: 5 });
+    expect(msg).toMatch(/sem nome/i);
+    expect(msg).not.toContain('/deals/');
+  });
+
+  it('escapa HTML do nome', () => {
+    const msg = formatFollowupFalhasMessage({ contactName: '<b>x</b>', falhas: 5 });
+    expect(msg).toContain('&lt;b&gt;x&lt;/b&gt;');
   });
 });

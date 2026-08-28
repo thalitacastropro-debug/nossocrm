@@ -334,3 +334,39 @@ export function formatRespostaBloqueadaMessage({
   }
   return lines.join('\n');
 }
+
+interface FollowupFalhasParams {
+  contactName: string | null;
+  falhas: number;
+  appUrl?: string;
+  dealId?: string;
+}
+
+/**
+ * A cadência de follow-up de um lead PAROU porque os envios falharam seguidamente.
+ *
+ * Quase nunca é problema do lead: em 28/08/2026 a causa foi a instância da UAZAPI
+ * `disconnected`, e sem alarme nenhum a Ana ficou retentando em silêncio por horas. Por
+ * isso a mensagem aponta o suspeito de sempre em vez de só reportar o número.
+ */
+export function formatFollowupFalhasMessage({
+  contactName,
+  falhas,
+  appUrl,
+  dealId,
+}: FollowupFalhasParams): string {
+  const nome = contactName ? escapeHtml(contactName) : '(lead sem nome)';
+  const lines = [
+    `🛑 <b>Follow-up parado: ${falhas} envios falharam seguidos</b>`,
+    ``,
+    `👤 <b>Contato:</b> ${nome}`,
+    ``,
+    `A cadência deste lead foi interrompida para não ficar retentando à toa.`,
+    `Na quase totalidade dos casos o WhatsApp da instância caiu — confira a conexão antes de olhar o lead.`,
+  ];
+  if (appUrl && dealId) {
+    lines.push(``);
+    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+  }
+  return lines.join('\n');
+}
