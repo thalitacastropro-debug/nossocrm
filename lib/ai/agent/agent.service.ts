@@ -50,6 +50,7 @@ import {
 } from '@/lib/ai/messaging/circuit-breaker';
 import { generateWithFileSearch } from '@/lib/ai/messaging/file-search';
 import type { BoardAIConfig } from '@/lib/ai/messaging/types';
+import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
 
 /**
  * Prompt base padrão do agente — usado quando a organização não configurou
@@ -128,12 +129,39 @@ export interface OrgAIConfig {
 
 /**
  * Busca as configurações de AI da organização no banco de dados.
+ *
+ * ⚠️ A LEITURA É COM SERVICE ROLE DE PROPÓSITO, ignorando o client recebido.
+ *
+ * `organization_settings` guarda as chaves de IA em texto puro e virou **admin-only** na RLS
+ * em 24-25/08/2026 (`20260824230000_fecha_credenciais_e_organizacao.sql`), de propósito. Só
+ * que esta função lia com o client de QUEM CHAMOU: para `role='vendedor'` o SELECT passou a
+ * devolver zero linhas, isto aqui retornava `null`, e as rotas respondiam "Google AI key not
+ * configured" — mentira, a chave existe e sempre existiu. Foi assim que o "Gravar o desfecho
+ * da call" morreu para o Pedro (28/08) e o briefing pré-reunião junto. Admin nunca viu o bug,
+ * porque para admin a RLS liberava.
+ *
+ * A porta NÃO se reabre na policy: credencial de servidor se lê no servidor. Toda rota que
+ * chega aqui já autorizou o usuário e passa a `organizationId` do PRÓPRIO perfil da sessão —
+ * nunca uma vinda do cliente. Se algum dia alguém aceitar `organizationId` de um body, a
+ * autorização tem que ser feita ANTES desta chamada.
+ *
+ * O `supabase` recebido continua na assinatura porque é o fallback quando não há service role
+ * (dev/teste sem a env) e porque os chamadores já o têm em mãos.
  */
 export async function getOrgAIConfig(
   supabase: SupabaseClient,
   organizationId: string
 ): Promise<OrgAIConfig | null> {
-  const { data: orgSettings, error } = await supabase
+  let leitor: SupabaseClient = supabase;
+  try {
+    leitor = createStaticAdminClient() as unknown as SupabaseClient;
+  } catch (e) {
+    // Sem SUPABASE_SERVICE_ROLE_KEY (dev/teste): degrada para o client do caller. Volta a
+    // valer a RLS — admin funciona, vendedor não — mas nada quebra por causa da env.
+    console.warn('[AIAgent] service role indisponivel, lendo org settings com o client do caller:', e);
+  }
+
+  const { data: orgSettings, error } = await leitor
     .from('organization_settings')
     .select(
       'ai_enabled, ai_provider, ai_model, ai_google_key, ai_anthropic_key, ai_hitl_threshold, ai_hitl_min_confidence, ai_hitl_expiration_hours, ai_config_mode, ai_learned_patterns, ai_template_id, ai_takeover_enabled, ai_takeover_minutes, ai_base_system_prompt, timezone'

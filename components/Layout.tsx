@@ -44,7 +44,9 @@ import {
   Bug,
   CheckSquare,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { canAccessRoute } from '@/lib/rbac';
@@ -57,6 +59,7 @@ import { useResponsiveMode } from '@/hooks/useResponsiveMode';
 import { BottomNav, MoreMenuSheet, NavigationRail } from '@/components/navigation';
 import { useUnreadCount } from '@/lib/query/hooks/useConversationsQuery';
 import { useRealtimeSyncMessaging } from '@/lib/realtime/useRealtimeSync';
+import { useSomMensagemNova } from '@/hooks/useSomMensagemNova';
 
 // Lazy load AI Assistant (deprecated - using UIChat now)
 // const AIAssistant = lazy(() => import('./AIAssistant'));
@@ -205,7 +208,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
    * tabelas, então as duas colidiriam no MESMO tópico — e sair da tela de chat derrubaria a
    * entrega do shell inteiro.
    */
-  useRealtimeSyncMessaging({ enabled: !!user });
+  /**
+   * Som de mensagem nova (pedido do Denilson, 28/08/2026). O badge já existia, mas é MUDO —
+   * quem está em outra tela não percebe o cliente respondendo. Pendurado no `onchange` da
+   * MESMA assinatura acima: um socket só, e o próprio som decide o que ignorar (toca em
+   * INSERT inbound; nunca no que a Ana manda, senão faz barulho em rajada).
+   */
+  const { ligado: somLigado, alternarSom, aoMudarRealtime } = useSomMensagemNova();
+
+  useRealtimeSyncMessaging({ enabled: !!user, onchange: aoMudarRealtime });
 
   // Messaging unread count for notification badge
   const { data: unreadMessagesCount = 0 } = useUnreadCount();
@@ -532,6 +543,30 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               )}
 
               <NotificationPopover />
+              {/*
+                Mudo do som de mensagem nova. Fica ao lado do sino de propósito: quem se
+                incomoda com o barulho procura desligar onde as notificações moram, e não
+                enterrado em Configurações. Tocar ao LIGAR é intencional — confirma na hora
+                que o som funciona neste navegador e neste volume.
+              */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={alternarSom}
+                    aria-pressed={somLigado}
+                    aria-label={somLigado ? 'Desativar som de mensagem nova' : 'Ativar som de mensagem nova'}
+                    className="p-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 rounded-full transition-all active:scale-95 focus-visible-ring"
+                  >
+                    {somLigado
+                      ? <Volume2 size={20} aria-hidden="true" />
+                      : <VolumeX size={20} aria-hidden="true" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {somLigado ? 'Som de mensagem nova: ligado' : 'Som de mensagem nova: desligado'}
+                </TooltipContent>
+              </Tooltip>
               <button
                 type="button"
                 onClick={toggleDarkMode}
