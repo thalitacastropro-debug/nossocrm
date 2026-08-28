@@ -20,6 +20,7 @@ import { activitiesService } from '@/lib/supabase/activities';
 import { contactsService } from '@/lib/supabase/contacts';
 import type { Deal, DealView, Board, Activity } from '@/types';
 import { conferirCoerenciaDoMove } from '@/lib/deals/coerenciaDoMove';
+import { resolverEtapaDoMove } from '@/lib/deals/moverParaFunil';
 
 interface MoveDealParams {
   dealId: string;
@@ -542,6 +543,11 @@ interface MoveDealToBoardParams {
   targetBoard: Board;
   /** Nome de quem está movendo (vai pra timeline). */
   moverName: string;
+  /**
+   * Etapa escolhida no funil de destino. Sem ela, o card entra na PRIMEIRA — que no
+   * Comercial é "Call Agendada" e fazia todo lead parecer ter reunião marcada.
+   */
+  targetStageId?: string;
 }
 
 /**
@@ -563,9 +569,14 @@ export const useMoveDealToBoard = () => {
     MoveDealToBoardParams,
     { previousDeals: DealView[] | undefined }
   >({
-    mutationFn: async ({ deal, targetBoard, moverName }) => {
-      const entryStageId = targetBoard.stages?.[0]?.id;
-      if (!entryStageId) throw new Error(`O funil "${targetBoard.name}" não tem etapas.`);
+    mutationFn: async ({ deal, targetBoard, moverName, targetStageId }) => {
+      // Quem move ESCOLHE a etapa (28/08/2026). Sem escolha, vale a primeira — que era o
+      // comportamento antigo e despejava todo lead em "Call Agendada" no Comercial, como se
+      // já houvesse reunião marcada. A validação também barra etapa de outro funil, que é o
+      // que cria card órfão (ver lib/deals/moverParaFunil.ts).
+      const etapa = resolverEtapaDoMove(targetBoard, targetStageId);
+      if (!etapa.ok) throw new Error(etapa.erro);
+      const entryStageId = etapa.stageId;
 
       const updates: Partial<Deal> = {
         boardId: targetBoard.id,
@@ -595,10 +606,12 @@ export const useMoveDealToBoard = () => {
       return { dealId: deal.id, boardId: targetBoard.id, status: entryStageId };
     },
 
-    onMutate: async ({ deal, targetBoard }) => {
+    onMutate: async ({ deal, targetBoard, targetStageId }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.deals.all });
       const previousDeals = queryClient.getQueryData<DealView[]>(DEALS_VIEW_KEY);
-      const entryStageId = targetBoard.stages?.[0]?.id;
+      // Mesmo alvo do mutationFn: sem isto o otimismo desenharia o card numa etapa e o
+      // servidor gravaria outra.
+      const entryStageId = targetStageId ?? targetBoard.stages?.[0]?.id;
 
       queryClient.setQueryData<DealView[]>(DEALS_VIEW_KEY, (old) =>
         old?.map((d) =>

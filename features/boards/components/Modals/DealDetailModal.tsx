@@ -222,6 +222,13 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const [showBriefingDrawer, setShowBriefingDrawer] = useState(false);
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [moveTarget, setMoveTarget] = useState<Board | null>(null);
+  /**
+   * Etapa escolhida no funil de destino. Antes o card ia sempre para a PRIMEIRA etapa — no
+   * Comercial isso é "Call Agendada", então um lead que o consultor só quer LIGAR entrava
+   * como se já tivesse reunião marcada (caso da Flavia, 28/08/2026, quando o Denilson quis
+   * tirar da Ana e telefonar). Vazio = primeira etapa, o comportamento antigo.
+   */
+  const [moveStageId, setMoveStageId] = useState<string>('');
 
   // Tags suggestions (local for now; Settings UI writes to the same key)
   const [availableTags, setAvailableTags] = usePersistedState<string[]>('crm_tags', []);
@@ -321,15 +328,27 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
   const handleConfirmMove = () => {
     if (!moveTarget) return;
     const targetName = moveTarget.name;
+    const etapaEscolhida = moveStageId || moveTarget.stages?.[0]?.id;
+    const nomeDaEtapa = moveTarget.stages?.find((s) => s.id === etapaEscolhida)?.label ?? '';
     moveDealToBoard.mutate(
-      { deal, targetBoard: moveTarget, moverName },
+      { deal, targetBoard: moveTarget, moverName, targetStageId: etapaEscolhida },
       {
         onSuccess: () => {
-          addToast(`Card movido para ${targetName}.`, 'success');
+          addToast(
+            nomeDaEtapa
+              ? `Card movido para ${targetName} — ${nomeDaEtapa}.`
+              : `Card movido para ${targetName}.`,
+            'success',
+          );
           onClose();
         },
-        onError: (e: unknown) =>
-          addToast((e as Error)?.message || 'Falha ao mover o card.', 'warning'),
+        // A falha PRECISA ser visível: o toast de aviso sumia rápido demais e o efeito para
+        // quem estava operando era "cliquei em Mover e não aconteceu nada" (Thalita, 28/08).
+        onError: (e: unknown) => {
+          const msg = (e as Error)?.message || 'Falha ao mover o card.';
+          console.error('[Mover para outro funil] falhou:', msg);
+          addToast(msg, 'warning');
+        },
       },
     );
   };
@@ -1563,7 +1582,12 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                       return (
                         <button
                           key={b.id}
-                          onClick={() => { setMoveTarget(b); setShowMoveModal(false); }}
+                          onClick={() => {
+                            setMoveTarget(b);
+                            // Sugere a primeira etapa; o select do próximo passo deixa trocar.
+                            setMoveStageId(b.stages?.[0]?.id ?? '');
+                            setShowMoveModal(false);
+                          }}
                           className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 dark:border-white/10 hover:border-primary-400 dark:hover:border-primary-500/50 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors flex items-center justify-between gap-3"
                         >
                           <span className="font-medium text-slate-900 dark:text-white truncate">{b.name}</span>
@@ -1596,17 +1620,39 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
           onConfirm={handleConfirmMove}
           title={moveTarget ? `Mover para ${moveTarget.name}` : ''}
           message={
-            moveMissing.length > 0 ? (
-              <div className="text-left">
-                <p className="mb-2">Faltam dados obrigatórios pra entrar no funil do Consultor:</p>
-                <ul className="list-disc list-inside text-sm text-amber-700 dark:text-amber-300 mb-3 space-y-0.5">
-                  {moveMissing.map((m) => <li key={m}>{m}</li>)}
-                </ul>
-                <p>Mover <strong>{deal.title}</strong> mesmo assim?</p>
-              </div>
-            ) : (
-              <p>Mover <strong>{deal.title}</strong> para <strong>{moveTarget?.name}</strong>?</p>
-            )
+            <div className="text-left">
+              {moveMissing.length > 0 && (
+                <>
+                  <p className="mb-2">Faltam dados obrigatórios pra entrar no funil do Consultor:</p>
+                  <ul className="list-disc list-inside text-sm text-amber-700 dark:text-amber-300 mb-3 space-y-0.5">
+                    {moveMissing.map((m) => <li key={m}>{m}</li>)}
+                  </ul>
+                </>
+              )}
+              <p className="mb-3">
+                Mover <strong>{deal.title}</strong> para <strong>{moveTarget?.name}</strong>
+                {moveMissing.length > 0 ? ' mesmo assim?' : '?'}
+              </p>
+              {/* ESCOLHA DA ETAPA (28/08/2026). Sem isto o card caía sempre na primeira
+                  etapa — "Call Agendada" no Comercial — e um lead que o consultor só quer
+                  ligar já entrava como reunião marcada, sujando a meta de agendamentos. */}
+              {(moveTarget?.stages?.length ?? 0) > 0 && (
+                <label className="block">
+                  <span className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+                    Em qual etapa?
+                  </span>
+                  <select
+                    value={moveStageId}
+                    onChange={(e) => setMoveStageId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    {moveTarget?.stages?.map((s) => (
+                      <option key={s.id} value={s.id}>{s.label}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
           }
           confirmText="Mover"
           variant="primary"
