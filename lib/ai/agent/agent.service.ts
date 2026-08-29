@@ -52,6 +52,7 @@ import { generateWithFileSearch } from '@/lib/ai/messaging/file-search';
 import type { BoardAIConfig } from '@/lib/ai/messaging/types';
 import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
 import { aguardarBolhas, bolhaMaisNovaChegou } from './agrupamento';
+import { detectarPedidoDeHumano, detectarJaAtendido, pausarPorJaAtendido } from './escalacao';
 
 /**
  * Prompt base padrão do agente — usado quando a organização não configurou
@@ -636,8 +637,79 @@ async function processIncomingMessageInner(
     return { success: true, decision: handoffDecision };
   }
 
-  // 7. Verificar handoff keywords
-  const handoffKeyword = checkHandoffKeywords(incomingMessage, effectiveSettings.handoff_keywords);
+  // 6.9. "JÁ ESTOU SENDO ATENDIDO" — cala a Ana SEM mover o card.
+  //
+  // Vem ANTES do pedido de humano de propósito: quem escreve "já falei com o Denilson" ou
+  // "aguardo a ligação dele" não está pedindo um consultor — está pedindo que o robô PARE.
+  // A Isabella (28/08) disse as duas coisas e nenhuma disparou nada; a Ana seguiu perguntando
+  // se ela tinha plano de saúde até o Denilson assumir e pedir desculpa pelo bot.
+  //
+  // Por que NÃO passa pelo handleHandoff: ele MOVE o card para o funil Comercial. Quem escreve
+  // isso quase nunca é lead novo — é familiar, sócio ou secretária de um caso que já existe.
+  // Mover transformaria o funil de vendas em depósito.
+  const jaAtendido = detectarJaAtendido(incomingMessage);
+  if (jaAtendido) {
+    const { pausou } = await pausarPorJaAtendido({
+      gatilho: jaAtendido,
+      contatoNome: context.contact?.name ?? null,
+      deps: {
+        marcarPausa: async () => {
+          const { data: atual } = await supabase
+            .from('messaging_conversations')
+            .select('metadata')
+            .eq('id', conversationId)
+            .single();
+          const { error } = await supabase
+            .from('messaging_conversations')
+            .update({
+              metadata: {
+                ...((atual?.metadata as Record<string, unknown>) ?? {}),
+                ai_paused: true,
+                ai_paused_reason: `Lead avisou que já está sendo atendido ("${jaAtendido}")`,
+                ai_paused_at: new Date().toISOString(),
+              },
+            })
+            .eq('id', conversationId);
+          if (error) throw error;
+        },
+        registrarNaTimeline: async (texto) => {
+          if (!context.deal?.id) return;
+          await supabase.from('deal_activities').insert({
+            deal_id: context.deal.id,
+            organization_id: organizationId,
+            type: 'ai_handoff',
+            description: texto,
+            metadata: { ai_pausada_sem_mover: true, gatilho: jaAtendido, conversationId },
+          });
+        },
+        avisar: async (texto) => {
+          const { data: cfg } = await supabase
+            .from('organization_settings')
+            .select('telegram_bot_token, telegram_chat_id')
+            .eq('organization_id', organizationId)
+            .maybeSingle();
+          if (!cfg?.telegram_bot_token || !cfg?.telegram_chat_id) return;
+          const { sendTelegramMessage } = await import('@/lib/notifications/telegram');
+          await sendTelegramMessage(cfg.telegram_bot_token, cfg.telegram_chat_id, texto);
+        },
+      },
+    });
+    const decision: AgentDecision = {
+      action: 'skipped',
+      reason: pausou
+        ? `Pessoa já está sendo atendida ("${jaAtendido}") — Ana pausada, card NÃO movido`
+        : `Pessoa já está sendo atendida ("${jaAtendido}") — FALHA ao pausar, verificar`,
+    };
+    await logAIInteraction({ supabase, organizationId, conversationId, messageId, stageId: deal.stage_id, context, decision });
+    return { success: true, decision };
+  }
+
+  // 7. O lead PEDIU para falar com gente → entrega ao consultor (o card muda de mão).
+  //
+  // A lista configurada no board é estreita demais e comparava sem tirar acento: "Me liguem",
+  // "ME LIGAR" e "quero falar com um humano" passavam batido. `detectarPedidoDeHumano` traz
+  // uma lista embutida e SOMA a configuração da organização, que continua valendo.
+  const handoffKeyword = detectarPedidoDeHumano(incomingMessage, effectiveSettings.handoff_keywords);
   if (handoffKeyword) {
     const handoffDecision = await handleHandoff(
       supabase,
@@ -2014,18 +2086,6 @@ function buildConsultantSummary(qual: Record<string, unknown> | null | undefined
 
   const base = parts.join(' · ') || 'Lead qualificado pela SDR';
   return pend.length ? `${base}\n⚠ Consultor: ${pend.join('; ')}` : base;
-}
-
-function checkHandoffKeywords(message: string, keywords: string[]): string | null {
-  // Defesa em profundidade: settings de etapa podem vir sem a lista (JSONB livre).
-  if (!Array.isArray(keywords)) return null;
-  const lowerMessage = message.toLowerCase();
-  for (const keyword of keywords) {
-    if (lowerMessage.includes(keyword.toLowerCase())) {
-      return keyword;
-    }
-  }
-  return null;
 }
 
 function isBusinessHours(hours?: { start: string; end: string; timezone: string; daysOfWeek?: number[] }): boolean {
