@@ -51,6 +51,7 @@ import {
 import { generateWithFileSearch } from '@/lib/ai/messaging/file-search';
 import type { BoardAIConfig } from '@/lib/ai/messaging/types';
 import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
+import { aguardarBolhas, bolhaMaisNovaChegou } from './agrupamento';
 
 /**
  * Prompt base padrão do agente — usado quando a organização não configurou
@@ -387,6 +388,33 @@ async function processIncomingMessageInner(
         action: 'skipped',
         reason: 'Conversa não tem deal associado',
       },
+    };
+  }
+
+  // 0d. AGRUPAMENTO DE BOLHAS — conserta a corrida de turnos (ver lib/ai/agent/agrupamento.ts).
+  //
+  // Gente escreve no WhatsApp em bolhas, e cada bolha dispara um turno independente que monta
+  // o contexto do zero. No caso Isabella (28/08) foram 4 turnos em paralelo: a Ana perguntou
+  // "você tem plano de saúde hoje?" cinco vezes, uma por turno, sem que nenhum soubesse do
+  // outro. Atinge lead pago igual — basta a pessoa mandar 3 mensagens seguidas.
+  //
+  // Fica AQUI, depois de todos os guards baratos (pausa, rate limit, deal) e ANTES de tudo
+  // que custa: não faz sentido dormir 8s numa conversa pausada ou sem card, e o contexto
+  // precisa ser montado DEPOIS da espera, para enxergar a rajada inteira. É por isso que o
+  // `response_delay_seconds` que já existia não resolvia: ele roda depois do buildLeadContext,
+  // com o contexto já congelado.
+  const agrupamento = await aguardarBolhas({
+    messageId,
+    deps: {
+      esperar: (ms) => new Promise((r) => setTimeout(r, ms)),
+      ultimaInbound: () => ultimaInboundDaConversa(supabase, conversationId),
+    },
+  });
+  if (agrupamento.cedeu) {
+    console.log('[AIAgent] Cedendo a vez para bolha mais nova:', { conversationId, messageId });
+    return {
+      success: true,
+      decision: { action: 'skipped', reason: agrupamento.motivo ?? 'Agrupamento de bolhas' },
     };
   }
 
@@ -812,6 +840,34 @@ async function processIncomingMessageInner(
       return {
         success: true,
         decision: { ...decision, reason: 'Dry-run (observe mode): mensagem não enviada' },
+      };
+    }
+
+    // SEGUNDA CHECAGEM DO AGRUPAMENTO — a de graça (ver lib/ai/agent/agrupamento.ts).
+    //
+    // A geração levou alguns segundos (mediana medida em produção: ~3,4s). Bolha do lead que
+    // chegou NESSE intervalo ainda dá tempo de ser respeitada: engolimos esta resposta e
+    // deixamos o turno mais novo falar, já com a rajada inteira no contexto. É esta checagem
+    // que permite a espera ser curta (5s) sem perder cobertura.
+    //
+    // Fica DEPOIS da validação de output de propósito: bloqueio do validador precisa ser
+    // registrado e alarmado mesmo quando a resposta não vai ser enviada.
+    if (
+      await bolhaMaisNovaChegou({
+        messageId,
+        ultimaInbound: () => ultimaInboundDaConversa(supabase, conversationId),
+      })
+    ) {
+      console.log('[AIAgent] Bolha nova durante a geracao — engolindo a resposta:', {
+        conversationId,
+        messageId,
+      });
+      return {
+        success: true,
+        decision: {
+          action: 'skipped',
+          reason: 'Chegou mensagem mais nova do lead durante a geração — outro turno responde',
+        },
       };
     }
 
@@ -2046,4 +2102,23 @@ export async function getConversationHistory(
         ? (msg.content as { text?: string }).text || JSON.stringify(msg.content)
         : String(msg.content),
   }));
+}
+
+/**
+ * Última mensagem do LEAD (inbound) de uma conversa. Usada pelas DUAS checagens do
+ * agrupamento de bolhas — antes de gerar e antes de enviar (ver lib/ai/agent/agrupamento.ts).
+ */
+async function ultimaInboundDaConversa(
+  supabase: SupabaseClient,
+  conversationId: string
+): Promise<{ id: string } | null> {
+  const { data } = await supabase
+    .from('messaging_messages')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .eq('direction', 'inbound')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ? { id: data.id as string } : null;
 }

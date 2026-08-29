@@ -72,6 +72,7 @@ function buildSupabaseMock({
     const chain = () => qb
     qb.select = vi.fn(chain)
     qb.eq     = vi.fn(chain)
+    qb.in     = vi.fn(chain)
     qb.gte    = vi.fn(chain)
     qb.lte    = vi.fn(chain)
     qb.order  = vi.fn(chain)

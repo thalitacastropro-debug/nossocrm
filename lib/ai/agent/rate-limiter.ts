@@ -13,6 +13,17 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 const DEFAULT_MAX_CALLS = 5;
 
+/**
+ * Ações que representam CHAMADA DE VERDADE ao modelo. Só elas consomem cota.
+ *
+ * Desde 14/08 todo turno que morre calado grava `action_taken='skipped'` nesta mesma tabela
+ * (observabilidade do silêncio), e desde 29/08 o agrupamento de bolhas produz isso em
+ * rajada: 6 bolhas => 5 turnos cedem a vez. Se o limitador contasse esses skips, o 6º turno
+ * — o único que DEVE responder — bateria no teto de 5/min e a Ana ficaria muda. O conserto
+ * da corrida de turnos viraria um bug de silêncio pior que o original.
+ */
+const AI_CALL_ACTIONS = ['responded', 'handoff'] as const;
+
 // =============================================================================
 // Database-backed implementation (production)
 // =============================================================================
@@ -35,6 +46,7 @@ export async function checkConversationRateLimit(
     .from('ai_conversation_log')
     .select('*', { count: 'exact', head: true })
     .eq('conversation_id', conversationId)
+    .in('action_taken', AI_CALL_ACTIONS as unknown as string[])
     .gte('created_at', new Date(Date.now() - 60 * 1000).toISOString());
 
   if (error) {
