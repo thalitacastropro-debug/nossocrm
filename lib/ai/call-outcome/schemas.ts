@@ -13,7 +13,10 @@ export const DesfechoSchema = z.object({
   tarefas: z
     .array(z.object({
       descricao: z.string().describe('O que precisa ser feito (ex.: "enviar contrato", "mandar documentos", "ligar terça")'),
-      data: z.string().nullable().describe('Data/hora ISO 8601 da tarefa se o consultor disse quando. null se não houver data'),
+      // SEM fuso de propósito: fuso é o que o modelo mais erra (escreveu "10:00Z"
+      // para um "10h" de Brasília, virando 07:00 no card do Bruce em 31/08/2026).
+      // Quem resolve fuso e ano é normalizarDataTarefa, em código.
+      data: z.string().nullable().describe('Data/hora da tarefa no formato AAAA-MM-DDTHH:mm, SEM fuso e SEM "Z", no horário de Brasília. Nunca uma data no passado. null se o consultor não disse quando'),
     }))
     .describe('TODAS as tarefas/próximos passos ditos no áudio. Cada uma vira uma atividade na agenda. Array vazio se nenhuma'),
   dados_negocio: z.object({
