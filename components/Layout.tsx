@@ -29,34 +29,25 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  LayoutDashboard,
-  KanbanSquare,
-  Users,
-  Settings,
   Sun,
   Moon,
-  BarChart3,
-  Inbox,
-  MessageSquare,
   Sparkles,
   LogOut,
   User,
   Bug,
-  CheckSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Volume2,
   VolumeX
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { canAccessRoute } from '@/lib/rbac';
 import { useTheme } from '../context/ThemeContext';
 import { useUIState } from '@/store/uiState';
 import { prefetchRoute, RouteName } from '@/lib/prefetch';
 import { isDebugMode, enableDebugMode, disableDebugMode } from '@/lib/debug';
 import { SkipLink } from '@/lib/a11y';
 import { useResponsiveMode } from '@/hooks/useResponsiveMode';
-import { BottomNav, MoreMenuSheet, NavigationRail } from '@/components/navigation';
+import { BottomNav, MoreMenuSheet, NavigationRail, visibleNavGroups, type NavIcon } from '@/components/navigation';
 import { useUnreadCount } from '@/lib/query/hooks/useConversationsQuery';
 import { useRealtimeSyncMessaging } from '@/lib/realtime/useRealtimeSync';
 import { useSomMensagemNova } from '@/hooks/useSomMensagemNova';
@@ -83,6 +74,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/activities': 'Atividades',
   '/decisions': 'Decisões',
   '/reports': 'Relatórios',
+  '/roadmap': 'Roadmap do time',
   '/settings': 'Configurações',
   '/profile': 'Perfil',
   '/ai': 'Assistente IA',
@@ -122,7 +114,7 @@ const NavItem = ({
   badge,
 }: {
   to: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: NavIcon;
   label: string;
   prefetch?: RouteName;
   clickedPath?: string;
@@ -336,70 +328,79 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           )}
         </div>
 
-        <nav className={`flex-1 p-4 space-y-2 flex flex-col ${sidebarCollapsed ? 'items-center px-2' : ''}`} aria-label="Navegação do sistema">
-          {[
-            { to: '/inbox', icon: Inbox, label: 'Inbox', prefetch: 'inbox' as const, badge: undefined },
-            { to: '/messaging', icon: MessageSquare, label: 'Chat ao vivo', prefetch: undefined, badge: unreadMessagesCount },
-            { to: '/dashboard', icon: LayoutDashboard, label: 'Visão Geral', prefetch: 'dashboard' as const, badge: undefined },
-            { to: '/boards', icon: KanbanSquare, label: 'Funis', prefetch: 'boards' as const, badge: undefined },
-            { to: '/contacts', icon: Users, label: 'Contatos', prefetch: 'contacts' as const, badge: undefined },
-            { to: '/activities', icon: CheckSquare, label: 'Atividades', prefetch: 'activities' as const, badge: undefined },
-            { to: '/reports', icon: BarChart3, label: 'Relatórios', prefetch: 'reports' as const, badge: undefined },
-            { to: '/settings', icon: Settings, label: 'Configurações', prefetch: 'settings' as const, badge: undefined },
-          ]
-            // Default-deny por papel: 'trafego' só enxerga o que rbac libera (ex.: Configurações).
-            .filter((item) => !role || canAccessRoute(role, item.to))
-            .map((item) => {
-            if (sidebarCollapsed) {
-              return (
-                <TooltipProvider key={item.to} delayDuration={200}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Link
-                        href={item.to}
-                        onMouseEnter={() => item.prefetch && prefetchRoute(item.prefetch)}
-                        onClick={() => setClickedPath(item.to)}
-                        className={(() => {
-                          const isActive = pathname === item.to || (item.to === '/boards' && pathname === '/pipeline');
-                          const wasJustClicked = clickedPath === item.to;
-                          // If user clicked on a DIFFERENT item, immediately deactivate this one
-                          const anotherItemWasClicked = clickedPath && clickedPath !== item.to;
-                          const isActuallyActive = anotherItemWasClicked ? false : (isActive || wasJustClicked);
-                          return `relative w-10 h-10 rounded-lg flex items-center justify-center ${isActuallyActive
-                            ? 'bg-primary-500/10 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-900/50'
-                            : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
-                            }`;
-                        })()}
-                      >
-                        <item.icon size={20} />
-                        {(item.badge ?? 0) > 0 && (
-                          <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] flex items-center justify-center px-0.5 text-[9px] font-bold text-white bg-red-500 rounded-full shadow-sm">
-                            {item.badge! > 99 ? '99+' : item.badge}
-                          </span>
-                        )}
-                      </Link>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      {item.label}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              );
-            }
+        <nav className={`flex-1 p-4 flex flex-col ${sidebarCollapsed ? 'items-center px-2' : ''}`} aria-label="Navegação do sistema">
+          {/* Grupos OPERAÇÃO / CONTA — fonte única em components/navigation/navConfig. */}
+          {visibleNavGroups(role).map((grupo, indice) => (
+            <div
+              key={grupo.id}
+              role="group"
+              aria-label={grupo.label}
+              className={`space-y-2 ${sidebarCollapsed ? 'w-full flex flex-col items-center' : ''}`}
+            >
+              {sidebarCollapsed ? (
+                indice > 0 && <div className="w-8 h-px my-3 bg-slate-200/60 dark:bg-white/10" aria-hidden="true" />
+              ) : (
+                <p className={`px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 ${indice > 0 ? 'pt-5' : ''}`}>
+                  {grupo.label}
+                </p>
+              )}
 
-            return (
-              <NavItem
-                key={item.to}
-                to={item.to}
-                icon={item.icon}
-                label={item.label}
-                prefetch={item.prefetch}
-                clickedPath={clickedPath}
-                onItemClick={setClickedPath}
-                badge={item.badge}
-              />
-            );
-          })}
+              {grupo.items.map((item) => {
+                // Só o chat tem contador; os demais itens não mostram badge.
+                const badge = item.id === 'messaging' ? unreadMessagesCount : undefined;
+
+                if (sidebarCollapsed) {
+                  return (
+                    <TooltipProvider key={item.id} delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Link
+                            href={item.href}
+                            onMouseEnter={() => item.prefetch && prefetchRoute(item.prefetch)}
+                            onClick={() => setClickedPath(item.href)}
+                            className={(() => {
+                              const isActive = pathname === item.href || (item.href === '/boards' && pathname === '/pipeline');
+                              const wasJustClicked = clickedPath === item.href;
+                              // If user clicked on a DIFFERENT item, immediately deactivate this one
+                              const anotherItemWasClicked = clickedPath && clickedPath !== item.href;
+                              const isActuallyActive = anotherItemWasClicked ? false : (isActive || wasJustClicked);
+                              return `relative w-10 h-10 rounded-lg flex items-center justify-center ${isActuallyActive
+                                ? 'bg-primary-500/10 text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-900/50'
+                                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
+                                }`;
+                            })()}
+                          >
+                            <item.icon size={20} />
+                            {(badge ?? 0) > 0 && (
+                              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] flex items-center justify-center px-0.5 text-[9px] font-bold text-white bg-red-500 rounded-full shadow-sm">
+                                {badge! > 99 ? '99+' : badge}
+                              </span>
+                            )}
+                          </Link>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">
+                          {item.label}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  );
+                }
+
+                return (
+                  <NavItem
+                    key={item.id}
+                    to={item.href}
+                    icon={item.icon}
+                    label={item.label}
+                    prefetch={item.prefetch}
+                    clickedPath={clickedPath}
+                    onItemClick={setClickedPath}
+                    badge={badge}
+                  />
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Sidebar Toggle Button (Footer) - Only visible when collapsed */}

@@ -312,6 +312,53 @@ export function valorFromLeadForm(current: Record<string, unknown> | null | unde
 }
 
 /**
+ * O lead JÁ TEM plano, segundo o formulário? 'sim' | 'nao' | null (não dá pra saber).
+ *
+ * O CASO QUE ISTO CONSERTA (lead Pablo, 31/08/2026): a Ana abriu com *"você informou que paga
+ * mais de R$ 3.500 hoje"* e, na bolha seguinte, perguntou *"você já tem algum plano de saúde no
+ * momento?"*. Quem paga R$3.500 num plano já respondeu essa pergunta — o que falta saber é QUAL
+ * plano é esse.
+ *
+ * Por que aconteceu: o campo explícito **"Você possuí plano de saúde" chega VAZIO** (o Make ainda
+ * manda os campos do formulário ANTIGO em branco — pendência conhecida), então quem responde de
+ * fato é **"Quanto você paga atualmente no seu plano"**. Ali cabem as duas respostas:
+ *   - "Mais de R$ 3500" / "1200 p 2 vidas"  -> tem plano
+ *   - "Não possuo plano"                     -> não tem
+ *
+ * Ordem de leitura: o campo explícito primeiro (quando vier preenchido), o campo de valor depois.
+ * A negação é checada ANTES do número de propósito: "Não possuo plano" não tem dígito, mas uma
+ * variante como "não tenho, quero pagar até 500" tem — e ali o 500 é desejo, não plano atual.
+ */
+export function temPlanoFromLeadForm(
+  current: Record<string, unknown> | null | undefined,
+): 'sim' | 'nao' | null {
+  const src = leadFormSource(current);
+  if (!src) return null;
+
+  const NEGACAO = /\b(n[ãa]o|nao)\b.{0,20}\b(possuo|tenho|possui|tem|plano)\b|\bsem plano\b|\bnenhum\b|\bprimeiro plano\b/i;
+
+  // 1) Campo explícito "Você possuí plano de saúde" — só vale se veio preenchido.
+  for (const [k, v] of Object.entries(src)) {
+    if (typeof v !== 'string' || !v.trim()) continue;
+    const key = k.toLowerCase();
+    if (!/possu.*plano|tem.*plano/.test(key) || /quanto/.test(key) || /paga/.test(key)) continue;
+    if (NEGACAO.test(v)) return 'nao';
+    if (/^\s*sim/i.test(v)) return 'sim';
+  }
+
+  // 2) Fallback: o campo do VALOR. É ele que chega preenchido no formulário de hoje.
+  for (const [k, v] of Object.entries(src)) {
+    if (typeof v !== 'string' || !v.trim()) continue;
+    const key = k.toLowerCase();
+    if (!(/quanto.*paga/.test(key) || /mensalidade/.test(key) || /valor.*plano/.test(key))) continue;
+    if (NEGACAO.test(v)) return 'nao';
+    if (/\d/.test(v)) return 'sim';
+  }
+
+  return null;
+}
+
+/**
  * Tier PROVISÓRIO computado só do FORMULÁRIO, na CRIAÇÃO do lead (antes da Ana conversar) — pra o
  * card já nascer com selo em vez de "layout antigo sem tier". Reusa o mesmo `classifyTier` da
  * conversa (mesma semântica), alimentado por `cnpjFromLeadForm` + `idadesFromLeadForm` +

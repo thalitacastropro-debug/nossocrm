@@ -24,6 +24,17 @@ export const TOQUES_COPY: Record<'vespera' | 'ativacao', string[]> = {
   ],
 };
 
+/**
+ * A Ana NUNCA diz o nome de quem vai ligar — sempre "o consultor".
+ *
+ * Decisão da Thalita em 31/08/2026: *"em vez da Ana dizer que o Denilson vai
+ * ligar, deixa só como consultor, pois agora temos mais colaboradores"*. O
+ * lembrete lia o dono da atividade e mandava o primeiro nome dele, o que (a)
+ * prometia uma pessoa específica num time que rodízia e (b) envelhecia mal
+ * quando o card trocava de dono entre o agendamento e a véspera.
+ */
+export const CONSULTOR_GENERICO = 'o consultor';
+
 export type ReminderVars = { nome: string; label: string; consultor: string };
 
 /**
@@ -126,11 +137,8 @@ export async function runMeetingReminder(deps: MeetingReminderDeps): Promise<Mee
   const { data: contacts } = await supabase.from('contacts').select('id, name').in('id', contactIds);
   const contactById = new Map((contacts ?? []).map((c) => [c.id as string, c]));
 
-  const ownerIds = [...new Set(acts.map((a) => a.owner_id as string).filter(Boolean))];
-  const { data: profiles } = ownerIds.length
-    ? await supabase.from('profiles').select('id, name').in('id', ownerIds)
-    : { data: [] as Array<{ id: string; name: string }> };
-  const profileById = new Map((profiles ?? []).map((p) => [p.id as string, p]));
+  // Não lemos mais `profiles` aqui: o lembrete fala sempre "o consultor"
+  // (ver CONSULTOR_GENERICO), então o dono da atividade não entra na copy.
 
   for (const act of acts) {
     const deal = dealById.get(act.deal_id as string);
@@ -174,12 +182,10 @@ export async function runMeetingReminder(deps: MeetingReminderDeps): Promise<Mee
           : null;
     if (!toque) { res.skipped++; continue; }
 
-    const owner = act.owner_id ? profileById.get(act.owner_id as string) : null;
-    const consultor = owner?.name ? firstName(owner.name as string) : 'o consultor';
     const msg = renderReminder(TOQUES_COPY[toque], {
       nome: firstName((contact.name as string | null) ?? ''),
       label: slotLabelFromIso(dataHora, SP_UTC_OFFSET),
-      consultor,
+      consultor: CONSULTOR_GENERICO,
     });
 
     // Idempotência: PERSISTE ANTES de enviar (lição do B1). Se morrer entre gravar e mandar, o

@@ -240,7 +240,11 @@ function deps(supa: unknown, over: Partial<MeetingReminderDeps> = {}): MeetingRe
 }
 
 describe('runMeetingReminder', () => {
-  it('envia a ativação com o nome do consultor e persiste ANTES de enviar', async () => {
+  // 31/08/2026: a Ana parou de dizer QUEM vai ligar. Mesmo com o dono da
+  // atividade preenchido (aqui, "Denilson Silva"), a mensagem sai com "o
+  // consultor" — o time cresceu e o card troca de dono entre o agendamento e a
+  // véspera. Ver CONSULTOR_GENERICO em lib/ai/followup/meeting-reminder.
+  it('envia a ativação falando "o consultor" (nunca o nome do dono) e persiste ANTES de enviar', async () => {
     const { client, dealUpdates } = makeSupabaseMR(cenarioBase());
     const send = vi.fn(async () => ({ success: true }));
     const r = await runMeetingReminder(deps(client, { sendResponse: send }));
@@ -250,7 +254,8 @@ describe('runMeetingReminder', () => {
     const [convId, msg] = send.mock.calls[0];
     expect(convId).toBe('conv-1');
     expect(msg).toContain('Nathalia');
-    expect(msg).toContain('Denilson');
+    expect(msg).toContain('o consultor');
+    expect(msg).not.toContain('Denilson');
     expect(msg).not.toMatch(/\{|\}/);
     // persistiu o estado no MAP chaveado por activity_id
     expect((dealUpdates[0].patch.custom_fields as Record<string, unknown>).meeting_reminder)

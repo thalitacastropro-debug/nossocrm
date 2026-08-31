@@ -7,6 +7,7 @@ import { resolveBoardIdFromKey, resolveFirstStageId } from '@/lib/public-api/res
 import { sanitizeUUID } from '@/lib/supabase/utils';
 import { getChannelRouter } from '@/lib/messaging/channel-router.service';
 import { generateFirstTouchBubbles } from '@/lib/ai/lead-intake/first-touch';
+import { stripDashTells } from '@/lib/ai/text/dashes';
 import { seedTierFromLeadForm } from '@/lib/ai/extraction/domain/niva-health';
 import { brPhoneVariants } from '@/lib/phone';
 
@@ -51,7 +52,10 @@ const BUSINESS_HOURS = { start: '08:00', end: '17:30', daysOfWeek: [1, 2, 3, 4, 
 const DEFAULT_GREETING: string[] = [
   'Oi {nome}, tudo bem? Aqui é a Ana, da Niva.',
   'Vi que você tem interesse em otimizar seu plano de saúde pra você e sua família.',
-  'Quem vai cuidar disso com você é um dos nossos consultores — eu já vou adiantando por aqui pra ele chegar preparado.',
+  // Sem travessão: é a marca registrada de texto de IA, e humano não usa no
+  // WhatsApp. O `stripDashTells` limpa o que o modelo escorrega, mas texto
+  // FIXO nosso não pode precisar de faxina.
+  'Quem vai cuidar disso com você é um dos nossos consultores, eu já vou adiantando por aqui pra ele chegar preparado.',
   'Me conta: você já tem plano hoje ou seria o primeiro?',
 ];
 
@@ -467,6 +471,11 @@ export async function POST(request: Request) {
       ? aiBubbles
       : DEFAULT_GREETING.map((t) => renderGreeting(t, { nome: name })).filter(Boolean);
   }
+  // Rede final contra o travessão, nos TRÊS caminhos (override do body, IA e
+  // fallback fixo). As respostas do agente já passavam por aqui; o opener não —
+  // e foi por essa fresta que saiu "paga mais de R$ 3.500 hoje — vamos ver..."
+  // para o lead Pablo em 31/08/2026.
+  bubbles = bubbles.map(stripDashTells).filter(Boolean);
   const touchStatus = 'greeted';
 
   // 9. Enviar a saudação em BOLHAS (várias mensagens curtas, estilo WhatsApp)

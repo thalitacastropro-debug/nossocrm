@@ -53,6 +53,7 @@ import type { BoardAIConfig } from '@/lib/ai/messaging/types';
 import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
 import { aguardarBolhas, bolhaMaisNovaChegou } from './agrupamento';
 import { detectarPedidoDeHumano, detectarJaAtendido, pausarPorJaAtendido } from './escalacao';
+import { stripDashTells } from '@/lib/ai/text/dashes';
 
 /**
  * Prompt base padrão do agente — usado quando a organização não configurou
@@ -1363,22 +1364,11 @@ function bubbleGapMs(nextBubble: string): number {
 }
 
 /**
- * Remove o travessão "—" (e variantes en-dash "–", barra horizontal "―" e "--") das mensagens
- * da Ana. O travessão denuncia texto de IA de cara — humano no WhatsApp não usa. A persona já
- * pede pra evitar, mas o modelo às vezes escorrega (visto ao vivo mesmo no Claude), então
- * garantimos no código, no envio. Vira vírgula quando separa orações ("você — segunda" →
- * "você, segunda"). NÃO toca no hífen simples de datas/compostos ("13-07", "bem-estar").
+ * Re-export de `@/lib/ai/text/dashes`. A função mudou de casa em 31/08/2026 para
+ * que o opener (rota pública de intake) pudesse usá-la sem arrastar este módulo
+ * inteiro. Quem já importava daqui continua funcionando.
  */
-export function stripDashTells(text: string): string {
-  return text
-    .replace(/\s*[—–―]\s*/g, ', ') // travessão/en-dash/barra → vírgula
-    .replace(/\s+--\s+/g, ', ') // "--" usado como travessão
-    .replace(/\s+,/g, ',') // espaço antes de vírgula que possa ter sobrado
-    .replace(/,\s*,/g, ',') // vírgula dupla
-    .replace(/^\s*,\s*/, '') // vírgula solta no início
-    .replace(/\s*,\s*$/, '') // vírgula solta no fim
-    .trim();
-}
+export { stripDashTells };
 
 /**
  * Quebra a resposta da IA em bolhas quando a persona separa ideias por LINHA EM BRANCO.
