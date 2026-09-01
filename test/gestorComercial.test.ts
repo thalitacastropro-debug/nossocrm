@@ -320,13 +320,32 @@ describe('formatarParaColaborador — o que chega no celular de cada um', () => 
     expect(formatarDiario(diario, true)).toContain('Alice');
   });
 
-  it('não manda o acumulado do time para quem executa', () => {
+  it('não manda o acumulado do TIME para quem executa', () => {
     const t = formatarParaColaborador(diario, 'u-ped')!;
     expect(t).not.toContain('Acumulado');
     expect(t).not.toContain('20');
   });
 
-  it('dia sem nada devolve null — não manda "você está em dia" todo dia', () => {
+  // O furo que a Thalita achou em 31/08 ao perguntar "o Pedro só tem isso?":
+  // o Denilson tinha 10 reuniões vencidas, nenhuma nova, e por isso NÃO
+  // recebia bloco nenhum. Quem carregava a maior dívida sumia do radar.
+  it('mostra o acumulado DELE mesmo num dia sem nenhuma novidade', () => {
+    const semNovidade: Diario = {
+      ...diario,
+      regras: [{
+        id: 'reuniao-vencida', titulo: 'Reunião de ontem sem desfecho', emoji: '⏸️',
+        novos: [], estoque: 12, estoquePorDono: { 'u-den': 10, 'u-ped': 2 },
+      }],
+    };
+    const t = formatarParaColaborador(semNovidade, 'u-den')!;
+    expect(t).toContain('Nada novo hoje');
+    expect(t).toContain('Ainda em aberto com você');
+    expect(t).toContain('Reunião de ontem sem desfecho: 10');
+    // e não vaza o número do colega nem o total do time
+    expect(t).not.toContain('12');
+  });
+
+  it('só devolve null quando não há NEM novidade NEM acumulado', () => {
     expect(formatarParaColaborador(diario, 'u-ninguem')).toBeNull();
   });
 

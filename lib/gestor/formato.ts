@@ -79,25 +79,55 @@ export function formatarDiario(diario: Diario, paraDona: boolean): string {
  * 2. **Sem as regras sigilosas.** A contradição nunca sai daqui (decisão da
  *    Thalita em 31/08). Se saísse, o efeito previsível seria o time aprender a
  *    espaçar os cliques, não a preencher melhor.
- * 3. **Sem o acumulado do time.** O número global é leitura de dona; para quem
- *    executa, ele só produz sensação de dívida impagável.
+ * 3. **Sem o acumulado do TIME** — mas COM o acumulado dele.
  *
- * Dia sem nada devolve `null` — mandar "você não tem pendências" todo dia é o
- * jeito mais rápido de a pessoa parar de ler o que importa.
+ * ⚠️ O item 3 nasceu errado e foi corrigido em 31/08, quando a Thalita
+ * perguntou se o Pedro só tinha aquela pendência. Tinha 20. E pior: o bloco do
+ * **Denilson não apareceu**, mesmo com 10 reuniões vencidas e 1 contradição —
+ * porque nenhuma era "nova desde ontem". Do jeito original, quem carregava a
+ * maior dívida do time podia ficar semanas invisível.
+ *
+ * A distinção certa não é "com número x sem número", é DE QUEM é o número: o
+ * total do time não é acionável por quem executa e só produz sensação de dívida
+ * impagável; o total DELE é o trabalho dele.
+ *
+ * Por isso `null` (não mandar nada) só acontece quando a pessoa não tem NEM
+ * novidade NEM acumulado. Mandar "você está em dia" todo dia é o jeito mais
+ * rápido de a pessoa parar de ler; esconder 10 pendências é pior.
  */
 export function formatarParaColaborador(diario: Diario, donoId: string): string | null {
   const meus: Array<{ regra: Regra; item: ItemAlerta }> = [];
+  const meuEstoque: Array<{ regra: Regra; quantos: number }> = [];
+
   for (const regra of diario.regras) {
     if (regra.sigiloso) continue;
     for (const item of regra.novos) if (item.donoId === donoId) meus.push({ regra, item });
+
+    // Acumulado DELE: o total da regra menos o que já foi listado como novidade
+    // dele. `estoquePorDono` vem preenchido pelas regras que sabem contar por
+    // pessoa; sem ele, não inventamos número.
+    const quantos = regra.estoquePorDono?.[donoId] ?? 0;
+    const novosDele = regra.novos.filter((i) => i.donoId === donoId).length;
+    if (quantos > novosDele) meuEstoque.push({ regra, quantos });
   }
-  if (meus.length === 0) return null;
+
+  if (meus.length === 0 && meuEstoque.length === 0) return null;
 
   const linhas = [`<b>Seu dia — ${esc(diario.data)}</b>`, ''];
-  for (const { regra, item } of meus) {
-    linhas.push(`${regra.emoji} <b>${esc(item.contato)}</b> — ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`);
+
+  if (meus.length) {
+    for (const { regra, item } of meus) {
+      linhas.push(`${regra.emoji} <b>${esc(item.contato)}</b> — ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`);
+    }
+    linhas.push('', '<i>Responder ou registrar o desfecho no card já tira daqui.</i>');
+  } else {
+    linhas.push('Nada novo hoje.');
   }
-  linhas.push('', '<i>Responder ou registrar o desfecho no card já tira daqui.</i>');
+
+  if (meuEstoque.length) {
+    linhas.push('', '<i>Ainda em aberto com você:</i>');
+    for (const { regra, quantos } of meuEstoque) linhas.push(`· ${esc(regra.titulo)}: ${quantos}`);
+  }
 
   const texto = linhas.join('\n');
   return texto.length > MAX_TELEGRAM ? `${texto.slice(0, MAX_TELEGRAM)}\n…` : texto;

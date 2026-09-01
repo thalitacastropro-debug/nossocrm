@@ -63,6 +63,23 @@ export interface Regra {
   sigiloso?: boolean;
   novos: ItemAlerta[];
   estoque: number;
+  /**
+   * Quantos do estoque são de cada pessoa. É o que permite o relatório dele
+   * dizer "ainda em aberto com você: 10" — sem isso, quem tinha 10 reuniões
+   * vencidas e nenhuma novidade recebia bloco vazio e sumia do radar.
+   * `null` como chave = sem dono.
+   */
+  estoquePorDono?: Record<string, number>;
+}
+
+/** Conta os itens por dono, para o acumulado individual. */
+function contarPorDono(itens: ItemAlerta[]): Record<string, number> {
+  const mapa: Record<string, number> = {};
+  for (const i of itens) {
+    const chave = i.donoId ?? 'sem-dono';
+    mapa[chave] = (mapa[chave] ?? 0) + 1;
+  }
+  return mapa;
 }
 
 export interface Diario {
@@ -228,6 +245,7 @@ async function regraSemResposta(
     emoji: '🔴',
     novos: ordenar(novos),
     estoque: todos.length,
+    estoquePorDono: contarPorDono(todos),
   };
 }
 
@@ -271,6 +289,7 @@ async function regraReuniaoVencida(
     emoji: '⏸️',
     novos: ordenar(novos),
     estoque: todos.length,
+    estoquePorDono: contarPorDono(todos),
   };
 }
 
@@ -341,6 +360,7 @@ async function regraContradicao(
     sigiloso: true,
     novos: ordenar(novos),
     estoque: todos.length,
+    estoquePorDono: contarPorDono(todos),
   };
 }
 
@@ -442,6 +462,7 @@ async function regraVendaSemPremio(
     emoji: '💰',
     novos: ordenar(novos),
     estoque: semPremio.length,
+    estoquePorDono: contarPorDono(novos),
   };
 }
 
