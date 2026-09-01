@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { montarDiario, idadeLegivel, ehRuido, type Diario } from '@/lib/gestor/regras';
-import { formatarDiario } from '@/lib/gestor/formato';
+import { formatarDiario, formatarParaColaborador } from '@/lib/gestor/formato';
 
 /** 01/09/2026, 08:00 BRT — o horário em que o cron roda. */
 const AGORA = new Date('2026-09-01T11:00:00Z');
@@ -273,7 +273,7 @@ describe('formatarDiario', () => {
     expect(formatarDiario(perigoso, true)).toContain('&lt;b&gt;Bruce&lt;/b&gt;');
   });
 
-  it('respeita o limite do Telegram', () => {
+  it('respeita o limite do Telegram (dona)', () => {
     const muitos: Diario = {
       ...diario,
       regras: [{
@@ -284,5 +284,57 @@ describe('formatarDiario', () => {
       }],
     };
     expect(formatarDiario(muitos, true).length).toBeLessThanOrEqual(3902);
+  });
+});
+
+describe('formatarParaColaborador — o que chega no celular de cada um', () => {
+  const diario: Diario = {
+    data: 'terça-feira, 01/09',
+    ontem: { mensagensDeLead: 3, notasEscritas: 1, reunioesMarcadas: 0 },
+    regras: [
+      {
+        id: 'sem-resposta', titulo: 'Falaram e ninguém respondeu', emoji: '🔴', estoque: 20,
+        novos: [
+          { donoId: 'u-den', donoNome: 'Denilson Silva', contato: 'Bruce Mendes', detalhe: '"Estou disponível"', idadeHoras: 6 },
+          { donoId: 'u-ped', donoNome: 'Pedro Sellan', contato: 'Giovana Mussi', detalhe: '"Eu não atendo ligações"', idadeHoras: 9 },
+        ],
+      },
+      {
+        id: 'contradicao', titulo: 'Marcou realizada, não escreveu desfecho', emoji: '⚡', sigiloso: true, estoque: 1,
+        novos: [{ donoId: 'u-ped', donoNome: 'Pedro Sellan', contato: 'Alice', detalhe: 'carimbou realizada, sem nota', idadeHoras: 20 }],
+      },
+    ],
+  };
+
+  it('o Pedro recebe só o que é DELE — nunca o do Denilson', () => {
+    const t = formatarParaColaborador(diario, 'u-ped')!;
+    expect(t).toContain('Giovana Mussi');
+    expect(t).not.toContain('Bruce Mendes');
+  });
+
+  it('🔒 a contradição NUNCA chega no colaborador, nem sendo dele', () => {
+    // A Alice é item do Pedro. Ainda assim não pode aparecer no relatório dele.
+    const t = formatarParaColaborador(diario, 'u-ped')!;
+    expect(t).not.toContain('Alice');
+    // E continua aparecendo no da dona.
+    expect(formatarDiario(diario, true)).toContain('Alice');
+  });
+
+  it('não manda o acumulado do time para quem executa', () => {
+    const t = formatarParaColaborador(diario, 'u-ped')!;
+    expect(t).not.toContain('Acumulado');
+    expect(t).not.toContain('20');
+  });
+
+  it('dia sem nada devolve null — não manda "você está em dia" todo dia', () => {
+    expect(formatarParaColaborador(diario, 'u-ninguem')).toBeNull();
+  });
+
+  it('escapa HTML também no relatório individual', () => {
+    const perigoso: Diario = {
+      ...diario,
+      regras: [{ ...diario.regras[0], novos: [{ ...diario.regras[0].novos[1], contato: '<b>X</b>' }] }],
+    };
+    expect(formatarParaColaborador(perigoso, 'u-ped')!).toContain('&lt;b&gt;X&lt;/b&gt;');
   });
 });

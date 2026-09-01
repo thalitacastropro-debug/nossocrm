@@ -70,6 +70,40 @@ export function formatarDiario(diario: Diario, paraDona: boolean): string {
 }
 
 /**
+ * O diário de UMA pessoa — o que o Denilson ou o Pedro recebe no próprio
+ * celular.
+ *
+ * Três diferenças em relação ao da dona, e todas são de propósito:
+ * 1. **Só o que é dele.** Ninguém recebe a lista do colega: a daily é sobre o
+ *    trabalho de quem está lendo, não sobre comparação entre pessoas.
+ * 2. **Sem as regras sigilosas.** A contradição nunca sai daqui (decisão da
+ *    Thalita em 31/08). Se saísse, o efeito previsível seria o time aprender a
+ *    espaçar os cliques, não a preencher melhor.
+ * 3. **Sem o acumulado do time.** O número global é leitura de dona; para quem
+ *    executa, ele só produz sensação de dívida impagável.
+ *
+ * Dia sem nada devolve `null` — mandar "você não tem pendências" todo dia é o
+ * jeito mais rápido de a pessoa parar de ler o que importa.
+ */
+export function formatarParaColaborador(diario: Diario, donoId: string): string | null {
+  const meus: Array<{ regra: Regra; item: ItemAlerta }> = [];
+  for (const regra of diario.regras) {
+    if (regra.sigiloso) continue;
+    for (const item of regra.novos) if (item.donoId === donoId) meus.push({ regra, item });
+  }
+  if (meus.length === 0) return null;
+
+  const linhas = [`<b>Seu dia — ${esc(diario.data)}</b>`, ''];
+  for (const { regra, item } of meus) {
+    linhas.push(`${regra.emoji} <b>${esc(item.contato)}</b> — ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`);
+  }
+  linhas.push('', '<i>Responder ou registrar o desfecho no card já tira daqui.</i>');
+
+  const texto = linhas.join('\n');
+  return texto.length > MAX_TELEGRAM ? `${texto.slice(0, MAX_TELEGRAM)}\n…` : texto;
+}
+
+/**
  * Agrupa os itens por dono, preservando a regra de cada um. Sem dono vira
  * "Sem dono" — e cai no fim, porque é pendência da casa, não de uma pessoa.
  */

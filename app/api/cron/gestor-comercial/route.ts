@@ -25,7 +25,7 @@
 import { createStaticAdminClient } from '@/lib/supabase/server';
 import { sendTelegramMessage } from '@/lib/notifications/telegram';
 import { montarDiario } from '@/lib/gestor/regras';
-import { formatarDiario } from '@/lib/gestor/formato';
+import { formatarDiario, formatarParaColaborador } from '@/lib/gestor/formato';
 
 export const maxDuration = 60;
 
@@ -53,7 +53,17 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const now = new Date();
-  if (!ehDiaUtil(now)) return json({ skipped: true, reason: 'Fim de semana' });
+  const url = new URL(req.url);
+
+  /**
+   * `?dry=1` mostra o texto SEM enviar. Existe porque a Thalita perguntou, com
+   * razão, "o que o Pedro receberia?" — e a resposta não pode ser eu descrevendo
+   * de memória: tem que ser o texto que o código gera de verdade. Também é o que
+   * ela usa para conferir o relatório de alguém antes de ligar a entrega
+   * individual. Continua exigindo o segredo do cron.
+   */
+  const seco = url.searchParams.get('dry') === '1';
+  if (!seco && !ehDiaUtil(now)) return json({ skipped: true, reason: 'Fim de semana' });
 
   const supabase = createStaticAdminClient();
 
@@ -73,6 +83,26 @@ export async function GET(req: Request): Promise<Response> {
 
   try {
     const diario = await montarDiario({ supabase, now });
+
+    if (seco) {
+      // Um texto por pessoa que tem algo, mais o da dona — lado a lado, para
+      // dar para comparar exatamente o que cada um veria.
+      const { data: time } = await supabase.from('profiles').select('id, name, nickname, first_name');
+      const porPessoa = ((time ?? []) as Array<{ id: string; name: string | null; nickname: string | null; first_name: string | null }>)
+        .map((p) => ({
+          quem: p.nickname || p.name || p.first_name || p.id,
+          texto: formatarParaColaborador(diario, p.id),
+        }))
+        .filter((x) => x.texto !== null);
+
+      return json({
+        seco: true,
+        dona: formatarDiario(diario, true),
+        colaboradores: porPessoa,
+        regras: diario.regras.map((r) => ({ id: r.id, sigiloso: !!r.sigiloso, novos: r.novos.length, estoque: r.estoque })),
+      });
+    }
+
     const texto = formatarDiario(diario, true);
 
     await sendTelegramMessage(token, destino, texto);
