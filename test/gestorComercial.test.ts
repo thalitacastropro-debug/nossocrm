@@ -338,7 +338,7 @@ describe('formatarParaColaborador — o que chega no celular de cada um', () => 
       }],
     };
     const t = formatarParaColaborador(semNovidade, 'u-den')!;
-    expect(t).toContain('Nada novo hoje');
+    expect(t).toContain('Nada novo entrou desde ontem');
     expect(t).toContain('Ainda em aberto com você');
     expect(t).toContain('Reunião de ontem sem desfecho: 10');
     // e não vaza o número do colega nem o total do time
@@ -355,5 +355,105 @@ describe('formatarParaColaborador — o que chega no celular de cada um', () => 
       regras: [{ ...diario.regras[0], novos: [{ ...diario.regras[0].novos[1], contato: '<b>X</b>' }] }],
     };
     expect(formatarParaColaborador(perigoso, 'u-ped')!).toContain('&lt;b&gt;X&lt;/b&gt;');
+  });
+});
+
+// Pedido da Thalita em 02/09/2026: *"a do Pedro precisa ser mais detalhada ou mais
+// explicativa, ele precisa entender as prioridades do dia e que será cobrado de acordo com o
+// que preenche ou deixa de preencher no sistema"*.
+describe('formatarParaColaborador — explicativo para quem executa', () => {
+  const comAcao: Diario = {
+    data: 'terça-feira, 02/09',
+    ontem: { mensagensDeLead: 3, notasEscritas: 0, reunioesMarcadas: 0 },
+    regras: [
+      {
+        id: 'sem-resposta', titulo: 'Falaram e ninguém respondeu', emoji: '🔴', estoque: 21,
+        acao: 'Responder no chat do CRM.',
+        estoquePorDono: { 'u-ped': 21 },
+        novos: [
+          { donoId: 'u-ped', donoNome: 'Pedro Sellan', contato: 'Rose Meire', detalhe: '"os valores?"', idadeHoras: 19 },
+          { donoId: 'u-ped', donoNome: 'Pedro Sellan', contato: 'Pablo Henrique', detalhe: '"ainda dá?"', idadeHoras: 14 },
+        ],
+      },
+    ],
+  };
+
+  it('numera as prioridades na ordem', () => {
+    const t = formatarParaColaborador(comAcao, 'u-ped')!;
+    expect(t).toContain('Suas prioridades de hoje, nesta ordem');
+    expect(t).toContain('1. 🔴 <b>Rose Meire</b>');
+    expect(t).toContain('2. 🔴 <b>Pablo Henrique</b>');
+  });
+
+  it('diz o gesto que encerra cada item — alerta sem ação é adivinhação', () => {
+    expect(formatarParaColaborador(comAcao, 'u-ped')!).toContain('↳ Responder no chat do CRM.');
+  });
+
+  it('explica que a cobrança é sobre o REGISTRO, não sobre a palavra de ninguém', () => {
+    const t = formatarParaColaborador(comAcao, 'u-ped')!;
+    expect(t).toContain('Como esta lista funciona');
+    expect(t).toContain('para o sistema ele não aconteceu');
+  });
+});
+
+// Pedido da mesma conversa: *"a cobrança do Denilson é diferente por ele ser o responsável
+// pelo Pedro"*. Quem cobra chega na daily sabendo o que o outro tem em aberto.
+describe('formatarParaColaborador — a visão de quem é responsável pela equipe', () => {
+  const diario: Diario = {
+    data: 'terça-feira, 02/09',
+    ontem: { mensagensDeLead: 5, notasEscritas: 0, reunioesMarcadas: 0 },
+    regras: [
+      {
+        id: 'sem-resposta', titulo: 'Falaram e ninguém respondeu', emoji: '🔴', estoque: 23,
+        acao: 'Responder no chat do CRM.',
+        estoquePorDono: { 'u-ped': 21, 'u-den': 2 },
+        novos: [
+          { donoId: 'u-den', donoNome: 'Denilson Silva', contato: 'Bruce Wilker', detalhe: '"me chama amanhã"', idadeHoras: 21 },
+          { donoId: 'u-ped', donoNome: 'Pedro Sellan', contato: 'Rose Meire', detalhe: '"os valores?"', idadeHoras: 19 },
+        ],
+      },
+      {
+        id: 'contradicao', titulo: 'Marcou realizada, não escreveu desfecho', emoji: '⚡', sigiloso: true,
+        estoque: 1, estoquePorDono: { 'u-ped': 1 },
+        novos: [{ donoId: 'u-ped', donoNome: 'Pedro Sellan', contato: 'Alice', detalhe: 'sem nota', idadeHoras: 30 }],
+      },
+    ],
+  };
+
+  it('o gestor vê o que é dele E o que a equipe tem em aberto', () => {
+    const t = formatarParaColaborador(diario, 'u-den', { ehGestor: true })!;
+    expect(t).toContain('Bruce Wilker'); // o dele, nas prioridades
+    expect(t).toContain('Sua equipe');
+    expect(t).toContain('Pedro Sellan · <b>Rose Meire</b>');
+    expect(t).toContain('Em aberto com Pedro Sellan');
+    expect(t).toContain('Falaram e ninguém respondeu: 21');
+  });
+
+  it('🔒 nem o gestor recebe a contradição — ela é só da dona', () => {
+    const t = formatarParaColaborador(diario, 'u-den', { ehGestor: true })!;
+    expect(t).not.toContain('Alice');
+    expect(t).not.toContain('Marcou realizada');
+    expect(formatarDiario(diario, true)).toContain('Alice');
+  });
+
+  it('quem NÃO é gestor continua vendo só o próprio trabalho', () => {
+    const t = formatarParaColaborador(diario, 'u-ped')!;
+    expect(t).not.toContain('Sua equipe');
+    expect(t).not.toContain('Bruce Wilker');
+    expect(t).not.toContain('Em aberto com');
+  });
+
+  it('gestor sem nada seu, mas com equipe devendo, ainda recebe o relatório', () => {
+    const soDaEquipe: Diario = {
+      ...diario,
+      regras: [{
+        id: 'sem-resposta', titulo: 'Falaram e ninguém respondeu', emoji: '🔴', estoque: 21,
+        estoquePorDono: { 'u-ped': 21 },
+        novos: [{ donoId: 'u-ped', donoNome: 'Pedro Sellan', contato: 'Rose Meire', detalhe: '"?"', idadeHoras: 19 }],
+      }],
+    };
+    const t = formatarParaColaborador(soDaEquipe, 'u-den', { ehGestor: true });
+    expect(t).not.toBeNull();
+    expect(t!).toContain('Sua equipe');
   });
 });

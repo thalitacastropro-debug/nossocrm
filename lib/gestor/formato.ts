@@ -95,7 +95,26 @@ export function formatarDiario(diario: Diario, paraDona: boolean): string {
  * novidade NEM acumulado. Mandar "você está em dia" todo dia é o jeito mais
  * rápido de a pessoa parar de ler; esconder 10 pendências é pior.
  */
-export function formatarParaColaborador(diario: Diario, donoId: string): string | null {
+export interface OpcoesDoColaborador {
+  /**
+   * Acrescenta a visão da equipe abaixo do bloco pessoal.
+   *
+   * Pedido da Thalita em 02/09/2026: *"a cobrança do Denilson é diferente por
+   * ele ser o responsável pelo Pedro"*. Quem cobra precisa chegar na daily
+   * sabendo o que o outro tem em aberto — senão a conversa começa perguntando
+   * o que o relatório já sabia.
+   *
+   * Continua SEM as regras sigilosas: a contradição é só da dona. Um gestor que
+   * a recebesse ensinaria o time a espaçar cliques, não a preencher melhor.
+   */
+  ehGestor?: boolean;
+}
+
+export function formatarParaColaborador(
+  diario: Diario,
+  donoId: string,
+  opts: OpcoesDoColaborador = {},
+): string | null {
   const meus: Array<{ regra: Regra; item: ItemAlerta }> = [];
   const meuEstoque: Array<{ regra: Regra; quantos: number }> = [];
 
@@ -111,17 +130,24 @@ export function formatarParaColaborador(diario: Diario, donoId: string): string 
     if (quantos > novosDele) meuEstoque.push({ regra, quantos });
   }
 
-  if (meus.length === 0 && meuEstoque.length === 0) return null;
+  const equipe = opts.ehGestor ? blocoDaEquipe(diario, donoId) : [];
+
+  if (meus.length === 0 && meuEstoque.length === 0 && equipe.length === 0) return null;
 
   const linhas = [`<b>Seu dia — ${esc(diario.data)}</b>`, ''];
 
   if (meus.length) {
-    for (const { regra, item } of meus) {
-      linhas.push(`${regra.emoji} <b>${esc(item.contato)}</b> — ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`);
-    }
-    linhas.push('', '<i>Responder ou registrar o desfecho no card já tira daqui.</i>');
+    linhas.push('<b>Suas prioridades de hoje, nesta ordem:</b>', '');
+    meus.forEach(({ regra, item }, i) => {
+      linhas.push(
+        `${i + 1}. ${regra.emoji} <b>${esc(item.contato)}</b> — ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`,
+      );
+      // A ação é o que separa "alerta" de "tarefa": sem ela a pessoa entende o
+      // problema e ainda tem que adivinhar qual gesto encerra o item.
+      if (regra.acao) linhas.push(`    ↳ ${esc(regra.acao)}`);
+    });
   } else {
-    linhas.push('Nada novo hoje.');
+    linhas.push('Nada novo entrou desde ontem.');
   }
 
   if (meuEstoque.length) {
@@ -129,8 +155,80 @@ export function formatarParaColaborador(diario: Diario, donoId: string): string 
     for (const { regra, quantos } of meuEstoque) linhas.push(`· ${esc(regra.titulo)}: ${quantos}`);
   }
 
+  if (equipe.length) linhas.push('', ...equipe);
+
+  linhas.push('', COMO_FUNCIONA);
+
   const texto = linhas.join('\n');
   return texto.length > MAX_TELEGRAM ? `${texto.slice(0, MAX_TELEGRAM)}\n…` : texto;
+}
+
+/**
+ * O contrato, escrito. Responde "por que estou recebendo isto?" e deixa claro
+ * que a cobrança é sobre o REGISTRO, não sobre a palavra de ninguém — pedido da
+ * Thalita em 02/09/2026. Sem esta linha o relatório parece vigilância; com ela,
+ * parece regra do jogo, que é o que ele é.
+ */
+const COMO_FUNCIONA =
+  '<i>Como esta lista funciona: ela é montada todo dia às 8h a partir do que está no CRM — ' +
+  'ninguém escreve à mão. Cada item sai daqui sozinho quando você responde a mensagem ou ' +
+  'registra o desfecho no card. O que não estiver registrado continua aparecendo, porque ' +
+  'para o sistema ele não aconteceu.</i>';
+
+/** O que a equipe do gestor tem em aberto — nome no que é novo, número no resto. */
+function blocoDaEquipe(diario: Diario, gestorId: string): string[] {
+  const novosDeOutros: Array<{ regra: Regra; item: ItemAlerta }> = [];
+  for (const regra of diario.regras) {
+    if (regra.sigiloso) continue;
+    for (const item of regra.novos) {
+      if (item.donoId && item.donoId !== gestorId) novosDeOutros.push({ regra, item });
+    }
+  }
+
+  // Acumulado de cada um, para o gestor saber o TAMANHO da dívida que vai
+  // cobrar — e não só o que apareceu ontem. Foi assim que o Denilson ficou
+  // invisível na primeira versão do relatório individual.
+  const estoqueDeOutros = new Map<string, Array<{ titulo: string; quantos: number }>>();
+  for (const regra of diario.regras) {
+    if (regra.sigiloso || !regra.estoquePorDono) continue;
+    for (const [id, quantos] of Object.entries(regra.estoquePorDono)) {
+      if (id === gestorId || id === 'sem-dono' || quantos === 0) continue;
+      const nome = nomeDoDono(diario, id);
+      if (!nome) continue;
+      if (!estoqueDeOutros.has(nome)) estoqueDeOutros.set(nome, []);
+      estoqueDeOutros.get(nome)!.push({ titulo: regra.titulo, quantos });
+    }
+  }
+
+  if (novosDeOutros.length === 0 && estoqueDeOutros.size === 0) return [];
+
+  const linhas = ['<b>Sua equipe</b>'];
+
+  for (const { regra, item } of novosDeOutros) {
+    linhas.push(
+      `${regra.emoji} ${esc(item.donoNome)} · <b>${esc(item.contato)}</b> — ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`,
+    );
+  }
+
+  for (const [nome, itens] of estoqueDeOutros) {
+    linhas.push('', `<i>Em aberto com ${esc(nome)}:</i>`);
+    for (const { titulo, quantos } of itens) linhas.push(`· ${esc(titulo)}: ${quantos}`);
+  }
+
+  return linhas;
+}
+
+/**
+ * Nome de um dono a partir dos itens já montados. O `Diario` não carrega a
+ * tabela de perfis, e escrever um id cru no texto ("em aberto com a3f9…") seria
+ * pior que omitir — então quem não aparece em item nenhum fica de fora do
+ * acumulado da equipe.
+ */
+function nomeDoDono(diario: Diario, donoId: string): string | null {
+  for (const regra of diario.regras) {
+    for (const item of regra.novos) if (item.donoId === donoId) return item.donoNome;
+  }
+  return null;
 }
 
 /**

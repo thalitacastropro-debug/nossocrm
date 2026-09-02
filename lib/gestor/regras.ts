@@ -70,6 +70,17 @@ export interface Regra {
    * `null` como chave = sem dono.
    */
   estoquePorDono?: Record<string, number>;
+  /**
+   * O gesto EXATO que tira o item da lista, na segunda pessoa.
+   *
+   * Pedido da Thalita em 02/09/2026: o relatório do Pedro tem que ser
+   * explicativo — *"ele precisa entender as prioridades do dia e que será
+   * cobrado de acordo com o que preenche ou deixa de preencher no sistema"*.
+   * Sem isto o alerta diz o que está errado e deixa a pessoa adivinhar o que
+   * fazer; com isto ele vira tarefa. Só aparece no relatório INDIVIDUAL — no da
+   * dona seria ruído, ela não é quem executa.
+   */
+  acao?: string;
 }
 
 /** Conta os itens por dono, para o acumulado individual. */
@@ -243,6 +254,7 @@ async function regraSemResposta(
     id: 'sem-resposta',
     titulo: 'Falaram e ninguém respondeu',
     emoji: '🔴',
+    acao: 'Responder no chat do CRM.',
     novos: ordenar(novos),
     estoque: todos.length,
     estoquePorDono: contarPorDono(todos),
@@ -287,6 +299,7 @@ async function regraReuniaoVencida(
     id: 'reuniao-vencida',
     titulo: 'Reunião de ontem sem desfecho',
     emoji: '⏸️',
+    acao: 'Abrir o card e gravar o desfecho por áudio: aconteceu, deu no-show ou foi remarcada.',
     novos: ordenar(novos),
     estoque: todos.length,
     estoquePorDono: contarPorDono(todos),
@@ -412,6 +425,7 @@ async function regraEnvioFalhou(supabase: SupabaseClient, now: Date, ontem: Date
     id: 'envio-falhou',
     titulo: 'Mensagem que não chegou no cliente',
     emoji: '📵',
+    acao: 'Conferir o número no contato (DDD certo?) e reenviar.',
     novos: novos.sort((a, b) => b.detalhe.localeCompare(a.detalhe)).slice(0, MAX_POR_LISTA),
     estoque: linhas.length,
   };
@@ -460,6 +474,7 @@ async function regraVendaSemPremio(
     id: 'venda-sem-premio',
     titulo: 'Venda sem o prêmio informado',
     emoji: '💰',
+    acao: 'Informar o prêmio mensal no card — sem ele a venda não entra no fechamento do mês.',
     novos: ordenar(novos),
     estoque: semPremio.length,
     estoquePorDono: contarPorDono(novos),

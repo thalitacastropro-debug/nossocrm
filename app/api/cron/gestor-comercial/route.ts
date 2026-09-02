@@ -38,6 +38,18 @@ function json<T>(body: T, status = 200): Response {
   });
 }
 
+/**
+ * Quem recebe a visão da equipe junto do próprio bloco.
+ *
+ * Hoje `admin` = Thalita e Denilson, e a decisão de 26/08 é não promover mais
+ * ninguém — então o papel serve de hierarquia sem inventar tabela nova. Se um
+ * dia houver admin que não cobra ninguém, aí sim vale um campo próprio; hoje
+ * seria estrutura para um caso que não existe.
+ */
+function ehGestor(role: string | null | undefined): boolean {
+  return role === 'admin';
+}
+
 /** Segunda a sexta. Sábado e domingo não têm daily. */
 function ehDiaUtil(now: Date): boolean {
   const local = new Date(now.getTime() + TZ_OFFSET_HOURS * 36e5);
@@ -87,11 +99,14 @@ export async function GET(req: Request): Promise<Response> {
     if (seco) {
       // Um texto por pessoa que tem algo, mais o da dona — lado a lado, para
       // dar para comparar exatamente o que cada um veria.
-      const { data: time } = await supabase.from('profiles').select('id, name, nickname, first_name');
-      const porPessoa = ((time ?? []) as Array<{ id: string; name: string | null; nickname: string | null; first_name: string | null }>)
+      const { data: time } = await supabase.from('profiles').select('id, name, nickname, first_name, role');
+      const porPessoa = (
+        (time ?? []) as Array<{ id: string; name: string | null; nickname: string | null; first_name: string | null; role: string | null }>
+      )
         .map((p) => ({
           quem: p.nickname || p.name || p.first_name || p.id,
-          texto: formatarParaColaborador(diario, p.id),
+          ehGestor: ehGestor(p.role),
+          texto: formatarParaColaborador(diario, p.id, { ehGestor: ehGestor(p.role) }),
         }))
         .filter((x) => x.texto !== null);
 
