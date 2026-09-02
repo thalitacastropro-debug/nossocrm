@@ -136,3 +136,42 @@ describe('criarTocador', () => {
     await expect(tocador.tocar()).resolves.toBe(false);
   });
 });
+
+// O primeiro gesto do usuario chama `preparar`. Ate 02/09/2026 o hook chamava
+// `criarTocador(...)` e descartava o resultado: como o contexto so nasce dentro de `tocar`, o
+// gesto passava em branco e o contexto real seguia suspenso ate a primeira mensagem — ja fora
+// da janela do gesto, quando o navegador pode recusar o resume. O Pedro relatou em 01/09 que
+// o som nao chegava.
+describe('criarTocador — destravar no primeiro gesto', () => {
+  it('preparar cria e ACORDA o contexto sem tocar nota nenhuma', async () => {
+    const { ctx, tocados } = contextoFake({ state: 'suspended' });
+    const tocador = criarTocador({ criarContexto: () => ctx as never });
+
+    expect(await tocador.preparar()).toBe(true);
+    expect(ctx.resume).toHaveBeenCalled();
+    expect(tocados).toHaveLength(0);
+  });
+
+  it('o contexto acordado no gesto e o MESMO que toca depois', async () => {
+    const { ctx, tocados } = contextoFake({ state: 'suspended' });
+    const criarContexto = vi.fn(() => ctx as never);
+    const tocador = criarTocador({ criarContexto });
+
+    await tocador.preparar();
+    await tocador.tocar();
+
+    expect(criarContexto).toHaveBeenCalledTimes(1);
+    expect(tocados.length).toBeGreaterThan(0);
+  });
+
+  it('navegador que recusa o resume devolve false, sem jogar', async () => {
+    const { ctx } = contextoFake({ state: 'suspended', resumeJoga: true });
+    const tocador = criarTocador({ criarContexto: () => ctx as never });
+    await expect(tocador.preparar()).resolves.toBe(false);
+  });
+
+  it('ambiente sem AudioContext (SSR) devolve false, sem jogar', async () => {
+    const tocador = criarTocador({ criarContexto: () => null });
+    await expect(tocador.preparar()).resolves.toBe(false);
+  });
+});

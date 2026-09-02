@@ -40,10 +40,15 @@ export function useSomMensagemNova() {
    * Sem isto o primeiro aviso do dia é ENGOLIDO: o navegador só deixa tocar depois de um
    * clique/tecla na página, e o primeiro cliente a responder cairia justamente nessa janela.
    * `once: true` — um gesto basta para o contexto ficar 'running' pelo resto da sessão.
+   *
+   * ⚠️ Tem que ser `preparar()` do MESMO tocador que vai tocar depois. Até 02/09/2026 isto
+   * chamava `criarTocador(...)` e jogava o resultado fora — e como o contexto de áudio só
+   * nasce lá dentro de `tocar`, o gesto do usuário não acordava coisa nenhuma. Era um
+   * destravamento que não destravava; o Pedro relatou em 01/09 que o som não chegava.
    */
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const destravar = () => { void criarTocador({ criarContexto: criarContextoDoNavegador }); };
+    const destravar = () => { void tocador.preparar(); };
     const opts = { once: true, passive: true } as const;
     window.addEventListener('pointerdown', destravar, opts);
     window.addEventListener('keydown', destravar, opts);
@@ -51,7 +56,7 @@ export function useSomMensagemNova() {
       window.removeEventListener('pointerdown', destravar);
       window.removeEventListener('keydown', destravar);
     };
-  }, []);
+  }, [tocador]);
 
   /** Passe direto no `onchange` do realtime. Ignora tudo que não seja mensagem do cliente. */
   const aoMudarRealtime = useCallback(

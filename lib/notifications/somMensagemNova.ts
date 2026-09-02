@@ -104,6 +104,27 @@ const DURACAO_NOTA = 0.12;
 export function criarTocador(deps: TocadorDeps) {
   let contexto: ContextoDeAudio | null = null;
 
+  /**
+   * Cria e acorda o contexto SEM tocar nada. É o que o primeiro gesto do usuário chama.
+   *
+   * Precisa ser função DESTE tocador (e não um `criarTocador` novo, que era o bug até
+   * 02/09/2026): quem toca o som é o contexto guardado aqui dentro. Um tocador criado só
+   * para "destravar" nem chega a instanciar contexto — a criação é preguiçosa, dentro de
+   * `tocar` — então o gesto do usuário passava em branco e o contexto real continuava
+   * `suspended` até a primeira mensagem, já fora da janela do gesto, quando o navegador
+   * pode recusar o `resume`. Resultado: o aviso saía mudo.
+   */
+  async function preparar(): Promise<boolean> {
+    try {
+      if (!contexto) contexto = deps.criarContexto();
+      if (!contexto) return false;
+      if (contexto.state === 'suspended') await contexto.resume();
+      return contexto.state === 'running';
+    } catch {
+      return false;
+    }
+  }
+
   async function tocar(): Promise<boolean> {
     try {
       if (!contexto) contexto = deps.criarContexto();
@@ -137,7 +158,7 @@ export function criarTocador(deps: TocadorDeps) {
     }
   }
 
-  return { tocar };
+  return { tocar, preparar };
 }
 
 /** Fábrica real do navegador. Fora do browser (SSR) devolve null. */
