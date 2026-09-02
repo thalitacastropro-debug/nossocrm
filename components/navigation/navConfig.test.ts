@@ -33,9 +33,11 @@ describe('NAV_GROUPS', () => {
     expect(new Set(todos).size).toBe(todos.length);
   });
 
-  it('põe Roadmap, Configurações e Perfil na Conta — o resto é Operação', () => {
+  // A ordem é pedido da Thalita (01/09): o que se abre todo dia vem primeiro, e
+  // o Roadmap — visita ocasional — fica por último.
+  it('põe Configurações, Perfil e Roadmap na Conta — o resto é Operação', () => {
     const conta = NAV_GROUPS.find((g) => g.id === 'conta')!;
-    expect(conta.items.map((i) => i.href)).toEqual(['/roadmap', '/settings', '/profile']);
+    expect(conta.items.map((i) => i.href)).toEqual(['/settings', '/profile', '/roadmap']);
   });
 });
 
@@ -52,7 +54,7 @@ describe('visibleNavGroups', () => {
     const grupos = visibleNavGroups('vendedor');
     expect(hrefs(grupos)).not.toContain('/settings');
     const conta = grupos.find((g) => g.id === 'conta');
-    expect(conta?.items.map((i) => i.href)).toEqual(['/roadmap', '/profile']);
+    expect(conta?.items.map((i) => i.href)).toEqual(['/profile', '/roadmap']);
   });
 
   // O 'trafego' é parceiro externo (o Lobato), não colaborador: default-deny,

@@ -83,10 +83,12 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       // Roadmap vive na CONTA, não na Operação: não é trabalho do dia, é a
       // relação do time com o produto — o mesmo lugar onde vão entrar tutorial,
-      // suporte e assinatura.
-      { id: 'roadmap', label: 'Roadmap', href: '/roadmap', icon: Map },
+      // suporte e assinatura. Fica por ÚLTIMO (ordem pedida pela Thalita em
+      // 01/09): o que a pessoa abre com frequência vem antes do que ela visita
+      // de vez em quando.
       { id: 'settings', label: 'Configurações', href: '/settings', icon: Settings, prefetch: 'settings' },
       { id: 'profile', label: 'Perfil', href: '/profile', icon: User },
+      { id: 'roadmap', label: 'Roadmap', href: '/roadmap', icon: Map },
     ],
   },
 ];
