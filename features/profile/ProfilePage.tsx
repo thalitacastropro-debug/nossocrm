@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { isE164, normalizePhoneE164 } from '@/lib/phone';
 import { Loader2, User, Mail, Shield, Calendar, Key, Check, Eye, EyeOff, Phone, Pencil, Save, Camera, X, Home } from 'lucide-react';
 import { usePersistedState } from '@/hooks/usePersistedState';
+import { DiarioNoTelegram } from './DiarioNoTelegram';
 
 /**
  * Componente React `ProfilePage`.
@@ -576,6 +577,11 @@ export const ProfilePage: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Resumo do dia no Telegram. Mora no perfil, e não em Configurações,
+                porque só a própria pessoa consegue ligar o dela: o bot não pode
+                puxar conversa, então falar com ele é um passo intransferível. */}
+            <DiarioNoTelegram />
 
             {/* Preferências pessoais — moradia nova da "Página Inicial".
                 Ela vivia em Configurações → Geral, e o vendedor perdeu Configurações

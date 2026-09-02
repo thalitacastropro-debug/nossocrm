@@ -285,6 +285,33 @@ describe('formatarDiario', () => {
     };
     expect(formatarDiario(muitos, true).length).toBeLessThanOrEqual(3902);
   });
+
+  // O corte antigo cortava em qualquer posição. Se caísse dentro de um <b> ou de
+  // uma entidade &amp;, o Telegram recusava a mensagem INTEIRA com
+  // "can't parse entities" — nenhuma mensagem, justo no dia mais cheio.
+  it('corta sem partir marcação no meio', () => {
+    const muitos: Diario = {
+      ...diario,
+      regras: [{
+        ...diario.regras[0],
+        novos: Array.from({ length: 200 }, (_, i) => ({
+          donoId: 'u-den',
+          donoNome: 'Denilson Silva',
+          contato: `Lead ${i} ${'x'.repeat(60)}`,
+          detalhe: 'teste',
+          idadeHoras: i,
+        })),
+      }],
+    };
+
+    const t = formatarDiario(muitos, true);
+    const abre = (t.match(/<b>/g) ?? []).length;
+    const fecha = (t.match(/<\/b>/g) ?? []).length;
+    expect(abre).toBe(fecha);
+    // e não sobrou tag pela metade no fim
+    expect(t).not.toMatch(/<[a-z/]*$/i);
+    expect(t).not.toMatch(/&[a-z]*$/i);
+  });
 });
 
 describe('formatarParaColaborador — o que chega no celular de cada um', () => {

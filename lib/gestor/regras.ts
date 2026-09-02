@@ -41,8 +41,22 @@ const HORAS_SEM_RESPOSTA = 4;
 /** A partir daqui o card está parado, não em andamento. */
 const DIAS_PARADO = 30;
 
-/** Teto por lista: o Pedro tem 156 cards abertos; relatório de 40 linhas ninguém lê. */
+/** Teto por lista NO TEXTO: o Pedro tem 156 cards abertos; relatório de 40 linhas ninguém lê. */
 const MAX_POR_LISTA = 5;
+
+/**
+ * Quantos itens cada regra GUARDA antes de o texto ser montado.
+ *
+ * Precisa ser maior que `MAX_POR_LISTA` por causa do relatório individual: o
+ * corte acontecia aqui, sobre a lista do time inteiro, e só depois o texto de
+ * cada pessoa filtrava por dono. Resultado silencioso — se os 5 itens mais
+ * antigos fossem todos do Denilson, o Pedro recebia "nada novo entrou desde
+ * ontem" tendo dois leads sem resposta. O relatório mentia sem errar uma conta.
+ *
+ * Agora guardamos com folga e quem corta é o formatador, depois de saber para
+ * quem está escrevendo.
+ */
+const MAX_GUARDADOS = 30;
 
 export interface ItemAlerta {
   /** Para quem é a cobrança. `null` = sem dono (é uma pendência da casa). */
@@ -426,7 +440,7 @@ async function regraEnvioFalhou(supabase: SupabaseClient, now: Date, ontem: Date
     titulo: 'Mensagem que não chegou no cliente',
     emoji: '📵',
     acao: 'Conferir o número no contato (DDD certo?) e reenviar.',
-    novos: novos.sort((a, b) => b.detalhe.localeCompare(a.detalhe)).slice(0, MAX_POR_LISTA),
+    novos: novos.sort((a, b) => b.detalhe.localeCompare(a.detalhe)).slice(0, MAX_GUARDADOS),
     estoque: linhas.length,
   };
 }
@@ -541,7 +555,7 @@ async function nomesDosCards(supabase: SupabaseClient, dealIds: string[]): Promi
 
 /** Mais antigo primeiro (é o mais urgente) e corta no teto de leitura. */
 function ordenar(itens: ItemAlerta[]): ItemAlerta[] {
-  return [...itens].sort((a, b) => b.idadeHoras - a.idadeHoras).slice(0, MAX_POR_LISTA);
+  return [...itens].sort((a, b) => b.idadeHoras - a.idadeHoras).slice(0, MAX_GUARDADOS);
 }
 
-export const _internos = { TZ_OFFSET_HOURS, HORAS_SEM_RESPOSTA, DIAS_PARADO, MAX_POR_LISTA };
+export const _internos = { TZ_OFFSET_HOURS, HORAS_SEM_RESPOSTA, DIAS_PARADO, MAX_POR_LISTA, MAX_GUARDADOS };

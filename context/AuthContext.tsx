@@ -66,6 +66,12 @@ interface Profile {
      * que faz sentido MOSTRAR — por exemplo, filtrar o funil por consultor.
      */
     ve_todos_os_leads?: boolean;
+    /**
+     * Chat privado da pessoa com o bot do Telegram, onde ela recebe o resumo do
+     * próprio dia às 8h. Preenchido por ela mesma no perfil; `null` = não
+     * recebe, que é o padrão — ninguém entra na lista sem ter pedido.
+     */
+    telegram_chat_id?: string | null;
 }
 
 /**

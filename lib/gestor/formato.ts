@@ -24,7 +24,42 @@ import { idadeLegivel, type Diario, type ItemAlerta, type Regra } from './regras
 /** Limite do Telegram é 4096; deixamos folga para o rodapé. */
 const MAX_TELEGRAM = 3900;
 
+/**
+ * Quantos itens de cada regra viram LINHA no texto.
+ *
+ * As regras guardam bem mais (`MAX_GUARDADOS`) porque o corte por pessoa só
+ * pode acontecer depois de saber para quem o texto está sendo escrito.
+ */
+const MAX_NO_TEXTO = 5;
+
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * Corta o texto no limite do Telegram SEM partir marcação no meio.
+ *
+ * Cortar em qualquer posição é o que a versão antiga fazia, e é uma bomba de
+ * efeito retardado: basta o corte cair dentro de um `<b>` ou de uma entidade
+ * `&amp;` para o Telegram recusar a mensagem INTEIRA com
+ * `400 can't parse entities`. O resultado seria o pior possível — não uma
+ * mensagem truncada, mas nenhuma mensagem, no dia em que a lista está mais
+ * cheia, que é justamente o dia em que ela mais importa.
+ *
+ * Cortamos na última quebra de linha antes do limite porque cada linha que este
+ * módulo gera tem a marcação fechada dentro dela — então linha inteira é
+ * sempre HTML válido.
+ */
+function cortarNoLimite(texto: string): string {
+  if (texto.length <= MAX_TELEGRAM) return texto;
+
+  const pedaco = texto.slice(0, MAX_TELEGRAM);
+  const ultimaQuebra = pedaco.lastIndexOf('\n');
+
+  // Sem quebra nenhuma (mensagem de uma linha só e gigante): não dá para cortar
+  // com segurança, então preferimos o aviso curto a um envio recusado.
+  if (ultimaQuebra <= 0) return 'A lista de hoje ficou grande demais para o Telegram. Abra o CRM.';
+
+  return `${pedaco.slice(0, ultimaQuebra)}\n…`;
+}
 
 /**
  * @param paraDona  `true` inclui as regras sigilosas (contradição). O bloco de
@@ -49,8 +84,13 @@ export function formatarDiario(diario: Diario, paraDona: boolean): string {
 
   for (const [nome, itens] of porPessoa) {
     linhas.push('', `<b>${esc(nome)}</b>`);
-    for (const { regra, item } of itens) {
+    // Corte POR PESSOA, não sobre a fila do time: o bloco de cada um cabe em 5
+    // linhas, e quem tem mais aparece com o resto no acumulado.
+    for (const { regra, item } of itens.slice(0, MAX_NO_TEXTO)) {
       linhas.push(`${regra.emoji} ${esc(item.contato)} — ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`);
+    }
+    if (itens.length > MAX_NO_TEXTO) {
+      linhas.push(`<i>… e mais ${itens.length - MAX_NO_TEXTO}</i>`);
     }
   }
 
@@ -66,7 +106,7 @@ export function formatarDiario(diario: Diario, paraDona: boolean): string {
   }
 
   const texto = linhas.join('\n');
-  return texto.length > MAX_TELEGRAM ? `${texto.slice(0, MAX_TELEGRAM)}\n…` : texto;
+  return cortarNoLimite(texto);
 }
 
 /**
@@ -138,7 +178,11 @@ export function formatarParaColaborador(
 
   if (meus.length) {
     linhas.push('<b>Suas prioridades de hoje, nesta ordem:</b>', '');
-    meus.forEach(({ regra, item }, i) => {
+    // O corte acontece AQUI, depois de saber de quem é a lista. Quando ele
+    // ficava lá nas regras, era sobre a fila do time inteiro: bastava os mais
+    // antigos serem de outra pessoa para alguém receber "nada novo" tendo
+    // leads sem resposta.
+    meus.slice(0, MAX_NO_TEXTO).forEach(({ regra, item }, i) => {
       linhas.push(
         `${i + 1}. ${regra.emoji} <b>${esc(item.contato)}</b> — ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`,
       );
@@ -146,6 +190,9 @@ export function formatarParaColaborador(
       // problema e ainda tem que adivinhar qual gesto encerra o item.
       if (regra.acao) linhas.push(`    ↳ ${esc(regra.acao)}`);
     });
+    if (meus.length > MAX_NO_TEXTO) {
+      linhas.push('', `<i>… e mais ${meus.length - MAX_NO_TEXTO} que entraram desde ontem.</i>`);
+    }
   } else {
     linhas.push('Nada novo entrou desde ontem.');
   }
@@ -160,7 +207,7 @@ export function formatarParaColaborador(
   linhas.push('', COMO_FUNCIONA);
 
   const texto = linhas.join('\n');
-  return texto.length > MAX_TELEGRAM ? `${texto.slice(0, MAX_TELEGRAM)}\n…` : texto;
+  return cortarNoLimite(texto);
 }
 
 /**
