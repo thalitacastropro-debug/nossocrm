@@ -345,7 +345,12 @@ async function regraNegociacaoParada(
     id: 'negociacao-parada',
     titulo: 'Negociação parada',
     emoji: '💸',
-    acao: 'Falar com o lead hoje e mover o card: fechou, perdeu ou remarcou.',
+    // Os três desfechos fecham o card; o QUARTO caminho — "continua vivo" — é o
+    // mais comum e era o que faltava. Sem uma data marcada, o lead some de novo
+    // e reaparece nesta mesma lista amanhã. Em 04/09/2026 o banco inteiro tinha
+    // UMA tarefa futura legítima (e sem dono), com 11 dos 12 cards em
+    // negociação sem próximo passo nenhum.
+    acao: 'Falar com o lead hoje e registrar no card: fechou, perdeu, remarcou — ou qual é o próximo passo e quando.',
     novos: [],
     estoque: 0,
   };
@@ -388,20 +393,45 @@ async function regraNegociacaoParada(
   }
 
   const { data: ativRaw } = await supabase
-    .from('activities').select('deal_id, created_at')
+    .from('activities').select('deal_id, created_at, date, completed')
     .in('deal_id', negocios.map((d) => d.id))
     .is('deleted_at', null);
+
   const ultimaNota = new Map<string, number>();
-  for (const a of ((ativRaw ?? []) as Array<{ deal_id: string | null; created_at: string | null }>)) {
-    if (!a.deal_id || !a.created_at) continue;
-    const t = new Date(a.created_at).getTime();
-    ultimaNota.set(a.deal_id, Math.max(ultimaNota.get(a.deal_id) ?? 0, t));
+  /**
+   * Cards que JÁ têm próximo passo marcado. O alerta precisa ser desligável
+   * fazendo a coisa certa, senão vira punição: silêncio de 5 dias com retorno
+   * marcado para amanhã não é abandono, é plano.
+   *
+   * Teto de DIAS_PARADO (30) porque sem ele bastaria marcar uma tarefa para
+   * 2027 e o card sumiria da cobrança para sempre — e isso não é hipótese:
+   * existe uma assim no banco, resíduo do bug de data da IA corrigido em 31/08.
+   */
+  const temProximoPasso = new Set<string>();
+  const tetoMs = now.getTime() + DIAS_PARADO * 24 * 36e5;
+
+  for (const a of ((ativRaw ?? []) as Array<{
+    deal_id: string | null; created_at: string | null; date: string | null; completed: boolean | null;
+  }>)) {
+    if (!a.deal_id) continue;
+    if (a.created_at) {
+      const t = new Date(a.created_at).getTime();
+      ultimaNota.set(a.deal_id, Math.max(ultimaNota.get(a.deal_id) ?? 0, t));
+    }
+    if (a.completed === false && a.date) {
+      const quando = new Date(a.date).getTime();
+      if (quando > now.getTime() && quando <= tetoMs) temProximoPasso.add(a.deal_id);
+    }
   }
 
   const limiteMs = DIAS_NEGOCIACAO_PARADA * 24 * 36e5;
 
   const todos: ItemAlerta[] = [];
   for (const d of negocios) {
+    // Quem já marcou o que vem a seguir não é cobrado. O que sobra na lista
+    // passa a ser exatamente o que não tem plano nenhum.
+    if (temProximoPasso.has(d.id)) continue;
+
     // Sem mensagem e sem nota, a entrada na etapa é o último sinal honesto que
     // temos — melhor que descartar o card mais abandonado de todos.
     const sinal = Math.max(

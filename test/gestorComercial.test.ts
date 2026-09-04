@@ -14,6 +14,7 @@ import { formatarDiario, formatarParaColaborador } from '@/lib/gestor/formato';
 /** 01/09/2026, 08:00 BRT — o horário em que o cron roda. */
 const AGORA = new Date('2026-09-01T11:00:00Z');
 const hAtras = (h: number) => new Date(AGORA.getTime() - h * 36e5).toISOString();
+const emDias = (d: number) => new Date(AGORA.getTime() + d * 24 * 36e5).toISOString();
 
 interface Cenario {
   profiles?: unknown[];
@@ -699,5 +700,82 @@ describe('regra: negociação parada', () => {
     const posSemResposta = texto.indexOf('Angela');
     expect(posNegociacao).toBeGreaterThan(-1);
     expect(posNegociacao).toBeLessThan(posSemResposta);
+  });
+});
+
+/**
+ * A AÇÃO TEM QUE PEDIR O PRÓXIMO PASSO (Thalita, 04/09/2026):
+ * "fechou, perdeu, remarcou ou qual é o proximo passo com esse lead. nao to
+ * vendo nenhuma tarefa de follow up nos leads!"
+ *
+ * E ela tem razão: no banco inteiro existe UMA tarefa futura legítima (Nathalia,
+ * 08/09) — e sem dono. Onze dos doze cards em negociação não têm próximo passo
+ * nenhum. Fechar/perder/remarcar são os três desfechos; o quarto caminho, que é
+ * o mais comum, é "continua vivo" — e esse precisa virar data no card, senão o
+ * lead some de novo e reaparece nesta mesma lista amanhã.
+ */
+describe('regra 7: a ação cobra o próximo passo, não só o desfecho', () => {
+  it('pede a data do próximo passo quando o lead continua vivo', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase({ profiles: PERFIS }), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.acao).toMatch(/pr[óo]ximo passo/i);
+    expect(r.acao).toMatch(/quando/i);
+  });
+});
+
+/**
+ * QUEM JÁ MARCOU O PRÓXIMO PASSO NÃO É COBRADO.
+ *
+ * O alerta tem que ser desligável fazendo a coisa certa, senão vira punição:
+ * um card em silêncio há 5 dias COM retorno marcado para amanhã não é
+ * abandono, é plano. O que sobra na lista passa a ser exatamente o que não tem
+ * plano nenhum — que em 04/09/2026 era 11 dos 12 cards em negociação.
+ *
+ * A janela é de 30 dias (DIAS_PARADO) de propósito: sem teto, bastaria marcar
+ * uma tarefa para 2027 e o card sumiria da cobrança para sempre. Não é hipótese
+ * — existe uma assim no banco, no card do Richard Gois, resíduo do bug de data
+ * da IA consertado em 31/08.
+ */
+describe('regra 7: próximo passo marcado tira o card da cobrança', () => {
+  const base = (): Cenario => ({
+    profiles: PERFIS,
+    board_stages: [{ id: 's-neg', board_id: 'b1', name: 'negociacao' }],
+    deals: [
+      { id: 'd40', title: 'Alice Mahlmeister — Lead Meta Ads', stage_id: 's-neg', owner_id: 'u-ped', contact_id: 'p40', is_won: false, is_lost: false, deleted_at: null },
+    ],
+    contacts: [{ id: 'p40', name: 'Alice Mahlmeister', owner_id: 'u-ped' }],
+    messaging_conversations: [
+      { id: 'k40', contact_id: 'p40', assigned_user_id: 'u-ped', last_message_at: hAtras(5 * 24), last_message_direction: 'outbound', last_message_preview: 'te retorno' },
+    ],
+  });
+
+  it('silêncio de 5 dias COM retorno marcado não é abandono', async () => {
+    const c = base();
+    c.activities = [{ id: 'a40', type: 'TASK', title: 'Retorno com a Alice', deal_id: 'd40', owner_id: 'u-ped', date: emDias(2), created_at: hAtras(5 * 24), completed: false, deleted_at: null }];
+    const d = await montarDiario({ supabase: fakeSupabase(c), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.novos.map((i) => i.contato)).not.toContain('Alice Mahlmeister');
+  });
+
+  it('mas sem próximo passo nenhum, entra', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(base()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.novos.map((i) => i.contato)).toContain('Alice Mahlmeister');
+  });
+
+  it('tarefa marcada para daqui a um ano não vale como próximo passo', async () => {
+    const c = base();
+    c.activities = [{ id: 'a41', type: 'TASK', title: 'Reabordar lead (reativação)', deal_id: 'd40', owner_id: 'u-ped', date: emDias(330), created_at: hAtras(5 * 24), completed: false, deleted_at: null }];
+    const d = await montarDiario({ supabase: fakeSupabase(c), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.novos.map((i) => i.contato)).toContain('Alice Mahlmeister');
+  });
+
+  it('tarefa já concluída não conta como próximo passo', async () => {
+    const c = base();
+    c.activities = [{ id: 'a42', type: 'TASK', title: 'Já liguei', deal_id: 'd40', owner_id: 'u-ped', date: emDias(2), created_at: hAtras(5 * 24), completed: true, deleted_at: null }];
+    const d = await montarDiario({ supabase: fakeSupabase(c), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.novos.map((i) => i.contato)).toContain('Alice Mahlmeister');
   });
 });
