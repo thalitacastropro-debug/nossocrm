@@ -25,6 +25,7 @@ import type {
   PaginationState,
 } from '@/lib/messaging/types';
 import { transformMessage, createTextContent } from '@/lib/messaging/types';
+import { reconciliaTique } from '@/lib/messaging/reconciliaTique';
 // NOTE: Channel router is server-only. Client code should call API endpoints.
 
 // =============================================================================
@@ -302,27 +303,39 @@ export function useSendMessage() {
         }
       );
     },
-    onSettled: (_, _err, input) => {
+    onSettled: (message, _err, input) => {
       // Invalidate conversation to update last_message (runs on both success and error)
       queryClient.invalidateQueries({
         queryKey: queryKeys.messagingConversations.detail(input.conversationId),
       });
 
-      // REDE DE SEGURANÇA DO TIQUE (26/08/2026).
+      // REDE DE SEGURANÇA DO TIQUE (26/08/2026, refeita em 03/09/2026).
       //
       // A rota POST /api/messaging/messages responde na hora com a mensagem em 'pending' e só
       // depois, em background, envia ao provedor e grava 'sent'/'failed'. Quem tira o reloginho da
-      // tela é o evento de realtime — e quando ele não chega (RLS na entrega, socket caído, aba
-      // dormindo), a bolha fica com o RELÓGIO para sempre, mesmo com a mensagem entregue e lida no
-      // WhatsApp. Foi exatamente o que o Pedro viu: concluiu que "as mensagens não estão indo".
+      // tela é o evento de realtime — e ele NÃO CHEGA: a policy `mensagens_select` é um EXISTS
+      // sobre messaging_conversations, e `useRealtimeSync.ts` já registra que a avaliação de RLS no
+      // Realtime falha com policy baseada em JOIN (por isso o INSERT passou a ser injetado direto
+      // no cache; o UPDATE nunca ganhou esse contorno). Foi o que o Pedro viu ao concluir que "as
+      // mensagens não estão indo".
       //
-      // Este refetch atrasado reconcilia com o banco de qualquer jeito. 4s cobre o envio típico da
-      // UAZAPI (1-2s) com folga; se ainda estiver em 'queued', o realtime ou a próxima interação
-      // resolvem. É barato: uma consulta por mensagem enviada.
-      const chaveDasMensagens = queryKeys.messagingMessages.byConversation(input.conversationId);
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: chaveDasMensagens });
-      }, 4000);
+      // A versão de 26/08 fazia UM refetch aos 4s, apostando no envio típico da UAZAPI (1-2s). Em
+      // 03/09 um PDF de 606 KB levou 6s para ser confirmado: o refetch encontrou 'pending', não
+      // tentou de novo, e a bolha ficou no relógio até um F5 — com a mensagem já entregue no
+      // WhatsApp. Agora a espera é CONDICIONAL: tenta até o status virar terminal.
+      if (message?.id) {
+        reconciliaTique({
+          queryClient,
+          conversationId: input.conversationId,
+          messageId: message.id,
+        });
+      } else {
+        // Envio falhou: não há mensagem para acompanhar, mas o cache ainda precisa refletir o
+        // rollback do otimista contra o que o banco tem.
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.messagingMessages.byConversation(input.conversationId),
+        });
+      }
     },
   });
 }
