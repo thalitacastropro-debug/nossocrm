@@ -38,6 +38,15 @@ const TZ_OFFSET_HOURS = -3;
 /** Silêncio que já é constrangedor dentro do expediente. */
 const HORAS_SEM_RESPOSTA = 4;
 
+/**
+ * Quanto tempo o lead tem para responder ao PRIMEIRO contato antes de virar
+ * tarefa de telefone.
+ *
+ * 24h porque a cadência da Ana ainda tenta por mensagem dentro do primeiro dia;
+ * depois disso, insistir por escrito é repetir o que já não funcionou.
+ */
+const HORAS_SEM_PRIMEIRA_RESPOSTA = 24;
+
 /** A partir daqui o card está parado, não em andamento. */
 const DIAS_PARADO = 30;
 
@@ -84,6 +93,18 @@ export interface Regra {
    * `null` como chave = sem dono.
    */
   estoquePorDono?: Record<string, number>;
+  /**
+   * Os itens do estoque, com nome — não só a contagem.
+   *
+   * Pedido da Thalita em 03/09/2026: *"falaram e nao respondeu, Que lead é
+   * esse? quais sao as reunioes sem desfecho? o direcionamento precisa estar
+   * claro"*. Contagem não é tarefa: quem lê "Falaram e ninguém respondeu: 17"
+   * ainda precisa abrir o CRM para descobrir quem são.
+   *
+   * Continua valendo a regra de não repetir lista inteira todo dia — quem corta
+   * é o formatador, que mostra só os primeiros e conta o resto.
+   */
+  estoqueItens?: ItemAlerta[];
   /**
    * O gesto EXATO que tira o item da lista, na segunda pessoa.
    *
@@ -184,6 +205,7 @@ export async function montarDiario(deps: DepsGestor): Promise<Diario> {
   const regras: Regra[] = [];
 
   regras.push(await regraSemResposta(supabase, now, ontem, perfis));
+  regras.push(await regraSemPrimeiraResposta(supabase, now, perfis));
   regras.push(await regraReuniaoVencida(supabase, now, ontem, perfis));
   regras.push(await regraContradicao(supabase, now, ontem, perfis));
   regras.push(await regraEnvioFalhou(supabase, now, ontem));
@@ -272,7 +294,111 @@ async function regraSemResposta(
     novos: ordenar(novos),
     estoque: todos.length,
     estoquePorDono: contarPorDono(todos),
+    estoqueItens: ordenar(todos),
   };
+}
+
+/**
+ * 1b. RECEBEU O PRIMEIRO CONTATO E NUNCA RESPONDEU.
+ *
+ * O buraco que a regra 1 deixava: ela filtra `last_message_direction='inbound'`,
+ * ou seja, só enxerga conversa em que o lead FALOU. Lead pago que recebeu o
+ * primeiro toque da Ana e não respondeu nada tem `outbound` por último e era
+ * invisível para o diário inteiro — foi o caso do Pablo, da Célia e da Rose,
+ * parados desde 01/09/2026 sem aparecer em lugar nenhum.
+ *
+ * É o oposto de "silêncio nosso": aqui o silêncio é DELE. Por isso a ação não é
+ * responder, é LIGAR — insistir por mensagem seria repetir o canal que já
+ * falhou.
+ *
+ * Quem já respondeu alguma vez fica de fora, mesmo que a gente tenha falado por
+ * último: essa conversa está viva e é cobrança de outra natureza.
+ */
+async function regraSemPrimeiraResposta(
+  supabase: SupabaseClient, now: Date, perfis: Map<string, unknown>,
+): Promise<Regra> {
+  const vazia: Regra = {
+    id: 'sem-primeira-resposta',
+    titulo: 'Não respondeu ao primeiro contato',
+    emoji: '📞',
+    acao: 'Ligar — ele não respondeu por mensagem.',
+    novos: [],
+    estoque: 0,
+  };
+
+  const { data } = await supabase
+    .from('messaging_conversations')
+    .select('id, contact_id, assigned_user_id, last_message_at, last_message_direction')
+    .eq('last_message_direction', 'outbound')
+    .lte('last_message_at', new Date(now.getTime() - HORAS_SEM_PRIMEIRA_RESPOSTA * 36e5).toISOString())
+    .order('last_message_at', { ascending: true });
+
+  const linhas = (data ?? []) as Array<{
+    id: string; contact_id: string | null; assigned_user_id: string | null; last_message_at: string;
+  }>;
+  if (linhas.length === 0) return vazia;
+
+  // Uma única inbound na vida já tira a conversa daqui.
+  const { data: falaram } = await supabase
+    .from('messaging_messages')
+    .select('conversation_id')
+    .eq('direction', 'inbound')
+    .in('conversation_id', linhas.map((l) => l.id));
+  const jaFalaram = new Set(
+    ((falaram ?? []) as Array<{ conversation_id: string }>).map((m) => m.conversation_id),
+  );
+
+  const mudas = linhas.filter((l) => !jaFalaram.has(l.id));
+  if (mudas.length === 0) return vazia;
+
+  const contatoIds = [...new Set(mudas.map((l) => l.contact_id).filter(Boolean))] as string[];
+  const { data: contatosRaw } = contatoIds.length
+    ? await supabase.from('contacts').select('id, name, owner_id, phone').in('id', contatoIds)
+    : { data: [] };
+  const contatos = new Map(
+    ((contatosRaw ?? []) as Array<{ id: string; name: string | null; owner_id: string | null; phone: string | null }>)
+      .map((c) => [c.id, c]),
+  );
+
+  const { telefonesInternos, nomesInternos } = await internos(supabase);
+
+  const todos: ItemAlerta[] = mudas
+    .filter((l) => {
+      const c = l.contact_id ? contatos.get(l.contact_id) : undefined;
+      // `ultimaFala` fica de fora de propósito: a última fala aqui é NOSSA, e o
+      // filtro de ruído existe para julgar o que o LEAD disse.
+      return !ehRuido({
+        nomeContato: c?.name ?? null,
+        telefoneContato: c?.phone ?? null,
+        ultimaFala: null,
+        telefonesInternos,
+        nomesInternos,
+      });
+    })
+    .map((l) => {
+      const c = l.contact_id ? contatos.get(l.contact_id) : undefined;
+      return {
+        donoId: l.assigned_user_id ?? c?.owner_id ?? null,
+        donoNome: nomeDe(perfis.get((l.assigned_user_id ?? c?.owner_id) ?? '') as Parameters<typeof nomeDe>[0]),
+        contato: c?.name ?? 'Sem nome',
+        detalhe: 'recebeu o primeiro contato e não respondeu',
+        idadeHoras: horasEntre(now, new Date(l.last_message_at)),
+        dealId: undefined,
+      };
+    });
+
+  // Sem corte por "novo": o item só sai daqui quando alguém liga. Repetir é o
+  // certo — é lead pago parado, do mesmo jeito que prêmio pendente é dinheiro
+  // parado na regra 5.
+  //
+  // ORDEM AO CONTRÁRIO DAS OUTRAS REGRAS: aqui o mais RECENTE vem primeiro.
+  // Nas regras de silêncio nosso, o mais antigo é a maior dívida; aqui o
+  // silêncio é do lead, e quem parou de responder há 39 dias já esfriou. Quem
+  // recebeu o primeiro toque anteontem ainda atende o telefone. Ordenar pelo
+  // mais velho enterraria justamente os recuperáveis embaixo dos mortos.
+  const doMaisFresco = [...todos].sort((a, b) => a.idadeHoras - b.idadeHoras).slice(0, MAX_GUARDADOS);
+
+  return { ...vazia, novos: doMaisFresco, estoque: todos.length, estoquePorDono: contarPorDono(todos) };
 }
 
 /**
@@ -317,6 +443,7 @@ async function regraReuniaoVencida(
     novos: ordenar(novos),
     estoque: todos.length,
     estoquePorDono: contarPorDono(todos),
+    estoqueItens: ordenar(todos),
   };
 }
 

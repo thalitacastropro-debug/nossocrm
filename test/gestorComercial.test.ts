@@ -484,3 +484,119 @@ describe('formatarParaColaborador — a visão de quem é responsável pela equi
     expect(t!).toContain('Sua equipe');
   });
 });
+
+/**
+ * 6ª REGRA — "Não respondeu ao primeiro contato" (pedida em 03/09/2026).
+ *
+ * As 5 regras originais eram CEGAS para o caso mais acionável que existe: lead
+ * pago que recebeu o primeiro toque da Ana e não respondeu NADA. A regra 1
+ * filtra `last_message_direction='inbound'`, ou seja, só enxerga quem falou —
+ * quem nunca falou é invisível. Pablo, Célia e Rose ficaram assim desde 01/09.
+ *
+ * Insistir por mensagem em quem não respondeu por mensagem é repetir o que já
+ * não funcionou. Por isso a ação desta regra é LIGAR.
+ */
+describe('regra: não respondeu ao primeiro contato', () => {
+  const cenario = (): Cenario => ({
+    profiles: PERFIS,
+    messaging_conversations: [
+      // Primeiro toque em 01/09, nenhuma resposta até hoje.
+      { id: 'c10', contact_id: 'p10', assigned_user_id: null, last_message_at: hAtras(72), last_message_direction: 'outbound', last_message_preview: 'Oi Pablo, tudo bem?' },
+      // A Bruna JÁ conversou; o humano é que falou por último. Não é este caso.
+      { id: 'c11', contact_id: 'p11', assigned_user_id: 'u-den', last_message_at: hAtras(30), last_message_direction: 'outbound', last_message_preview: 'Para conseguir te responder sobre carência...' },
+      // Primeiro toque agora há pouco: ainda é cedo para cobrar.
+      { id: 'c12', contact_id: 'p12', assigned_user_id: null, last_message_at: hAtras(2), last_message_direction: 'outbound', last_message_preview: 'Oi Rose' },
+    ],
+    contacts: [
+      { id: 'p10', name: 'Pablo', owner_id: 'u-den' },
+      { id: 'p11', name: 'Bruna Nicoletti', owner_id: 'u-den' },
+      { id: 'p12', name: 'Rose Meiguins', owner_id: 'u-ped' },
+    ],
+    messaging_messages: [
+      { id: 'm1', conversation_id: 'c11', direction: 'inbound', created_at: hAtras(31), status: 'delivered' },
+    ],
+  });
+
+  it('lista quem recebeu o primeiro toque e nunca respondeu', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'sem-primeira-resposta')!;
+    expect(r.novos.map((i) => i.contato)).toEqual(['Pablo']);
+  });
+
+  it('não cobra quem já respondeu alguma vez, mesmo com a gente falando por último', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'sem-primeira-resposta')!;
+    expect(r.novos.map((i) => i.contato)).not.toContain('Bruna Nicoletti');
+  });
+
+  it('dá tempo ao lead: primeiro toque recente não entra', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'sem-primeira-resposta')!;
+    expect(r.novos.map((i) => i.contato)).not.toContain('Rose Meiguins');
+  });
+
+  it('manda LIGAR, porque mensagem já foi tentada e não funcionou', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'sem-primeira-resposta')!;
+    expect(r.acao).toMatch(/ligar/i);
+  });
+});
+
+/**
+ * O ACUMULADO PRECISA DIZER QUAL LEAD (pedido da Thalita, 03/09/2026):
+ * "falaram e nao respondeu, Que lead é esse? quais sao as reunioes sem
+ * desfecho? o direcionamento precisa estar claro".
+ *
+ * Até aqui o bloco "Ainda em aberto com você" era só contagem — e contagem não
+ * é tarefa. Quem lê "Falaram e ninguém respondeu: 17" ainda tem que abrir o CRM
+ * e descobrir sozinho quem são. Agora o acumulado nomeia os primeiros e repete
+ * a ação.
+ */
+describe('acumulado individual: nomes, não só números', () => {
+  const soEstoque = (): Cenario => ({
+    profiles: PERFIS,
+    messaging_conversations: [
+      { id: 'c2', contact_id: 'p2', assigned_user_id: 'u-ped', last_message_at: hAtras(34 * 24), last_message_direction: 'inbound', last_message_preview: 'Não ligou ainda' },
+    ],
+    contacts: [{ id: 'p2', name: 'Lilian Bosi', owner_id: 'u-ped' }],
+  });
+
+  it('diz QUAL lead está em aberto, não só quantos', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(soEstoque()), now: AGORA });
+    const texto = formatarParaColaborador(d, 'u-ped')!;
+    expect(texto).toContain('Lilian Bosi');
+  });
+
+  it('repete o direcionamento junto do acumulado', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(soEstoque()), now: AGORA });
+    const texto = formatarParaColaborador(d, 'u-ped')!;
+    expect(texto).toContain('Responder no chat do CRM.');
+  });
+});
+
+/**
+ * ORDEM DA 6ª REGRA — ao contrário das outras.
+ *
+ * Nas regras de silêncio NOSSO, o mais antigo é o mais grave: um lead esperando
+ * resposta há 34 dias é a maior dívida. Aqui é o inverso — o silêncio é DELE, e
+ * quem parou de responder há 39 dias já esfriou. Quem recebeu o primeiro toque
+ * anteontem ainda atende o telefone.
+ */
+describe('regra 6: ordem por silêncio mais fresco', () => {
+  it('põe o contato mais recente antes do que já esfriou', async () => {
+    const c: Cenario = {
+      profiles: PERFIS,
+      messaging_conversations: [
+        { id: 'c20', contact_id: 'p20', assigned_user_id: 'u-ped', last_message_at: hAtras(39 * 24), last_message_direction: 'outbound', last_message_preview: 'Oi' },
+        { id: 'c21', contact_id: 'p21', assigned_user_id: 'u-ped', last_message_at: hAtras(69), last_message_direction: 'outbound', last_message_preview: 'Oi' },
+      ],
+      contacts: [
+        { id: 'p20', name: 'Everaldo', owner_id: 'u-ped' },
+        { id: 'p21', name: 'CeliaGuaglianone', owner_id: 'u-ped' },
+      ],
+    };
+    const d = await montarDiario({ supabase: fakeSupabase(c), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'sem-primeira-resposta')!;
+    expect(r.novos.map((i) => i.contato)).toEqual(['CeliaGuaglianone', 'Everaldo']);
+  });
+});

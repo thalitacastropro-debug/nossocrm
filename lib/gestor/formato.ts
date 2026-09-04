@@ -32,6 +32,15 @@ const MAX_TELEGRAM = 3900;
  */
 const MAX_NO_TEXTO = 5;
 
+/**
+ * Quantos itens do ACUMULADO viram linha, por regra.
+ *
+ * Menor que `MAX_NO_TEXTO` de propósito: o acumulado é a dívida antiga, não a
+ * novidade do dia. Três nomes bastam para a pessoa saber por onde começar sem
+ * transformar a manhã numa lista de 17 linhas que ninguém lê.
+ */
+const MAX_NO_ESTOQUE = 3;
+
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /**
@@ -156,7 +165,7 @@ export function formatarParaColaborador(
   opts: OpcoesDoColaborador = {},
 ): string | null {
   const meus: Array<{ regra: Regra; item: ItemAlerta }> = [];
-  const meuEstoque: Array<{ regra: Regra; quantos: number }> = [];
+  const meuEstoque: Array<{ regra: Regra; quantos: number; itens: ItemAlerta[] }> = [];
 
   for (const regra of diario.regras) {
     if (regra.sigiloso) continue;
@@ -165,9 +174,14 @@ export function formatarParaColaborador(
     // Acumulado DELE: o total da regra menos o que já foi listado como novidade
     // dele. `estoquePorDono` vem preenchido pelas regras que sabem contar por
     // pessoa; sem ele, não inventamos número.
+    const meusNovos = new Set(regra.novos.filter((i) => i.donoId === donoId));
     const quantos = regra.estoquePorDono?.[donoId] ?? 0;
-    const novosDele = regra.novos.filter((i) => i.donoId === donoId).length;
-    if (quantos > novosDele) meuEstoque.push({ regra, quantos });
+    if (quantos > meusNovos.size) {
+      // Os itens vêm do MESMO array que gerou os novos, então dá para excluir
+      // por identidade o que já foi listado acima — ninguém aparece duas vezes.
+      const itens = (regra.estoqueItens ?? []).filter((i) => i.donoId === donoId && !meusNovos.has(i));
+      meuEstoque.push({ regra, quantos, itens });
+    }
   }
 
   const equipe = opts.ehGestor ? blocoDaEquipe(diario, donoId) : [];
@@ -198,8 +212,29 @@ export function formatarParaColaborador(
   }
 
   if (meuEstoque.length) {
+    // Antes isto era só contagem ("Falaram e ninguém respondeu: 17"), e contagem
+    // não é tarefa: a pessoa ainda tinha que abrir o CRM para descobrir QUEM.
+    // Pedido da Thalita em 03/09/2026. Agora vêm os primeiros nomes e a ação.
     linhas.push('', '<i>Ainda em aberto com você:</i>');
-    for (const { regra, quantos } of meuEstoque) linhas.push(`· ${esc(regra.titulo)}: ${quantos}`);
+    for (const { regra, quantos, itens } of meuEstoque) {
+      const nomeados = itens.slice(0, MAX_NO_ESTOQUE);
+
+      // Regra que não guarda itens (ou cujo estoque é todo do colega) volta ao
+      // formato antigo de uma linha. Melhor um número honesto do que um bloco
+      // com título e nenhum nome embaixo.
+      if (nomeados.length === 0) {
+        linhas.push(`· ${esc(regra.titulo)}: ${quantos}`);
+        continue;
+      }
+
+      linhas.push('', `${regra.emoji} <b>${esc(regra.titulo)}</b> — ${quantos}`);
+      if (regra.acao) linhas.push(`    ↳ ${esc(regra.acao)}`);
+      for (const item of nomeados) {
+        linhas.push(`    · ${esc(item.contato)} — ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`);
+      }
+      const sobra = quantos - nomeados.length;
+      if (sobra > 0) linhas.push(`    <i>… e mais ${sobra}</i>`);
+    }
   }
 
   if (equipe.length) linhas.push('', ...equipe);
