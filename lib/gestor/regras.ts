@@ -50,6 +50,17 @@ const HORAS_SEM_PRIMEIRA_RESPOSTA = 24;
 /** A partir daqui o card está parado, não em andamento. */
 const DIAS_PARADO = 30;
 
+/**
+ * Silêncio tolerado na etapa mais perto da receita.
+ *
+ * 3 dias porque negociação é a etapa em que o lead já disse sim ao diagnóstico e
+ * está decidindo — o esfriamento aqui é rápido e caro. Decisão da Thalita em
+ * 03/09/2026, com os números na mão: com 3 dias entram 6 dos 12 cards abertos;
+ * com 2 entrariam 10 (papel de parede na estreia) e com 5 a Angela Cristina,
+ * que originou o pedido, não apareceria.
+ */
+const DIAS_NEGOCIACAO_PARADA = 3;
+
 /** Teto por lista NO TEXTO: o Pedro tem 156 cards abertos; relatório de 40 linhas ninguém lê. */
 const MAX_POR_LISTA = 5;
 
@@ -204,6 +215,12 @@ export async function montarDiario(deps: DepsGestor): Promise<Diario> {
 
   const regras: Regra[] = [];
 
+  // A ORDEM AQUI É A ORDEM DAS PRIORIDADES no relatório individual — o
+  // formatador percorre as regras nesta sequência e corta nas 5 primeiras.
+  // Negociação parada vem primeiro por decisão da Thalita em 03/09: é a etapa
+  // mais perto da receita, e venda quase feita esfriando custa mais caro que
+  // mensagem sem responder, que é recuperável a qualquer hora do dia.
+  regras.push(await regraNegociacaoParada(supabase, now, perfis));
   regras.push(await regraSemResposta(supabase, now, ontem, perfis));
   regras.push(await regraSemPrimeiraResposta(supabase, now, perfis));
   regras.push(await regraReuniaoVencida(supabase, now, ontem, perfis));
@@ -296,6 +313,121 @@ async function regraSemResposta(
     estoquePorDono: contarPorDono(todos),
     estoqueItens: ordenar(todos),
   };
+}
+
+/**
+ * 0. NEGOCIAÇÃO PARADA — a etapa mais perto da receita ficou muda.
+ *
+ * O buraco que ninguém tinha visto: até 03/09/2026 **nenhuma regra olhava
+ * ETAPA**. Um grep por `stage_id`/`board_id` neste arquivo dava zero, e a
+ * constante `DIAS_PARADO` estava declarada sem nenhum uso — a regra de card
+ * parado foi planejada e nunca construída. Resultado: os cards a um passo do
+ * fechamento não apareciam em lugar nenhum do diário.
+ *
+ * O caso que abriu isso foi a Angela Cristina Lessa: em negociação, e o último
+ * sinal era ELA dizendo *"Boa tarde! Ok"* em 31/08. O lead concordou e ninguém
+ * voltou. Ela só aparecia diluída no acumulado de "falaram e ninguém
+ * respondeu", entre outros 16, sem dizer em que etapa estava.
+ *
+ * "Sinal de vida" aqui é qualquer mensagem (nos dois sentidos) ou nota no card.
+ * Nota conta de propósito: o consultor pode ter ligado, e a ligação só existe
+ * para o sistema se ele registrou.
+ *
+ * ⚠️ ESTA REGRA NÃO MOSTRA DINHEIRO. `deals.value` é a mensalidade que o LEAD
+ * paga hoje no plano ANTIGO, não o valor da venda — foi exatamente o campo que
+ * o validador de saída tratou como PII em agosto e matou 2 leads pagos. Dizer
+ * "R$ 3.200 parados" seria mentira. Ordena por tempo parado, e só.
+ */
+async function regraNegociacaoParada(
+  supabase: SupabaseClient, now: Date, perfis: Map<string, unknown>,
+): Promise<Regra> {
+  const vazia: Regra = {
+    id: 'negociacao-parada',
+    titulo: 'Negociação parada',
+    emoji: '💸',
+    acao: 'Falar com o lead hoje e mover o card: fechou, perdeu ou remarcou.',
+    novos: [],
+    estoque: 0,
+  };
+
+  const { data: etapasRaw } = await supabase
+    .from('board_stages').select('id, name').eq('name', 'negociacao');
+  const etapas = ((etapasRaw ?? []) as Array<{ id: string }>).map((e) => e.id);
+  if (etapas.length === 0) return vazia;
+
+  const { data: dealsRaw } = await supabase
+    .from('deals')
+    .select('id, title, owner_id, contact_id, last_stage_change_date')
+    .in('stage_id', etapas)
+    .eq('is_won', false)
+    .eq('is_lost', false)
+    .is('deleted_at', null);
+  const negocios = (dealsRaw ?? []) as Array<{
+    id: string; title: string | null; owner_id: string | null;
+    contact_id: string | null; last_stage_change_date: string | null;
+  }>;
+  if (negocios.length === 0) return vazia;
+
+  const contatoIds = [...new Set(negocios.map((d) => d.contact_id).filter(Boolean))] as string[];
+  const { data: contatosRaw } = contatoIds.length
+    ? await supabase.from('contacts').select('id, name, owner_id').in('id', contatoIds)
+    : { data: [] };
+  const contatos = new Map(
+    ((contatosRaw ?? []) as Array<{ id: string; name: string | null; owner_id: string | null }>)
+      .map((c) => [c.id, c]),
+  );
+
+  const { data: convsRaw } = contatoIds.length
+    ? await supabase.from('messaging_conversations').select('contact_id, last_message_at').in('contact_id', contatoIds)
+    : { data: [] };
+  const ultimaMensagem = new Map<string, number>();
+  for (const c of ((convsRaw ?? []) as Array<{ contact_id: string | null; last_message_at: string | null }>)) {
+    if (!c.contact_id || !c.last_message_at) continue;
+    const t = new Date(c.last_message_at).getTime();
+    ultimaMensagem.set(c.contact_id, Math.max(ultimaMensagem.get(c.contact_id) ?? 0, t));
+  }
+
+  const { data: ativRaw } = await supabase
+    .from('activities').select('deal_id, created_at')
+    .in('deal_id', negocios.map((d) => d.id))
+    .is('deleted_at', null);
+  const ultimaNota = new Map<string, number>();
+  for (const a of ((ativRaw ?? []) as Array<{ deal_id: string | null; created_at: string | null }>)) {
+    if (!a.deal_id || !a.created_at) continue;
+    const t = new Date(a.created_at).getTime();
+    ultimaNota.set(a.deal_id, Math.max(ultimaNota.get(a.deal_id) ?? 0, t));
+  }
+
+  const limiteMs = DIAS_NEGOCIACAO_PARADA * 24 * 36e5;
+
+  const todos: ItemAlerta[] = [];
+  for (const d of negocios) {
+    // Sem mensagem e sem nota, a entrada na etapa é o último sinal honesto que
+    // temos — melhor que descartar o card mais abandonado de todos.
+    const sinal = Math.max(
+      d.contact_id ? (ultimaMensagem.get(d.contact_id) ?? 0) : 0,
+      ultimaNota.get(d.id) ?? 0,
+      d.last_stage_change_date ? new Date(d.last_stage_change_date).getTime() : 0,
+    );
+    if (sinal === 0) continue;
+
+    const silencioMs = now.getTime() - sinal;
+    if (silencioMs < limiteMs) continue;
+
+    const c = d.contact_id ? contatos.get(d.contact_id) : undefined;
+    const donoId = d.owner_id ?? c?.owner_id ?? null;
+    todos.push({
+      donoId,
+      donoNome: nomeDe(perfis.get(donoId ?? '') as Parameters<typeof nomeDe>[0]),
+      contato: c?.name ?? d.title ?? 'Card sem nome',
+      detalhe: 'sem mensagem nem nota desde então',
+      idadeHoras: silencioMs / 36e5,
+      dealId: d.id,
+    });
+  }
+
+  // `ordenar` já põe o mais parado primeiro — que aqui é o mais grave.
+  return { ...vazia, novos: ordenar(todos), estoque: todos.length, estoquePorDono: contarPorDono(todos) };
 }
 
 /**

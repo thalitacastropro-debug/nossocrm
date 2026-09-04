@@ -20,6 +20,7 @@ interface Cenario {
   messaging_conversations?: unknown[];
   contacts?: unknown[];
   activities?: unknown[];
+  board_stages?: unknown[];
   messaging_messages?: unknown[];
   deals?: unknown[];
 }
@@ -598,5 +599,105 @@ describe('regra 6: ordem por silêncio mais fresco', () => {
     const d = await montarDiario({ supabase: fakeSupabase(c), now: AGORA });
     const r = d.regras.find((x) => x.id === 'sem-primeira-resposta')!;
     expect(r.novos.map((i) => i.contato)).toEqual(['CeliaGuaglianone', 'Everaldo']);
+  });
+});
+
+/**
+ * 7ª REGRA — "Negociação parada" (pedida em 03/09/2026).
+ *
+ * A daily não olhava ETAPA nenhuma: grep por stage_id/board_id em regras.ts
+ * dava zero, e a constante DIAS_PARADO estava declarada sem nenhum uso. Ou
+ * seja, os cards na última etapa antes do fechamento — os mais perto da
+ * receita — não apareciam em lugar algum. O caso que abriu isso foi a Angela
+ * Cristina Lessa: em negociação, último sinal sendo ELA dizendo "Boa tarde! Ok"
+ * em 31/08, e ninguém voltou.
+ *
+ * ⚠️ Esta regra NÃO mostra dinheiro. `deals.value` é a mensalidade que o LEAD
+ * paga hoje no plano antigo, não o valor da venda — foi o campo que causou o
+ * bug do validador em agosto. Ordena por tempo parado, e só.
+ */
+describe('regra: negociação parada', () => {
+  const cenario = (): Cenario => ({
+    profiles: PERFIS,
+    board_stages: [
+      { id: 's-neg', board_id: 'b1', name: 'negociacao' },
+      { id: 's-qua', board_id: 'b1', name: 'qualificacao' },
+    ],
+    deals: [
+      { id: 'd30', title: 'Angela Cristina Lessa — Lead Meta Ads', stage_id: 's-neg', owner_id: 'u-ped', contact_id: 'p30', is_won: false, is_lost: false, deleted_at: null },
+      { id: 'd31', title: 'Cris Costa — Lead Meta Ads', stage_id: 's-neg', owner_id: 'u-ped', contact_id: 'p31', is_won: false, is_lost: false, deleted_at: null },
+      { id: 'd32', title: 'Ruberleide Petry Odahara — Lead Meta Ads', stage_id: 's-neg', owner_id: 'u-ped', contact_id: 'p32', is_won: false, is_lost: false, deleted_at: null },
+      // Fechado: não é pendência.
+      { id: 'd33', title: 'Mavie Ramunno — Lead Meta Ads', stage_id: 's-neg', owner_id: 'u-den', contact_id: 'p33', is_won: true, is_lost: false, deleted_at: null },
+      // Outra etapa: fora do alcance desta regra por enquanto.
+      { id: 'd34', title: 'Josiane Nobre — Lead Meta Ads', stage_id: 's-qua', owner_id: 'u-ped', contact_id: 'p34', is_won: false, is_lost: false, deleted_at: null },
+    ],
+    contacts: [
+      { id: 'p30', name: 'Angela Cristina Lessa', owner_id: 'u-ped' },
+      { id: 'p31', name: 'Cris Costa', owner_id: 'u-ped' },
+      { id: 'p32', name: 'Ruberleide Petry Odahara', owner_id: 'u-ped' },
+      { id: 'p33', name: 'Mavie Ramunno', owner_id: 'u-den' },
+      { id: 'p34', name: 'Josiane Nobre', owner_id: 'u-ped' },
+    ],
+    messaging_conversations: [
+      { id: 'k30', contact_id: 'p30', assigned_user_id: 'u-ped', last_message_at: hAtras(73), last_message_direction: 'inbound', last_message_preview: 'Boa tarde! Ok' },
+      { id: 'k31', contact_id: 'p31', assigned_user_id: 'u-ped', last_message_at: hAtras(20), last_message_direction: 'outbound', last_message_preview: 'te mando hoje' },
+      { id: 'k32', contact_id: 'p32', assigned_user_id: 'u-ped', last_message_at: hAtras(8 * 24), last_message_direction: 'inbound', last_message_preview: 'Ta' },
+      { id: 'k33', contact_id: 'p33', assigned_user_id: 'u-den', last_message_at: hAtras(200), last_message_direction: 'inbound', last_message_preview: 'ok' },
+      { id: 'k34', contact_id: 'p34', assigned_user_id: 'u-ped', last_message_at: hAtras(13 * 24), last_message_direction: 'inbound', last_message_preview: 'vou ver' },
+    ],
+  });
+
+  it('lista negociação sem sinal nenhum há mais de 3 dias', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.novos.map((i) => i.contato)).toContain('Angela Cristina Lessa');
+  });
+
+  it('não cobra negociação que teve sinal ontem', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.novos.map((i) => i.contato)).not.toContain('Cris Costa');
+  });
+
+  it('o mais parado vem primeiro', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.novos[0].contato).toBe('Ruberleide Petry Odahara');
+  });
+
+  it('card já ganho não é pendência', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.novos.map((i) => i.contato)).not.toContain('Mavie Ramunno');
+  });
+
+  it('por enquanto não alcança outras etapas', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.novos.map((i) => i.contato)).not.toContain('Josiane Nobre');
+  });
+
+  it('nota escrita no card conta como sinal de vida', async () => {
+    const c = cenario();
+    c.activities = [{ id: 'a30', type: 'NOTE', deal_id: 'd30', owner_id: 'u-ped', date: hAtras(10), created_at: hAtras(10), completed: true, deleted_at: null }];
+    const d = await montarDiario({ supabase: fakeSupabase(c), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    expect(r.novos.map((i) => i.contato)).not.toContain('Angela Cristina Lessa');
+  });
+
+  it('não mostra dinheiro: deals.value é o que o LEAD paga, não a venda', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
+    for (const i of r.novos) expect(i.detalhe).not.toMatch(/R\$|\d{3,}/);
+  });
+
+  it('encabeça as prioridades do dia, na frente de quem ficou sem resposta', async () => {
+    const d = await montarDiario({ supabase: fakeSupabase(cenario()), now: AGORA });
+    const texto = formatarParaColaborador(d, 'u-ped')!;
+    const posNegociacao = texto.indexOf('Ruberleide');
+    const posSemResposta = texto.indexOf('Angela');
+    expect(posNegociacao).toBeGreaterThan(-1);
+    expect(posNegociacao).toBeLessThan(posSemResposta);
   });
 });
