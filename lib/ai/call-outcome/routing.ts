@@ -42,8 +42,26 @@ const REABORDAR_MESES: Record<MotivoTag, number> = {
   sem_resposta: 1,
   fora_icp: 6,
   decisor: 0, // tratado como +2 semanas abaixo
+  engano: 0, // nunca usado: `geraReabordagem` barra antes (não é lead)
   outro: 3,
 };
+
+/**
+ * Este motivo merece lembrete de reabordagem?
+ *
+ * Regra da Thalita (09/09): todo lead que vai pra perdido leva lembrete pro futuro — **menos**
+ * quem nunca foi lead. Dois casos ficam de fora:
+ *  - `engano`: número errado / procurava outra pessoa. Reabordar é incomodar um estranho de novo.
+ *  - `fora_icp`: sem CNPJ e sem intenção de abrir, ou plano individual. O produto é empresarial;
+ *    o tempo não muda a elegibilidade, então o lembrete só entulha a agenda.
+ *
+ * Importa porque "Descartado" no funil da Ana serve para perda comercial E para engano: sem esta
+ * separação, um número errado ganharia tarefa de ligação para o ano que vem. E agenda cheia de
+ * lixo é agenda ignorada — o que mataria justamente os lembretes que valem.
+ */
+export function geraReabordagem(motivo: MotivoTag): boolean {
+  return motivo !== 'engano' && motivo !== 'fora_icp';
+}
 
 export function reabordarEmFallback(motivo: MotivoTag, now: Date): string {
   const d = new Date(now.getTime());

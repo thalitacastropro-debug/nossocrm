@@ -280,6 +280,13 @@ export interface Activity {
   title: string;
   description?: string;
   date: string;
+  /**
+   * Dono da atividade. Sem ele a tarefa nasce órfã e **some para quem não é dono do card** —
+   * medido em produção (09/09/2026): 4 das 22 reuniões estavam sem dono, porque o
+   * `activitiesService.create` simplesmente nunca gravava a coluna. Preencha sempre que a
+   * atividade for algo que alguém precisa executar (tarefa, lembrete, ligação).
+   */
+  ownerId?: string;
   user: {
     name: string;
     avatar: string;

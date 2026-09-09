@@ -21,11 +21,20 @@ import { contactsService } from '@/lib/supabase/contacts';
 import type { Deal, DealView, Board, Activity } from '@/types';
 import { conferirCoerenciaDoMove } from '@/lib/deals/coerenciaDoMove';
 import { resolverEtapaDoMove } from '@/lib/deals/moverParaFunil';
+import type { MotivoTag } from '@/lib/ai/taxonomy/motivos';
+import { geraReabordagem, reabordarEmFallback } from '@/lib/ai/call-outcome/routing';
+import { MOTIVO_LABELS } from '@/lib/ai/taxonomy/motivos';
 
 interface MoveDealParams {
   dealId: string;
   targetStageId: string;
   lossReason?: string;
+  /**
+   * Motivo da perda ESTRUTURADO (taxonomia única), obrigatório no modal desde 09/09/2026.
+   * Grava `custom_fields.motivo_perda` — o campo que o relatório de perdas lê e que estava
+   * preenchido em apenas **1 dos 36** perdidos — e decide a data do lembrete de reabordagem.
+   */
+  lossTag?: MotivoTag;
   // Context needed for automations
   deal: Deal | DealView;
   board: Board;
@@ -186,7 +195,7 @@ export const useMoveDeal = () => {
   const queryClient = useQueryClient();
 
   return useMutation<MoveDealResult, Error, MoveDealParams, MoveDealContext>({
-    mutationFn: async ({ dealId, targetStageId, lossReason, deal, board, lifecycleStages, explicitWin, explicitLost }) => {
+    mutationFn: async ({ dealId, targetStageId, lossReason, lossTag, deal, board, lifecycleStages, explicitWin, explicitLost }) => {
       // TRAVA DO CARD ÓRFÃO (27/08/2026, caso Richard Gois): este update grava `stage_id`
       // e NUNCA `board_id` — mover de funil é outro caminho. Se a tela estiver mostrando
       // um funil do qual o card já saiu no servidor (foi o que a automação de desfecho da
@@ -238,6 +247,24 @@ export const useMoveDeal = () => {
         }
       }
 
+      // Motivo ESTRUTURADO da perda. Mesma forma que o desfecho por áudio já grava
+      // (`{ categoria, detalhe }`, ver call-outcome/apply/route.ts:80) — uma forma só, senão o
+      // relatório teria que entender dois formatos. O merge parte de `deal.customFields` porque o
+      // update do serviço SUBSTITUI o jsonb inteiro; a corrida com uma escrita concorrente é a
+      // mesma já existente no resto do hook e aceitável aqui: o card em perda está no funil do
+      // consultor, onde a Ana não escreve.
+      const customFieldsComMotivo =
+        isLost && lossTag
+          ? {
+              ...(deal.customFields ?? {}),
+              motivo_perda: {
+                categoria: lossTag,
+                detalhe: lossReason ?? null,
+                at: new Date().toISOString(),
+              },
+            }
+          : undefined;
+
       // Build updates object
       const updates: Partial<Deal> = {
         status: targetStageId,
@@ -246,6 +273,7 @@ export const useMoveDeal = () => {
         ...(isWon !== undefined && { isWon }),
         ...(isLost !== undefined && { isLost }),
         ...(closedAt !== undefined && { closedAt: closedAt as string }),
+        ...(customFieldsComMotivo && { customFields: customFieldsComMotivo }),
       };
 
       // 1. Update the deal
@@ -290,6 +318,43 @@ export const useMoveDeal = () => {
         completed: true,
         user: { name: 'Sistema', avatar: '' },
       } as Omit<Activity, 'id' | 'createdAt'>).catch(console.error);
+
+      // 2b. Perdeu → LEMBRETE DE REABORDAGEM (pedido da Thalita, 09/09/2026: "todo lead que vai
+      //     pra perdido precisa já ir com um lembrete agendado pra fazer follow up, com o motivo
+      //     de perda e tudo que o consultor precisa entender sobre aquele lead").
+      //
+      //     A data vem da régua por motivo que JÁ existia e só era usada pelo desfecho por áudio
+      //     (`reabordarEmFallback`): concorrente 12 meses, ficou na atual 11, timing 1 mês,
+      //     decisor 2 semanas. Não é "sempre 1 ano" — reabordar um lead que adiou por 30 dias só
+      //     no ano seguinte é perder o lead duas vezes.
+      //
+      //     `geraReabordagem` barra os dois motivos que não são lead (`engano`, `fora_icp`): o
+      //     funil da Ana usa a MESMA etapa "Descartado" pra perda comercial e pra número errado,
+      //     e sem esse filtro a Natália Palmeira ganharia tarefa de ligar de volta em 2027.
+      //
+      //     Tipo TASK, não CALL: o banco tem trava de horário única pra CALL. Dono explícito, senão
+      //     a tarefa nasce órfã e some pra quem não é dono do card.
+      //     Fire-and-forget como as demais: o lembrete não pode derrubar o move já gravado.
+      if (isLost && lossTag && geraReabordagem(lossTag)) {
+        const dono = (deal as Deal).ownerId;
+        activitiesService.create({
+          dealId,
+          dealTitle: deal.title,
+          type: 'TASK',
+          title: `Reabordar — ${MOTIVO_LABELS[lossTag]}`,
+          description: [
+            `Motivo da perda: ${lossReason ?? MOTIVO_LABELS[lossTag]}.`,
+            deal.title ? `Lead: ${deal.title}.` : null,
+            'Perdido em ' + new Date().toLocaleDateString('pt-BR') + '.',
+          ]
+            .filter(Boolean)
+            .join(' '),
+          date: reabordarEmFallback(lossTag, new Date()),
+          completed: false,
+          ...(dono ? { ownerId: dono } : {}),
+          user: { name: 'Sistema', avatar: '' },
+        } as Omit<Activity, 'id' | 'createdAt'>).catch(console.error);
+      }
 
       // 3. LinkedStage: Update contact stage when moving to linked column
       if (targetStage?.linkedLifecycleStage && deal.contactId) {
@@ -512,7 +577,10 @@ export const useMoveDealSimple = (
     targetStageId: string,
     lossReason?: string,
     explicitWin?: boolean,
-    explicitLost?: boolean
+    explicitLost?: boolean,
+    // Último e opcional de propósito: só o fluxo de perda passa, e assim nenhum dos outros
+    // chamadores de `moveDeal` precisou mudar quando o motivo virou estruturado (09/09/2026).
+    lossTag?: MotivoTag
   ) => {
     if (!board) {
       console.error('[useMoveDealSimple] No board provided');
@@ -523,6 +591,7 @@ export const useMoveDealSimple = (
       dealId: deal.id,
       targetStageId,
       lossReason,
+      lossTag,
       deal,
       board,
       lifecycleStages,

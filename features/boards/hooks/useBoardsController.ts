@@ -22,6 +22,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useLifecycleStages } from '@/lib/query/hooks/useLifecycleStagesQuery';
 import { useOrgMembersQuery } from '@/lib/query/hooks/useOrgMembersQuery';
 import { useAI } from '@/context/AIContext';
+import type { MotivoTag } from '@/lib/ai/taxonomy/motivos';
 
 /**
  * Função pública `isDealRotting` do projeto.
@@ -569,7 +570,9 @@ export const useBoardsController = () => {
   }, [activeBoard, deals, addToast, moveDealMutation, lifecycleStages, lastMouseDownDealId]);
 
   // Handler for loss reason modal confirmation
-  const handleLossReasonConfirm = (reason: string) => {
+  // `tag` = motivo estruturado (obrigatório no modal desde 09/09/2026). É ele que grava
+  // `custom_fields.motivo_perda` e agenda o lembrete de reabordagem — ver useMoveDeal.
+  const handleLossReasonConfirm = (reason: string, tag: MotivoTag) => {
     if (lossReasonModal && activeBoard) {
       const deal = deals.find(d => d.id === lossReasonModal.dealId);
       if (deal) {
@@ -577,6 +580,7 @@ export const useBoardsController = () => {
           dealId: lossReasonModal.dealId,
           targetStageId: lossReasonModal.stageId,
           lossReason: reason,
+          lossTag: tag,
           deal,
           board: activeBoard,
           lifecycleStages,

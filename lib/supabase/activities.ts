@@ -174,6 +174,11 @@ export const activitiesService = {
         contact_id: sanitizeUUID(activity.contactId),
         client_company_id: sanitizeUUID(activity.clientCompanyId),
         participant_contact_ids: activity.participantContactIds || [],
+        // Dono. Atividade criada pela TELA nascia sempre sem dono — a coluna existe no banco e
+        // ninguém a preenchia por aqui (só o caminho do desfecho por áudio, que é server-side).
+        // Sem dono, a tarefa some para quem não é dono do card. Só entra quando o chamador
+        // informa: omitir a chave preserva o comportamento antigo em quem não passa `ownerId`.
+        ...(sanitizeUUID(activity.ownerId) ? { owner_id: sanitizeUUID(activity.ownerId) } : {}),
         ...(organizationId ? { organization_id: organizationId } : {}),
       };
 

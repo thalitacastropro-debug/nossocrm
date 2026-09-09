@@ -1517,7 +1517,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
             setPendingLostStageId(null);
             setLossReasonOrigin('button');
           }}
-          onConfirm={(reason) => {
+          onConfirm={(reason, tag) => {
             // Priority:
             // 0. Stay in stage flag (Archive)
             // 1. Pending Stage (if set via click or explicit button)
@@ -1525,7 +1525,7 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
             // 3. Stage linked to 'OTHER' lifecycle
 
             if (dealBoard?.lostStayInStage) {
-              moveDeal(deal, deal.status, reason, false, true); // explicitLost = true
+              moveDeal(deal, deal.status, reason, false, true, tag); // explicitLost = true
               setShowLossReasonModal(false);
               setPendingLostStageId(null);
               if (lossReasonOrigin === 'button') onClose();
@@ -1544,10 +1544,21 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
             }
 
             if (targetStageId) {
-              moveDeal(deal, targetStageId, reason);
+              moveDeal(deal, targetStageId, reason, undefined, undefined, tag);
             } else {
-              // Fallback: just mark as lost without moving
-              updateDeal(deal.id, { isLost: true, isWon: false, closedAt: new Date().toISOString(), lossReason: reason });
+              // Fallback: just mark as lost without moving. Grava o motivo estruturado aqui também
+              // — este caminho não passa pelo useMoveDeal, e sem isso a perda por fallback voltaria
+              // a ser invisível pro relatório (era o estado de 35 dos 36 perdidos).
+              updateDeal(deal.id, {
+                isLost: true,
+                isWon: false,
+                closedAt: new Date().toISOString(),
+                lossReason: reason,
+                customFields: {
+                  ...(deal.customFields ?? {}),
+                  motivo_perda: { categoria: tag, detalhe: reason, at: new Date().toISOString() },
+                },
+              });
             }
             setShowLossReasonModal(false);
             setPendingLostStageId(null);

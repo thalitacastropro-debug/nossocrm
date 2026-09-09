@@ -18,6 +18,12 @@ export const MOTIVO_TAGS = [
   'confianca',
   'decisor',          // precisa consultar sócio/cônjuge
   'burocracia',
+  // Não é lead: número errado, engano, alguém procurando outra pessoa. Existe porque a Ana atende
+  // TODO inbound desconhecido do WhatsApp da Niva — caso Natália Palmeira (02/09), que escreveu
+  // "Não é a Manu?" e mesmo assim continuou recebendo oferta no dia seguinte. É o único motivo que
+  // NÃO gera lembrete de reabordagem: reabordar número errado daqui a um ano é incomodar um
+  // estranho duas vezes. Ver `geraReabordagem` em lib/ai/call-outcome/routing.ts.
+  'engano',
   'outro',
 ] as const;
 
@@ -38,5 +44,6 @@ export const MOTIVO_LABELS: Record<MotivoTag, string> = {
   confianca: 'Confiança',
   decisor: 'Falta o decisor',
   burocracia: 'Burocracia',
+  engano: 'Engano / número errado',
   outro: 'Outro',
 };

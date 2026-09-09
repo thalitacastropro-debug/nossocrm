@@ -9,6 +9,7 @@ import { KanbanBoard } from './Kanban/KanbanBoard';
 import { KanbanList } from './Kanban/KanbanList';
 import { DeleteBoardModal } from './Modals/DeleteBoardModal';
 import { LossReasonModal } from '@/components/ui/LossReasonModal';
+import type { MotivoTag } from '@/lib/ai/taxonomy/motivos';
 import { DealView, CustomFieldDefinition, Board, BoardStage } from '@/types';
 import { ExportTemplateModal } from './Modals/ExportTemplateModal';
 import { useAuth } from '@/context/AuthContext';
@@ -76,7 +77,7 @@ interface PipelineViewProps {
     dealTitle: string;
     stageId: string;
   } | null;
-  handleLossReasonConfirm: (reason: string) => void;
+  handleLossReasonConfirm: (reason: string, tag: MotivoTag) => void;
   handleLossReasonClose: () => void;
   boardCreateOverlay?: { title: string; subtitle?: string } | null;
 }
