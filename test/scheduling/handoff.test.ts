@@ -127,6 +127,55 @@ describe('handoffToNextBoard (MOVE)', () => {
     expect(state.updatePatch).toBeNull();
   });
 
+  // Regressão do caso Paulo Rodrigues de Freitas (09/09/2026): a escalação move SDR → Consultor e
+  // o `handleHandoff` chamado logo depois relê o board_id JÁ movido, então chega aqui com
+  // sourceBoardId == board atual. O guard de board acima compara Consultor com Consultor e PASSA —
+  // e o move seguinte usaria o next_board_id do Consultor, empurrando pra Implantação um lead que
+  // nunca falou com consultor. Quem tem que barrar é o carimbo da escalação.
+  it('escalação já entregou o lead => no-op, mesmo com o board de origem "batendo"', async () => {
+    const { client, state } = makeSupabase({
+      // Simula o estado pós-escalação: o card já ESTÁ no board do consultor, e o chamador passou
+      // esse mesmo board como origem (foi o que o SELECT fresco devolveu).
+      srcDeal: {
+        board_id: 'board-consultor',
+        custom_fields: {
+          escalated_consultor: { board_id: 'board-consultor', from: 'board-ana', motivo: 'sem_encaixe_2_recusas' },
+        },
+      },
+    });
+    const r = await handoffToNextBoard({
+      supabase: client,
+      ...base,
+      sourceBoardId: 'board-consultor',
+      motivo: 'ana_nao_resolveu',
+    });
+    expect(r.handedOff).toBe(false);
+    expect(r.reason).toBe('already_escalated');
+    expect(state.updatePatch).toBeNull();
+  });
+
+  // O carimbo da escalação vale para QUALQUER motivo: uma vez com o consultor, o card não volta a
+  // ser empurrado — nem quando o lead reaparece e marca reunião.
+  it('escalação já entregou o lead => nem reuniao_agendada re-move', async () => {
+    const { client, state } = makeSupabase({
+      srcDeal: {
+        board_id: 'board-consultor',
+        custom_fields: {
+          escalated_consultor: { board_id: 'board-consultor', from: 'board-ana', motivo: 'sem_encaixe_2_recusas' },
+          reuniao_agendada: { status: 'confirmada', activity_id: 'call-9' },
+        },
+      },
+    });
+    const r = await handoffToNextBoard({
+      supabase: client,
+      ...base,
+      sourceBoardId: 'board-consultor',
+      motivo: 'reuniao_agendada',
+    });
+    expect(r.reason).toBe('already_escalated');
+    expect(state.updatePatch).toBeNull();
+  });
+
   it('deal sumiu => source_missing', async () => {
     const { client } = makeSupabase({ srcDeal: null });
     const r = await handoffToNextBoard({ supabase: client, ...base });

@@ -50,7 +50,13 @@ export interface HandoffToNextBoardParams {
 
 export interface HandoffResult {
   handedOff: boolean;
-  reason?: 'no_next_board' | 'already_done' | 'source_missing' | 'no_target_stage' | 'db_error';
+  reason?:
+    | 'no_next_board'
+    | 'already_done'
+    | 'already_escalated'
+    | 'source_missing'
+    | 'no_target_stage'
+    | 'db_error';
   targetBoardId?: string;
 }
 
@@ -111,6 +117,19 @@ export async function handoffToNextBoard(params: HandoffToNextBoardParams): Prom
   if (!srcDeal) return { handedOff: false, reason: 'source_missing' };
   const srcCustom = (srcDeal.custom_fields as Record<string, unknown>) || {};
   if (srcCustom.handoff_consultor) return { handedOff: false, reason: 'already_done' };
+  // Sair do funil da Ana é porta de MÃO ÚNICA, e a escalação já é uma saída: ela entrega o lead ao
+  // consultor por conta própria (`escalateToConsultor`). Um handoff DEPOIS dela sempre erra o alvo,
+  // porque o destino é `next_board_id` do board ATUAL — que já é o do Consultor. O card é então
+  // empurrado pro funil seguinte (Implantação) sem nunca ter falado com um consultor.
+  //
+  // Aconteceu com o Paulo Rodrigues de Freitas em 09/09/2026: escalado às 11:49:31.323
+  // (`sem_encaixe_2_recusas`, SDR → Comercial) e movido de novo 213ms depois
+  // (`ana_nao_resolveu`, Comercial → Implantação), parando em "aguardando-doc" como se tivesse
+  // fechado — sendo um lead que só recusou dois horários. A origem é o par
+  // `escalateToConsultor` → `handleHandoff` do agent.service (~:1128), em que o segundo relê o
+  // `board_id` JÁ movido: por isso o guard de board abaixo não pega (compara Comercial com
+  // Comercial). Este guard olha o CARIMBO, que não mente sobre o passado do card.
+  if (srcCustom.escalated_consultor) return { handedOff: false, reason: 'already_escalated' };
   if (srcDeal.board_id && srcDeal.board_id !== sourceBoardId) return { handedOff: false, reason: 'already_done' };
 
   // 3. Etapa de destino.
