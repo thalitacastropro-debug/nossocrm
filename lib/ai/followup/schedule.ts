@@ -20,6 +20,42 @@ export interface FollowupState {
 const H = 60 * 60 * 1000;
 const MIN = 60 * 1000;
 
+/**
+ * Janela em que a ANA pode mandar follow-up. **Não confundir com expediente humano.**
+ *
+ * O 1º toque sempre foi 24/7 por decisão explícita ("a Ana engaja 24/7, é IA; quem respeita
+ * horário comercial é só o AGENDAMENTO" — ver app/api/public/v1/leads/route.ts). Só que o cron do
+ * follow-up desligava tudo fora de 08:00–17:30 seg–sex. As duas peças nasceram em momentos
+ * diferentes e ninguém decidiu a contradição: a Ana podia abordar um estranho à meia-noite, mas
+ * não mandar o 2º toque às 18:00 de uma sexta.
+ *
+ * Numa cadência de 10 dias isso diluía. Na de 3 dias (09/09/2026) virava a maior parte do prazo —
+ * de sexta 17:30 a segunda 08:00 são **62h30 de silêncio**, mais de dois dos três dias.
+ *
+ * Janela escolhida pela Thalita (09/09/2026): **08:00–21:00, seg–sáb**. Sai de 47h30 para 78h
+ * úteis por semana (+64%) e encolhe o buraco do fim de semana de 62h30 para 35h. Pega a noite, que
+ * é quando as pessoas de fato respondem WhatsApp.
+ *
+ * Por que NÃO 24/7, mesmo sendo o princípio declarado: o opener de madrugada é resposta a uma ação
+ * que o lead acabou de fazer (preencheu o formulário segundos antes). Follow-up às 3h para quem
+ * ignorou é outra coisa — irrita, e num WhatsApp não-oficial aumenta risco de bloqueio do número.
+ */
+export const JANELA_ANA = {
+  inicioMin: 8 * 60, // 08:00
+  fimMin: 21 * 60, // 21:00
+  dias: [1, 2, 3, 4, 5, 6] as readonly number[], // seg–sáb (0 = domingo)
+  /** America/São_Paulo como offset fixo — mesma convenção do resto do scheduling. */
+  tzOffsetHours: -3,
+} as const;
+
+/** A Ana pode mandar follow-up NESTE instante? Pura: recebe o `now` em vez de olhar o relógio. */
+export function anaPodeFalar(now: Date): boolean {
+  const local = new Date(now.getTime() + JANELA_ANA.tzOffsetHours * H);
+  if (!JANELA_ANA.dias.includes(local.getUTCDay())) return false;
+  const minutos = local.getUTCHours() * 60 + local.getUTCMinutes();
+  return minutos >= JANELA_ANA.inicioMin && minutos <= JANELA_ANA.fimMin;
+}
+
 // Offsets a partir da âncora (ms). 3 toques em cada cadência, ambas fechando em 3 DIAS.
 //
 // MUDANÇA 09/09/2026 (Thalita): *"vamos ajustar a cadência de follow up da Ana para 3 dias e
