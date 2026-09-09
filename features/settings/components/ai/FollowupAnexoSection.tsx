@@ -15,15 +15,18 @@ interface Anexo {
 }
 
 /**
- * Os quatro toques da cadência fria, com o prazo real de cada um
- * (`COLD_SCHEDULE_MS` em lib/ai/followup/schedule.ts). Mostrar o prazo evita a
- * pergunta "qual é o 3º mesmo?" na hora de escolher.
+ * Os toques da cadência fria, com o prazo real de cada um (`COLD_SCHEDULE_MS` em
+ * lib/ai/followup/schedule.ts). Mostrar o prazo evita a pergunta "qual é o 3º mesmo?"
+ * na hora de escolher.
+ *
+ * ⚠️ Esta lista é ESCRITA À MÃO e tem que acompanhar `COLD_SCHEDULE_MS`. Quando a cadência caiu
+ * de 10 para 3 dias (09/09/2026), o 4º toque deixou de existir e este texto passaria a mentir
+ * para quem configura o anexo. Há um teste travando o tamanho das duas listas juntas.
  */
-const TOQUES = [
+export const TOQUES = [
   { index: 0, rotulo: '1º toque — 3 horas depois' },
   { index: 1, rotulo: '2º toque — 1 dia' },
-  { index: 2, rotulo: '3º toque — 4 dias' },
-  { index: 3, rotulo: '4º toque — 10 dias (último)' },
+  { index: 2, rotulo: '3º toque — 3 dias (último)' },
 ];
 
 const ICONE = {

@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
+import { COLD_SCHEDULE_MS } from '@/lib/ai/followup/schedule';
 
 export const maxDuration = 60;
 
@@ -103,7 +104,9 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
-  if (!Number.isInteger(toqueIndex) || toqueIndex < 0 || toqueIndex > 3) {
+  // Teto derivado da cadência, não escrito à mão: era `> 3` fixo e virou mentira no dia em que a
+  // cadência caiu de 4 para 3 toques (09/09/2026), aceitando anexo para um toque que não existe.
+  if (!Number.isInteger(toqueIndex) || toqueIndex < 0 || toqueIndex >= COLD_SCHEDULE_MS.length) {
     return NextResponse.json({ error: 'Toque inválido' }, { status: 400 });
   }
 

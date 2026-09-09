@@ -159,14 +159,20 @@ const tempoNoCrm = (createdAt?: string): string | null => {
 
 /**
  * Selo de tier gravado pela extração de domínio em custom_fields.tier
- * (estrutura: { value: 'ouro'|'prata'|'bronze'|'fora_icp'|'indefinido', motivos, provisorio }).
- * Só os três tiers "de medalha" viram selo colorido; fora_icp/indefinido não geram selo
- * (não têm cor definida e seriam ruído — a perda/indefinição já aparece por outros sinais).
+ * (estrutura: { value: 'ouro'|'prata'|'bronze'|'nao_qualificado'|'fora_icp'|'indefinido', motivos, provisorio }).
+ * As três medalhas viram selo colorido; fora_icp/indefinido não geram selo (não têm cor definida e
+ * seriam ruído — a perda/indefinição já aparece por outros sinais).
+ *
+ * `nao_qualificado` (09/09/2026) é a exceção que PRECISA de selo: marca o lead que chegou ao
+ * consultor por TEMPO — fim da cadência sem nunca responder — e não por mérito. Sem ele, esse card
+ * ficaria visualmente idêntico a um lead qualificado que só não tem selo, e a regra da Thalita
+ * ("só chega categorizado") não teria como ser verdade. Cinza de propósito: não é medalha, é aviso.
  */
 const TIER_BADGES: Record<string, { label: string; bg: string; fg: string }> = {
   ouro: { label: 'Ouro', bg: '#EAB308', fg: '#422006' },
   prata: { label: 'Prata', bg: '#94A3B8', fg: '#1E293B' },
   bronze: { label: 'Bronze', bg: '#B45309', fg: '#FFFFFF' },
+  nao_qualificado: { label: 'Não qualificado — LIGAR', bg: '#475569', fg: '#F8FAFC' },
 };
 
 const tierBadge = (

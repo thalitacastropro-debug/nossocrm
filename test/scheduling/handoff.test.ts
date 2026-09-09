@@ -209,6 +209,42 @@ describe('handoffToNextBoard (MOVE)', () => {
       expect(state.insertedActivity.title).toContain('LIGAR');
     });
 
+    // Regra da Thalita (09/09/2026): o lead só chega ao consultor CATEGORIZADO. Quem chega por
+    // SILÊNCIO não tem como ter medalha — nunca respondeu nada. A saída escolhida foi a tag
+    // "não qualificado — LIGAR", que também tapa o buraco do card que chegava SEM a chave `tier`
+    // (nesse estado ele nunca escala, porque escalation.ts testa `typeof === 'string'`).
+    it('sem_resposta_ligar carimba a TAG de não qualificado quando o card não tem medalha', async () => {
+      const { client, state } = makeSupabase({
+        srcDeal: { board_id: 'board-ana', custom_fields: { lead_form: { mapped: { name: 'João' } } } },
+      });
+      await handoffToNextBoard({ supabase: client, ...base, motivo: 'sem_resposta_ligar' });
+      expect(state.updatePatch.custom_fields.tier).toMatchObject({
+        value: 'nao_qualificado',
+        provisorio: false,
+      });
+    });
+
+    it('NÃO sobrescreve medalha já conquistada — a extração vale mais que o silêncio posterior', async () => {
+      const { client, state } = makeSupabase({
+        srcDeal: {
+          board_id: 'board-ana',
+          custom_fields: { tier: { value: 'ouro', motivos: ['4 vidas'], provisorio: false } },
+        },
+      });
+      await handoffToNextBoard({ supabase: client, ...base, motivo: 'sem_resposta_ligar' });
+      expect(state.updatePatch.custom_fields.tier.value).toBe('ouro');
+    });
+
+    it('a tag é exclusiva do silêncio: os outros motivos não carimbam tier', async () => {
+      for (const motivo of ['reuniao_agendada', 'ana_nao_resolveu'] as const) {
+        const { client, state } = makeSupabase({
+          srcDeal: { board_id: 'board-ana', custom_fields: {} },
+        });
+        await handoffToNextBoard({ supabase: client, ...base, motivo });
+        expect(state.updatePatch.custom_fields.tier).toBeUndefined();
+      }
+    });
+
     it('reuniao_agendada (default) continua na etapa de ENTRADA — comportamento antigo intacto', async () => {
       const { client, state } = makeSupabase();
       await handoffToNextBoard({ supabase: client, ...base });

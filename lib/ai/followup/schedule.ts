@@ -20,9 +20,23 @@ export interface FollowupState {
 const H = 60 * 60 * 1000;
 const MIN = 60 * 1000;
 
-// Offsets a partir da âncora (ms). 4 toques frios / 3 quentes.
-export const COLD_SCHEDULE_MS = [3 * H, 24 * H, 96 * H, 240 * H]; // +3h, +1d, +4d, +10d
-export const WARM_SCHEDULE_MS = [15 * MIN, 24 * H, 120 * H]; // +15min, +1d, +5d
+// Offsets a partir da âncora (ms). 3 toques em cada cadência, ambas fechando em 3 DIAS.
+//
+// MUDANÇA 09/09/2026 (Thalita): *"vamos ajustar a cadência de follow up da Ana para 3 dias e
+// depois ela já passa esse lead pro consultor, assim o lead não esfria tanto"* — 3 dias no TOTAL,
+// não entre toques. Antes a fria levava 4 toques e **10 dias** até a entrega ao consultor (10,5
+// dias reais, medido em produção) e a quente, 5 — tempo demais para um lead pago que acabou de
+// levantar a mão.
+//
+// A fria perdeu um toque (era 4). O que saiu foi o ângulo do "reajuste composto", que pressupõe
+// que a pessoa JÁ TEM plano — e boa parte destes leads responde "não tenho ainda" no próprio
+// formulário. Os três ângulos que ficaram funcionam com ou sem plano atual.
+//
+// ⚠️ A Ana só fala em horário comercial (seg–sex, 08:00–17:30): um toque devido na sexta à noite
+// só sai na segunda. Numa janela de 3 dias isso pesa muito mais do que pesava numa de 10 — a
+// cadência real de um lead que entra na quinta é mais longa que a nominal.
+export const COLD_SCHEDULE_MS = [3 * H, 24 * H, 72 * H]; // +3h, +1d, +3d
+export const WARM_SCHEDULE_MS = [15 * MIN, 24 * H, 72 * H]; // +15min, +1d, +3d
 
 export function scheduleFor(cadence: Cadence): number[] {
   return cadence === 'cold' ? COLD_SCHEDULE_MS : WARM_SCHEDULE_MS;

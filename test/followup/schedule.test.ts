@@ -46,12 +46,15 @@ describe('nextDueTouch', () => {
     expect(nextDueTouch(cold(0), now)).toEqual({ touchIndex: 0, isLast: false });
   });
   it('último toque marca isLast', () => {
-    const now = new Date(anchorMs + COLD_SCHEDULE_MS[3] + 1000);
-    expect(nextDueTouch(cold(3), now)).toEqual({ touchIndex: 3, isLast: true });
+    // Índice derivado do array: a cadência já mudou de tamanho uma vez (4 → 3 toques em
+    // 09/09/2026) e um índice fixo aqui quebra o teste sem que o comportamento tenha regredido.
+    const ultimo = COLD_SCHEDULE_MS.length - 1;
+    const now = new Date(anchorMs + COLD_SCHEDULE_MS[ultimo] + 1000);
+    expect(nextDueTouch(cold(ultimo), now)).toEqual({ touchIndex: ultimo, isLast: true });
   });
   it('count >= schedule.length => null', () => {
     const now = new Date(anchorMs + 999 * 3600_000);
-    expect(nextDueTouch(cold(4), now)).toBeNull();
+    expect(nextDueTouch(cold(COLD_SCHEDULE_MS.length), now)).toBeNull();
   });
   it('stopped => null', () => {
     const now = new Date(anchorMs + 999 * 3600_000);
@@ -93,8 +96,28 @@ describe('isReengaged', () => {
 });
 
 describe('scheduleFor', () => {
-  it('cold tem 4 toques, warm tem 3', () => {
-    expect(scheduleFor('cold')).toHaveLength(4);
+  it('as duas cadências têm 3 toques', () => {
+    expect(scheduleFor('cold')).toHaveLength(3);
     expect(scheduleFor('warm')).toHaveLength(3);
+  });
+
+  // A REGRA que a Thalita pediu em 09/09/2026 — "3 dias e depois passa pro consultor" — é o total,
+  // não o intervalo entre toques. Travado nos dois sentidos: encurtar demais atropela o lead,
+  // esticar traz de volta o esfriamento que motivou a mudança (a fria levava 10 dias).
+  it('nenhuma cadência passa de 3 dias do início ao último toque', () => {
+    const TRES_DIAS_MS = 3 * 24 * 60 * 60 * 1000;
+    for (const cadence of ['cold', 'warm'] as const) {
+      const s = scheduleFor(cadence);
+      expect(s[s.length - 1]).toBe(TRES_DIAS_MS);
+    }
+  });
+
+  // Offsets têm que ser crescentes: `nextDueTouch` usa a diferença entre vizinhos como espaçamento
+  // mínimo, então um par fora de ordem produziria gap negativo e rajada de mensagens.
+  it('offsets são estritamente crescentes em cada cadência', () => {
+    for (const cadence of ['cold', 'warm'] as const) {
+      const s = scheduleFor(cadence);
+      for (let i = 1; i < s.length; i++) expect(s[i]).toBeGreaterThan(s[i - 1]);
+    }
   });
 });

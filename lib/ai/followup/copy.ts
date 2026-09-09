@@ -20,12 +20,13 @@ export const COLD_TOUCHES: string[][] = [
     'É exatamente isso que a gente faz: entende o seu caso e acha a melhor saída pra você e sua família.',
     'Consigo te reservar 15 minutos com um consultor pra isso.',
   ],
-  // Toque 3 (+4 dias) — reajuste composto
-  [
-    '{nome}, um detalhe que quase ninguém nota: todo ano no mesmo plano seu valor sobe, mesmo sem usar.',
-    'Dá pra revisar isso antes do próximo reajuste, e normalmente sobra dinheiro no seu bolso.',
-  ],
-  // Toque 4 (+10 dias) — despedida
+  // Toque 3 (+3 dias) — despedida. É o ÚLTIMO: assim que ele sai, a cadência encerra e o card
+  // vai pro funil do consultor com a tag "não qualificado — LIGAR" (ver run.ts e handoff.ts).
+  //
+  // O antigo toque 3 (ângulo do "reajuste composto") saiu quando a cadência caiu de 10 para 3 dias
+  // (09/09/2026). Foi ele por pressupor que a pessoa JÁ TEM plano — e boa parte destes leads
+  // responde "não tenho ainda" no formulário, então o argumento chegava errado. Se um dia a
+  // cadência voltar a ter 4 toques, o texto está no histórico deste arquivo.
   [
     '{nome}, não vou insistir à toa.',
     'Paro por aqui, mas quando quiser resolver seu plano é só me chamar. Fico à disposição.',

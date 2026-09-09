@@ -77,7 +77,11 @@ function resumoParaConsultor(
   const fu = (custom.followup ?? {}) as { count?: number; last_sent_at?: string };
 
   const partes: string[] = [];
-  if (tier.value && tier.value !== 'indefinido') partes.push(tier.value);
+  // A tag de entrega por silêncio precisa aparecer LEGÍVEL no alerta do consultor — "nao_qualificado"
+  // cru diria pouco, e omitir (como se faz com "indefinido") esconderia justamente o aviso de que
+  // este lead chegou por tempo e não por mérito.
+  if (tier.value === 'nao_qualificado') partes.push('NÃO QUALIFICADO — ligar para qualificar');
+  else if (tier.value && tier.value !== 'indefinido') partes.push(tier.value);
   if (typeof q.vidas === 'number') partes.push(`${q.vidas} vida${q.vidas > 1 ? 's' : ''}`);
   if (typeof q.valor_pago_exato === 'number') partes.push(`paga R$${q.valor_pago_exato}/mês`);
   if (typeof q.cidade_uf === 'string' && q.cidade_uf.trim()) partes.push(String(q.cidade_uf).trim());
@@ -91,6 +95,44 @@ function resumoParaConsultor(
     diasNoFunil,
     toques: typeof fu.count === 'number' ? fu.count : undefined,
     ultimoToque: fu.last_sent_at,
+  };
+}
+
+/**
+ * Carimba a TAG de entrega quando o lead chega ao consultor **por tempo, não por mérito**.
+ *
+ * Regra da Thalita (09/09/2026): o lead só deve chegar ao consultor CATEGORIZADO — e "categorizado
+ * é ter a medalha" (ouro/prata/bronze). Só que o lead entregue por silêncio (`sem_resposta_ligar`,
+ * fim da cadência) nunca respondeu nada: não há matéria-prima para classificar. Forçar uma medalha
+ * ali contaminaria a única medida de qualidade que existe, e ninguém confiaria mais no selo.
+ *
+ * A saída que ela escolheu: *"categoriza com uma tag de não qualificado — ligar!"*. O card chega
+ * com `tier.value = 'nao_qualificado'`, visualmente distinto das medalhas, dizendo exatamente o que
+ * é e o que fazer.
+ *
+ * Efeito colateral bem-vindo: hoje um card pode chegar ao consultor **sem a chave `tier`**
+ * (`seedTierFromLeadForm` devolve null quando daria "indefinido"). Nesse estado ele nunca escala,
+ * porque `escalation.ts` testa `typeof tierValue === 'string'` — morre calado. Com a tag, todo card
+ * entregue passa a ter um valor.
+ *
+ * NÃO sobrescreve medalha já conquistada: se a extração classificou o lead antes de ele sumir, a
+ * medalha vale mais do que o silêncio posterior.
+ */
+function tagDeEntrega(
+  srcCustom: Record<string, unknown>,
+  motivo: HandoffMotivo
+): Record<string, unknown> {
+  if (motivo !== 'sem_resposta_ligar') return {};
+  const atual = (srcCustom.tier ?? null) as { value?: unknown } | null;
+  const jaTemMedalha =
+    typeof atual?.value === 'string' && ['ouro', 'prata', 'bronze'].includes(atual.value);
+  if (jaTemMedalha) return {};
+  return {
+    tier: {
+      value: 'nao_qualificado',
+      motivos: ['Não respondeu a nenhum toque da Ana — qualificar na ligação'],
+      provisorio: false,
+    },
   };
 }
 
@@ -168,6 +210,7 @@ export async function handoffToNextBoard(params: HandoffToNextBoardParams): Prom
         ...srcCustom,
         originBoardId: sourceBoardId,
         handoff_consultor: { board_id: nextBoardId, from: sourceBoardId, at: now, motivo },
+        ...tagDeEntrega(srcCustom, motivo),
       },
     })
     .eq('id', dealId);
