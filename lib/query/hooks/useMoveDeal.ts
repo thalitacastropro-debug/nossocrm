@@ -262,6 +262,20 @@ export const useMoveDeal = () => {
                 detalhe: lossReason ?? null,
                 at: new Date().toISOString(),
               },
+              // ENCERRA a cadência de follow-up de verdade.
+              //
+              // Hoje o cron já pula card perdido (`run.ts`, `.eq('is_lost', false)`), então a Ana
+              // para — mas por FILTRO, não por estado: o `followup` fica congelado no meio da
+              // contagem e volta a andar sozinho se alguém reabrir o card. Era esse "pausado por
+              // acaso" que fazia a Ana voltar a falar com quem já tinha sido descartado.
+              //
+              // Vale especialmente para o lead que entrou por ENGANO (caso Natália Palmeira), em
+              // que a única coisa que se quer é silêncio definitivo.
+              followup: {
+                ...((deal.customFields?.followup as Record<string, unknown>) ?? {}),
+                stopped: true,
+                stopped_reason: lossTag === 'engano' ? 'engano' : 'perdido',
+              },
             }
           : undefined;
 
