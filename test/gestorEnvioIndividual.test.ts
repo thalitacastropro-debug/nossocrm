@@ -45,14 +45,14 @@ const perfil = (id: string, over: Partial<PerfilDestino> = {}): PerfilDestino =>
 
 /** Supabase de mentira: registra os inserts e deixa o teste falhar o que quiser. */
 function bancoFalso(opts: { insertFalhaPara?: string[]; bancoForaDoAr?: boolean } = {}) {
-  const inserts: Array<{ dia: string; profile_id: string; chat_id: string }> = [];
+  const inserts: Array<{ dia: string; profile_id: string; chat_id: string; mensagem?: string }> = [];
   const updates: Array<{ profile_id: string; erro: string }> = [];
 
   const supabase = {
     from(tabela: string) {
       if (tabela !== 'gestor_envios') throw new Error(`tabela inesperada: ${tabela}`);
       return {
-        insert(linha: { dia: string; profile_id: string; chat_id: string }) {
+        insert(linha: { dia: string; profile_id: string; chat_id: string; mensagem?: string }) {
           if (opts.insertFalhaPara?.includes(linha.profile_id)) {
             // 23505 = unique_violation. O código PRECISA distinguir isto de um
             // erro de banco qualquer — ver o teste logo abaixo.
@@ -236,5 +236,31 @@ describe('enviarDiariosIndividuais', () => {
     await expect(
       enviarDiariosIndividuais({ supabase, diario, dia: '2026-09-02', enviar: async () => {}, ehGestor }, []),
     ).resolves.toEqual([]);
+  });
+});
+
+/**
+ * A MENSAGEM ENVIADA FICA GRAVADA (pedido dela em 10/09/2026).
+ *
+ * `gestor_envios` guardava dia, quem, chat e erro — **não o texto**. Consequência prática: em 10/09
+ * não deu para responder "a cobrança do prêmio apareceu no relatório do Pedro hoje?", justamente
+ * quando isso importava para saber se um conserto tinha funcionado. O envio dizia "sucesso" e o
+ * conteúdo era irrecuperável (o log da Vercel expira).
+ *
+ * Gravar o texto é seguro aqui: a tabela tem RLS com SELECT só para `e_admin()`, e o relatório
+ * individual já sai sem os itens sigilosos (`formatarParaColaborador` pula `regra.sigiloso`).
+ */
+describe('a mensagem enviada fica registrada', () => {
+  it('grava o texto do relatório junto com a trava', async () => {
+    const { supabase, inserts } = bancoFalso();
+    const enviar = vi.fn(async () => {});
+    await enviarDiariosIndividuais(
+      { supabase, diario, dia: '2026-09-02', enviar, ehGestor },
+      [{ id: PEDRO, name: 'Pedro Sellan', nickname: null, first_name: null, role: 'vendedor', telegram_chat_id: '111' }],
+    );
+    expect(inserts).toHaveLength(1);
+    // O que foi gravado é EXATAMENTE o que foi enviado — senão o registro mente.
+    expect(inserts[0].mensagem).toBe(enviar.mock.calls[0][1]);
+    expect(inserts[0].mensagem).toContain('Seu dia');
   });
 });

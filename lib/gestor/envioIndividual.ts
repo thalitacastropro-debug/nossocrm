@@ -109,9 +109,17 @@ export async function enviarDiariosIndividuais(
 
     // A trava. Se a linha já existe, o insert falha e nós paramos aqui — é o
     // mesmo diário sendo pedido de novo no mesmo dia.
+    //
+    // A MENSAGEM vai junto (pedido dela, 10/09/2026): sem ela, "enviado com sucesso" era tudo que
+    // sobrava do dia. Não deu para responder "a cobrança do prêmio apareceu no relatório do Pedro
+    // hoje?" justamente quando a resposta diria se um conserto tinha funcionado — a tabela sabia
+    // dia, quem e horário, e o conteúdo era irrecuperável porque o log da Vercel expira.
+    //
+    // Guardar aqui é seguro: `gestor_envios` tem RLS com SELECT só para `e_admin()`, e o relatório
+    // individual já sai sem os itens sigilosos (o formatador pula `regra.sigiloso`).
     const { error: erroTrava } = await deps.supabase
       .from('gestor_envios')
-      .insert({ dia: deps.dia, profile_id: perfil.id, chat_id: chatId });
+      .insert({ dia: deps.dia, profile_id: perfil.id, chat_id: chatId, mensagem: texto });
 
     if (erroTrava) {
       // ⚠️ `supabase-js` devolve TODO erro como `{ error }` — violação de chave,
