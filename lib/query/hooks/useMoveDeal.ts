@@ -22,7 +22,7 @@ import type { Deal, DealView, Board, Activity } from '@/types';
 import { conferirCoerenciaDoMove } from '@/lib/deals/coerenciaDoMove';
 import { resolverEtapaDoMove } from '@/lib/deals/moverParaFunil';
 import type { MotivoTag } from '@/lib/ai/taxonomy/motivos';
-import { geraReabordagem, reabordarEmFallback } from '@/lib/ai/call-outcome/routing';
+import { deveCriarLembrete, reabordarEmFallback } from '@/lib/ai/call-outcome/routing';
 import { MOTIVO_LABELS } from '@/lib/ai/taxonomy/motivos';
 
 interface MoveDealParams {
@@ -342,14 +342,21 @@ export const useMoveDeal = () => {
       //     decisor 2 semanas. Não é "sempre 1 ano" — reabordar um lead que adiou por 30 dias só
       //     no ano seguinte é perder o lead duas vezes.
       //
-      //     `geraReabordagem` barra os dois motivos que não são lead (`engano`, `fora_icp`): o
-      //     funil da Ana usa a MESMA etapa "Descartado" pra perda comercial e pra número errado,
-      //     e sem esse filtro a Natália Palmeira ganharia tarefa de ligar de volta em 2027.
+      //     `geraReabordagem` barra os motivos que não são lead (`engano`, `fora_icp`,
+      //     `registro_invalido`): o funil da Ana usa a MESMA etapa "Descartado" pra perda comercial
+      //     e pra número errado, e sem esse filtro a Natália Palmeira ganharia tarefa de ligar de
+      //     volta em 2027.
+      //
+      //     `deveCriarLembrete` acrescenta a segunda metade da pergunta: existe A QUEM ligar? Os 16
+      //     cards da limpeza da lista fria de 22/08 têm `contact_id` nulo. Sem esta guarda, uma
+      //     limpeza de base feita pela tela vira um LOTE de tarefas de ligar para ninguém — e é o
+      //     lote que estraga a lista, porque quem abre a agenda e vê 16 tarefas mortas para de
+      //     abrir a agenda.
       //
       //     Tipo TASK, não CALL: o banco tem trava de horário única pra CALL. Dono explícito, senão
       //     a tarefa nasce órfã e some pra quem não é dono do card.
       //     Fire-and-forget como as demais: o lembrete não pode derrubar o move já gravado.
-      if (isLost && lossTag && geraReabordagem(lossTag)) {
+      if (isLost && lossTag && deveCriarLembrete(lossTag, Boolean(deal.contactId))) {
         const dono = (deal as Deal).ownerId;
         activitiesService.create({
           dealId,

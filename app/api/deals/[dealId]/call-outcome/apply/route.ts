@@ -15,7 +15,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
 import { DesfechoSchema } from '@/lib/ai/call-outcome/schemas';
 import { MOTIVO_LABELS } from '@/lib/ai/taxonomy/motivos';
-import { routeForDesfecho, reabordarEmFallback } from '@/lib/ai/call-outcome/routing';
+import { routeForDesfecho, reabordarEmFallback, deveCriarLembrete } from '@/lib/ai/call-outcome/routing';
 
 export const maxDuration = 60;
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // RLS é o gate de autorização.
   const { data: deal, error: dealErr } = await supabase
     .from('deals')
-    .select('id, organization_id, owner_id, board_id, stage_id, value, custom_fields')
+    .select('id, organization_id, owner_id, board_id, stage_id, value, custom_fields, contact_id')
     .eq('id', dealId)
     .single();
   if (dealErr || !deal) return NextResponse.json({ error: 'Deal not found' }, { status: 404 });
@@ -162,7 +162,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   // 2b. Perdeu → lembrete de reabordagem (§6.1): a IA sugere a data pelo sinal
   //     da conversa (reabordar_em); sem sinal, fallback por motivo de perda.
-  if (route.reabordagem) {
+  //
+  //     `deveCriarLembrete` alinha este caminho ao da tela, que já filtrava por motivo. Aqui
+  //     `route.reabordagem` é true para QUALQUER desfecho "perdeu", então um lead marcado como
+  //     `engano` por áudio ganhava a tarefa que o mesmo lead, descartado pelo kanban, não ganhava.
+  //     A segunda metade da guarda é o contato: sem `contact_id` não existe a quem ligar.
+  if (route.reabordagem && deveCriarLembrete(d.motivo_perda ?? 'outro', Boolean(deal.contact_id))) {
     const reabordarEm = d.reabordar_em ?? reabordarEmFallback(d.motivo_perda ?? 'outro', new Date(enviadoEm));
     await admin.from('activities').insert({
       organization_id: orgId, deal_id: dealId, owner_id: ownerId,

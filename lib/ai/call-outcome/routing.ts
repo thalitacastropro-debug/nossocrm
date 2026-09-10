@@ -75,6 +75,22 @@ export function geraReabordagem(motivo: MotivoTag): boolean {
   return motivo !== 'engano' && motivo !== 'fora_icp' && motivo !== 'registro_invalido';
 }
 
+/**
+ * Cria o lembrete? A pergunta completa — o motivo permite E existe a quem ligar.
+ *
+ * `geraReabordagem` responde só pela primeira metade. A limpeza da lista fria de 22/08/2026 expôs a
+ * segunda: 16 cards com `contact_id` nulo, "sem telefone e sem contato vinculado". Qualquer motivo
+ * comercial num card desses produz uma tarefa de ligar para ninguém — e produz em LOTE, na agenda de
+ * uma pessoa só. Tarefa impossível não é apenas inútil: é o que faz a pessoa desistir de olhar a
+ * lista, e aí morrem junto os lembretes que valiam.
+ *
+ * Fica aqui, e não dentro do hook da tela, porque é a mesma decisão nos dois caminhos que criam
+ * reabordagem (o move manual e o desfecho por áudio) e porque assim dá para testar sem React.
+ */
+export function deveCriarLembrete(motivo: MotivoTag, temContato: boolean): boolean {
+  return geraReabordagem(motivo) && temContato;
+}
+
 export function reabordarEmFallback(motivo: MotivoTag, now: Date): string {
   const d = new Date(now.getTime());
   if (motivo === 'decisor') {

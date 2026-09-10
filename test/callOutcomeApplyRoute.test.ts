@@ -70,7 +70,9 @@ async function callPost(body: unknown, dealId = DEAL_ID): Promise<Response> {
 describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dealRow = { id: DEAL_ID, organization_id: ORG_ID, owner_id: USER_ID, board_id: 'efbaa84e-cf4b-4465-8b50-41afd612088e', stage_id: 's1', value: 0, custom_fields: { tier: { valor: 'prata' }, qualificacao: { vidas: 2 } } };
+    // `contact_id` presente porque este é um desfecho de CALL: alguém foi ligado, então existe
+    // contato. O lembrete de reabordagem depende disso (ver `deveCriarLembrete`).
+    dealRow = { id: DEAL_ID, organization_id: ORG_ID, owner_id: USER_ID, board_id: 'efbaa84e-cf4b-4465-8b50-41afd612088e', stage_id: 's1', value: 0, contact_id: 'contato-1', custom_fields: { tier: { valor: 'prata' }, qualificacao: { vidas: 2 } } };
     dealUpdateSpy = vi.fn(() => cadeiaEq());
     activityInsertSpy = vi.fn(async () => ({ error: null }));
     activityUpdateSpy = vi.fn(() => cadeiaEq());
@@ -238,6 +240,38 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     expect(tasks).toHaveLength(1);
     // decisor = +2 semanas do enviado_em (não nula, no futuro)
     expect(new Date(tasks[0].date).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  // Este caminho criava lembrete para QUALQUER desfecho "perdeu", sem olhar o motivo — então um
+  // lead marcado como `engano` por áudio ganhava a tarefa que o mesmo lead, descartado pelo
+  // kanban, não ganhava. E ninguém checava se havia a quem ligar.
+  it('engano NÃO gera lembrete, mesmo pelo áudio (alinha com o kanban)', async () => {
+    await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        desfecho: 'perdeu', motivo_perda: 'engano', motivo_perda_detalhe: null, reabordar_em: null,
+        dados_negocio: { operadora: null, vidas: null, valor: null },
+      },
+    }));
+    const tasks = activityInsertSpy.mock.calls
+      .map((c) => c[0] as { type: string; title: string })
+      .filter((a) => a.type === 'TASK' && /reabordar/i.test(a.title));
+    expect(tasks).toHaveLength(0);
+  });
+
+  it('deal SEM contato não gera lembrete (não há a quem ligar)', async () => {
+    dealRow = { ...dealRow, contact_id: null };
+    await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        desfecho: 'perdeu', motivo_perda: 'concorrente', motivo_perda_detalhe: null, reabordar_em: null,
+        dados_negocio: { operadora: null, vidas: null, valor: null },
+      },
+    }));
+    const tasks = activityInsertSpy.mock.calls
+      .map((c) => c[0] as { type: string; title: string })
+      .filter((a) => a.type === 'TASK' && /reabordar/i.test(a.title));
+    expect(tasks).toHaveLength(0);
   });
 
   it('vai_pensar → move só de etapa (Negociação), sem mudar board nem flags', async () => {

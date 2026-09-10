@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { routeForDesfecho, reabordarEmFallback, geraReabordagem } from '@/lib/ai/call-outcome/routing';
+import { routeForDesfecho, reabordarEmFallback, geraReabordagem, deveCriarLembrete } from '@/lib/ai/call-outcome/routing';
 import { MOTIVO_TAGS } from '@/lib/ai/taxonomy/motivos';
 import {
   IMPLANTACAO_ADM_BOARD_ID, IMPLANTACAO_AGUARDANDO_DOC_STAGE_ID,
@@ -68,5 +68,30 @@ describe('geraReabordagem', () => {
   it('toda tag da taxonomia tem decisão explícita, e só 3 ficam de fora', () => {
     const semLembrete = MOTIVO_TAGS.filter((m) => !geraReabordagem(m));
     expect(semLembrete).toEqual(['fora_icp', 'registro_invalido', 'engano']);
+  });
+});
+
+/**
+ * A segunda metade da decisão: o motivo permite lembrete, mas existe A QUEM ligar?
+ *
+ * `geraReabordagem` responde só pelo motivo. A limpeza da lista fria de 22/08/2026 mostrou o furo:
+ * 16 cards com `contact_id` nulo ("sem telefone e sem contato vinculado"). Se um deles for movido
+ * para perdido pela tela com um motivo comercial qualquer, nasce uma tarefa de ligar para ninguém —
+ * e vem em lote, na agenda de uma pessoa só. Tarefa impossível não é só inútil: é o que faz a
+ * pessoa parar de olhar a lista, matando junto os lembretes que valiam.
+ */
+describe('deveCriarLembrete', () => {
+  it('motivo comercial + contato = cria', () => {
+    expect(deveCriarLembrete('concorrente', true)).toBe(true);
+  });
+
+  it('motivo comercial SEM contato = não cria (não há a quem ligar)', () => {
+    expect(deveCriarLembrete('concorrente', false)).toBe(false);
+    expect(deveCriarLembrete('sem_resposta', false)).toBe(false);
+  });
+
+  it('sem contato não ressuscita motivo que já era barrado', () => {
+    expect(deveCriarLembrete('engano', true)).toBe(false);
+    expect(deveCriarLembrete('registro_invalido', true)).toBe(false);
   });
 });
