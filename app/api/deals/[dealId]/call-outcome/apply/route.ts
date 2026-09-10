@@ -16,6 +16,7 @@ import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
 import { DesfechoSchema } from '@/lib/ai/call-outcome/schemas';
 import { MOTIVO_LABELS } from '@/lib/ai/taxonomy/motivos';
 import { routeForDesfecho, reabordarEmFallback, deveCriarLembrete } from '@/lib/ai/call-outcome/routing';
+import { montarCarimboVenda } from '@/lib/deals/carimboVenda';
 
 export const maxDuration = 60;
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -60,7 +61,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const qual = { ...((existingCf.qualificacao as Record<string, unknown> | undefined) ?? {}) };
   if (d.dados_negocio.operadora) qual.operadora = d.dados_negocio.operadora;
   if (typeof d.dados_negocio.vidas === 'number') qual.vidas = d.dados_negocio.vidas;
-  if (typeof d.dados_negocio.valor === 'number' && d.dados_negocio.valor > 0) qual.valor_pago_exato = d.dados_negocio.valor;
+  // ⚠️ `valor_pago_exato` é o que o lead paga HOJE no plano ANTIGO — o gatilho da conversa, não
+  // receita. Quando o desfecho é FECHOU, o valor dito é outro número: o do plano COMPRADO, que vai
+  // para `venda.premio_mensal` mais abaixo. Gravar os dois no mesmo campo (era o que acontecia)
+  // corrompia a qualificação e inflava o "valor em jogo" do funil. Ver lib/deals/premioFechado.ts.
+  const fechou = d.desfecho === 'fechou';
+  const valorDito = typeof d.dados_negocio.valor === 'number' && d.dados_negocio.valor > 0
+    ? d.dados_negocio.valor
+    : null;
+  if (valorDito !== null && !fechou) qual.valor_pago_exato = valorDito;
 
   // objecoes: acumula estruturado (tolera formato antigo string[] da Ana).
   const prevObjecoes = Array.isArray(existingCf.objecoes)
@@ -87,10 +96,43 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     nextCf.reuniao_realizada = { realizada: true, at: enviadoEm, by: user.id };
   }
 
-  const dealUpdate: Record<string, unknown> = { custom_fields: nextCf, updated_at: enviadoEm };
-  if (d.desfecho === 'fechou' && typeof d.dados_negocio.valor === 'number' && d.dados_negocio.valor > 0) {
-    dealUpdate.value = d.dados_negocio.valor;
+  // FECHOU → carimbo da venda, com o prêmio já dentro quando o consultor disse o valor.
+  //
+  // Sem este carimbo, fechar pelo desfecho produzia uma venda INVISÍVEL: a barra de meta do mês lê
+  // `custom_fields.venda` (não `is_won`, porque o card ganho sai do funil), a regra "venda sem o
+  // prêmio informado" do gestor filtra por ele, e a rota do prêmio recusa card sem ele. Quem o
+  // criava era só o caminho do kanban (`proximo-funil`), por onde este fluxo não passa.
+  //
+  // Não sobrescreve carimbo existente: `vendedor_id`/`vendido_em` são o "de quem é esta venda", e
+  // reescrever isso num segundo desfecho mudaria o dono da venda.
+  if (fechou && !existingCf.venda) {
+    const { data: perfil } = await supabase
+      .from('profiles').select('name, nickname').eq('id', deal.owner_id ?? user.id).maybeSingle();
+    const { data: boardRow } = await supabase
+      .from('boards').select('name').eq('id', deal.board_id as string).maybeSingle();
+    const { data: stageRow } = await supabase
+      .from('board_stages').select('label, name').eq('id', deal.stage_id as string).maybeSingle();
+
+    nextCf.venda = montarCarimboVenda({
+      vendedorId: (deal.owner_id as string | null) ?? user.id,
+      vendedorNome: (perfil?.nickname as string | null) ?? (perfil?.name as string | null) ?? null,
+      vendidoEm: enviadoEm,
+      boardIdDaVenda: deal.board_id as string,
+      funilDaVenda: (boardRow?.name as string | null) ?? 'Funil',
+      etapaDaVenda: (stageRow?.label as string | null) ?? (stageRow?.name as string | null) ?? 'Etapa',
+      valorNaVenda: (deal.value as number | null) ?? 0,
+      premioMensal: valorDito ?? undefined,
+      operadora: d.dados_negocio.operadora ?? undefined,
+    });
   }
+
+  const dealUpdate: Record<string, unknown> = { custom_fields: nextCf, updated_at: enviadoEm };
+  // `deals.value` NÃO recebe o valor da venda.
+  //
+  // Era `if (fechou) dealUpdate.value = valor` — e por desenho (lib/deals/premioFechado.ts)
+  // `deals.value` nesta operação é a mensalidade do plano ANTIGO, apurada pela Ana. Escrever o
+  // prêmio ali apagava o número que sustenta o argumento da conversa e inflava o "valor em jogo" do
+  // funil com receita que já foi ganha. O prêmio agora tem lugar próprio: `venda.premio_mensal`.
   // loss_reason = detalhe livre, senão o rótulo da categoria (spec §4.9:
   // "detalhe||rótulo" — mantém a UI de perda funcionando mesmo sem detalhe).
   if (d.desfecho === 'perdeu') {

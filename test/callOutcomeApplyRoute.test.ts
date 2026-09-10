@@ -51,6 +51,15 @@ function baseBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** Leitura de uma linha só: `.select().eq().maybeSingle()`. */
+function leituraSimples(row: Record<string, unknown>) {
+  return {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn(async () => ({ data: row, error: null })),
+  };
+}
+
 function makeDealsBuilder() {
   return {
     select: vi.fn().mockReturnThis(),
@@ -81,6 +90,11 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
       ...auth(),
       from: vi.fn((t: string) => {
         if (t === 'deals') return makeDealsBuilder();
+        // Lidos só no desfecho "fechou", para montar o carimbo da venda (quem vendeu, de qual
+        // funil/etapa saiu). Sem o carimbo a venda não entra na meta do mês.
+        if (t === 'profiles') return leituraSimples({ name: 'Pedro Sellan', nickname: null });
+        if (t === 'boards') return leituraSimples({ name: 'Comercial — Consultor' });
+        if (t === 'board_stages') return leituraSimples({ label: 'Negociação', name: 'negociacao' });
         throw new Error('unexpected ' + t);
       }),
     };
@@ -193,7 +207,50 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     const qual = updateArg.custom_fields.qualificacao as Record<string, unknown>;
     expect(qual.operadora).toBe('Amil');
     expect(qual.vidas).toBe(3);
-    expect(updateArg.value).toBe(2100); // fechou → value do negócio
+    // `deals.value` NÃO recebe o valor da venda (era `toBe(2100)` até 10/09/2026).
+    //
+    // Aqui `value` é a mensalidade do plano ANTIGO do lead — o gatilho da conversa. O valor dito
+    // num desfecho "fechou" é o do plano COMPRADO, e ele agora tem lugar próprio:
+    // `venda.premio_mensal`. Escrever os dois no mesmo campo apagava a qualificação e inflava o
+    // "valor em jogo" do funil com receita já ganha. Ver lib/deals/premioFechado.ts.
+    expect(updateArg.value).toBeUndefined();
+    expect(qual.valor_pago_exato).toBeUndefined();
+  });
+
+  it('fechou → carimba a venda COM o prêmio (senão a venda é invisível na meta)', async () => {
+    await callPost(baseBody());
+    const cf = (dealUpdateSpy.mock.calls[0][0] as { custom_fields: Record<string, unknown> }).custom_fields;
+    const venda = cf.venda as Record<string, unknown>;
+    expect(venda).toBeTruthy();
+    expect(venda.premio_mensal).toBe(2100);
+    expect(venda.operadora).toBe('Amil');
+    expect(venda.vendedor_id).toBe(USER_ID);
+    expect(venda.vendido_em).toBeTruthy();
+    // O funil de ORIGEM, não o destino: é de onde a venda saiu.
+    expect(venda.funil_da_venda).toBe('Comercial — Consultor');
+  });
+
+  it('fechou sem dizer o valor → carimbo existe, prêmio fica pendente (não vira 0)', async () => {
+    await callPost(baseBody({
+      desfecho: {
+        ...(baseBody().desfecho as Record<string, unknown>),
+        dados_negocio: { operadora: 'Amil', vidas: 3, valor: null },
+      },
+    }));
+    const cf = (dealUpdateSpy.mock.calls[0][0] as { custom_fields: Record<string, unknown> }).custom_fields;
+    const venda = cf.venda as Record<string, unknown>;
+    expect(venda).toBeTruthy();
+    expect(venda.premio_mensal).toBeUndefined();
+  });
+
+  it('desfecho que NÃO é fechou não carimba venda nenhuma', async () => {
+    await callPost(baseBody({
+      desfecho: { ...(baseBody().desfecho as Record<string, unknown>), desfecho: 'vai_pensar' },
+    }));
+    const cf = (dealUpdateSpy.mock.calls[0][0] as { custom_fields: Record<string, unknown> }).custom_fields;
+    expect(cf.venda).toBeUndefined();
+    // ...e aí o valor dito É a mensalidade atual do lead.
+    expect((cf.qualificacao as Record<string, unknown>).valor_pago_exato).toBe(2100);
   });
 
   it('fechou → move pra Implantação/aguardando-doc com is_won + closed_at', async () => {

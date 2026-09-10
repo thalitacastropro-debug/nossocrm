@@ -32,8 +32,9 @@ export function useTranscribeCallOutcome() {
 
 export interface ApplyCallOutcomeInput {
   dealId: string;
-  audioFilePath: string;
-  transcricao: string;
+  /** Ausentes no preenchimento MANUAL — só o caminho por voz tem áudio e transcrição. */
+  audioFilePath?: string;
+  transcricao?: string;
   desfecho: Record<string, unknown>;
   conversationId?: string;
   contactId?: string;

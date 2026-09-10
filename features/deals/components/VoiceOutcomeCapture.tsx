@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Mic, Square, Trash2, Loader2, Check } from 'lucide-react';
+import { Mic, Square, Trash2, Loader2, Check, PencilLine } from 'lucide-react';
 import AudioPlayer from '@/components/ui/AudioPlayer';
 import { useTranscribeCallOutcome, useApplyCallOutcome, type TranscribeResult } from '@/lib/query/hooks/useCallOutcome';
 import type { Desfecho } from '@/lib/ai/call-outcome/schemas';
@@ -16,10 +16,35 @@ interface VoiceOutcomeCaptureProps {
 
 const PREFERRED_TYPES = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'];
 
+/**
+ * O desfecho vazio do preenchimento MANUAL (pedido dela em 09/09: *"tem que ter a versão manual
+ * tb"*). O formulário completo já existia — a única porta para chegar nele era gravar um áudio.
+ *
+ * `desfecho: ''` é de propósito: o select abre SEM escolha e o Confirmar fica travado até alguém
+ * dizer o que houve. Um default ("fechou", "vai_pensar") seria confirmado sem leitura — e este é o
+ * campo que move o card de funil, marca a venda, dispara lembrete de reabordagem e carimba a
+ * reunião como realizada. Default aqui é o caminho mais curto para dado ruim.
+ *
+ * `confidence: 1` porque não há extração: é uma pessoa afirmando o que aconteceu.
+ */
+const DESFECHO_EM_BRANCO: Desfecho = {
+  desfecho: '' as unknown as Desfecho['desfecho'],
+  nota_resumo: '',
+  tarefas: [],
+  dados_negocio: { operadora: null, vidas: null, valor: null },
+  objecoes: [],
+  motivo_perda: null,
+  motivo_perda_detalhe: null,
+  reabordar_em: null,
+  confidence: 1,
+};
+
 export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcomeCaptureProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
   const [review, setReview] = useState<TranscribeResult | null>(__testInitialReview ?? null);
+  /** Entrou pelo caminho escrito: mesmo formulário, sem áudio nem transcrição. */
+  const [modoManual, setModoManual] = useState(false);
   const [edited, setEdited] = useState<Desfecho | null>(__testInitialReview?.desfecho ?? null);
   const [localAudioUrl, setLocalAudioUrl] = useState<string | null>(null);
 
@@ -81,24 +106,36 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
   const discard = useCallback(() => {
     setReview(null);
     setEdited(null);
+    setModoManual(false);
     if (localAudioUrl) { URL.revokeObjectURL(localAudioUrl); setLocalAudioUrl(null); }
     setDuration(0);
   }, [localAudioUrl]);
 
-  // Estado de revisão EDITÁVEL
-  if (review && edited) {
+  const abrirManual = useCallback(() => {
+    setModoManual(true);
+    setEdited({ ...DESFECHO_EM_BRANCO });
+  }, []);
+
+  // Formulário do desfecho — o MESMO para quem ditou e para quem escreve. A única diferença é o
+  // que veio pronto: no áudio, os campos chegam preenchidos pela transcrição; no manual, vazios.
+  if ((review || modoManual) && edited) {
     const set = (patch: Partial<Desfecho>) => setEdited({ ...edited, ...patch });
     const setDados = (patch: Partial<Desfecho['dados_negocio']>) =>
       setEdited({ ...edited, dados_negocio: { ...edited.dados_negocio, ...patch } });
     return (
       <div className="bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl p-4 shadow-sm space-y-3">
-        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Desfecho da call (revisão)</h4>
+        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+          {review ? 'Desfecho da call (revisão)' : 'Desfecho da call'}
+        </h4>
         {localAudioUrl && <AudioPlayer src={localAudioUrl} variant="preview" />}
-        <p className="text-[11px] text-slate-400 whitespace-pre-wrap border-l-2 border-slate-200 dark:border-white/10 pl-2">{review.transcricao}</p>
+        {review && (
+          <p className="text-[11px] text-slate-400 whitespace-pre-wrap border-l-2 border-slate-200 dark:border-white/10 pl-2">{review.transcricao}</p>
+        )}
 
         <label className="block text-xs">
           <span className="text-slate-400">Desfecho</span>
           <select
+            aria-label="Desfecho"
             value={edited.desfecho}
             onChange={(e) => {
               const v = e.target.value as Desfecho['desfecho'];
@@ -108,6 +145,8 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
             }}
             className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm"
           >
+            {/* Só existe enquanto ninguém escolheu — some depois de a pessoa decidir. */}
+            {!edited.desfecho && <option value="">— o que aconteceu? —</option>}
             <option value="fechou">Fechou</option>
             <option value="vai_pensar">Vai pensar</option>
             <option value="perdeu">Perdeu</option>
@@ -169,8 +208,15 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
               className="mt-1 w-full rounded-lg border border-slate-200 dark:border-white/10 bg-transparent px-2 py-1.5 text-sm"
             />
           </label>
+          {/* O MESMO campo significa coisas opostas conforme o desfecho, e o rótulo tem que dizer
+              qual: em "fechou" é o PRÊMIO do plano comprado (vira `venda.premio_mensal`, o número
+              que fecha o mês); nos outros é a mensalidade que o lead paga HOJE no plano antigo
+              (vira `qualificacao.valor_pago_exato`, o gatilho da conversa). Um rótulo genérico
+              "Valor" era o que fazia o prêmio ser digitado no campo errado. */}
           <label className="block text-xs">
-            <span className="text-slate-400">Valor</span>
+            <span className="text-slate-400">
+              {edited.desfecho === 'fechou' ? 'Prêmio (plano vendido)' : 'Valor que paga hoje'}
+            </span>
             <input
               type="number" value={edited.dados_negocio.valor ?? ''}
               onChange={(e) => setDados({ valor: e.target.value ? Number(e.target.value) : null })}
@@ -196,10 +242,18 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
           </button>
           <button
             onClick={() => apply.mutate(
-              { dealId, audioFilePath: review.audioFilePath, transcricao: review.transcricao, desfecho: edited as unknown as Record<string, unknown> },
+              {
+                dealId,
+                // No manual não há áudio nem transcrição — a rota já trata os dois como opcionais.
+                audioFilePath: review?.audioFilePath,
+                transcricao: review?.transcricao,
+                desfecho: edited as unknown as Record<string, unknown>,
+              },
               { onSuccess: discard },
             )}
-            disabled={apply.isPending}
+            // Sem desfecho escolhido não há o que aplicar: é ele que move o card, marca a venda e
+            // dispara o lembrete.
+            disabled={apply.isPending || !edited.desfecho}
             className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2"
           >
             <Check size={14} /> {apply.isPending ? 'Salvando…' : 'Confirmar'}
@@ -231,13 +285,25 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
           >
             {isRecording ? <Square size={18} fill="currentColor" /> : <Mic size={18} />}
           </button>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-slate-900 dark:text-white">
               {isRecording ? `Gravando… ${duration}s` : 'Gravar o desfecho da call'}
             </p>
             <p className="text-xs text-slate-400">
               {isRecording ? 'Toque pra parar e transcrever' : 'Fale o resultado: fechou, próximos passos, valores'}
             </p>
+            {/* A alternativa a ditar. Não é uma segunda tela: leva ao MESMO formulário, vazio.
+                Quem está em escritório aberto, no ônibus ou só prefere escrever não tinha por
+                onde registrar — e o desfecho não registrado é o que some dos índices. */}
+            {!isRecording && (
+              <button
+                type="button"
+                onClick={abrirManual}
+                className="mt-1.5 text-xs font-bold text-primary-600 hover:text-primary-500 flex items-center gap-1.5"
+              >
+                <PencilLine size={13} /> Preencher à mão
+              </button>
+            )}
           </div>
         </div>
       )}
