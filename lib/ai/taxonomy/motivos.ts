@@ -12,6 +12,13 @@ export const MOTIVO_TAGS = [
   'rede',             // hospital/médico fora
   'concorrente',
   'fora_icp',         // sem CNPJ/inelegível
+  // A OPERADORA não comercializa na praça do lead — ele é elegível, o produto é que não chega ali.
+  // Diferente de `fora_icp`, em que quem não serve é o lead (sem CNPJ, 1 vida). Nasceu do caso
+  // Gabriel Fernandes (Ourinhos-SP, 09/09): o consultor descartou escrevendo o motivo à mão porque
+  // nenhuma das tags servia — assim ele viraria "Outro" e sumiria do relatório. A lista de praças
+  // NÃO é sabida de antemão: é descoberta na cotação, uma a uma
+  // (ver lib/config/pracas-sem-comercializacao.ts).
+  'fora_da_area',
   'sem_resposta',     // sumiu
   'timing',           // adiou
   'reembolso',
@@ -38,6 +45,7 @@ export const MOTIVO_LABELS: Record<MotivoTag, string> = {
   rede: 'Rede (hospital/médico)',
   concorrente: 'Foi pro concorrente',
   fora_icp: 'Fora do ICP',
+  fora_da_area: 'Fora da área de comercialização',
   sem_resposta: 'Sem resposta / sumiu',
   timing: 'Timing (adiou)',
   reembolso: 'Reembolso',

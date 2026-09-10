@@ -110,6 +110,16 @@ export interface LeadContext {
   /** Status da reunião pra orientar a resposta da Ana. */
   scheduling_status?: import('../scheduling/types').SchedulingStatus;
 
+  /**
+   * A cidade do lead caiu numa praça onde as operadoras não comercializam.
+   *
+   * Preenchido só quando bate na lista de exceções conhecidas
+   * (lib/config/pracas-sem-comercializacao.ts). Quando vem preenchido, a Ana NÃO oferece
+   * horário: diz a verdade e encerra. Nasceu do caso Gabriel Fernandes (Ourinhos-SP), em que a
+   * reunião foi marcada e virou perda no dia seguinte.
+   */
+  praca_sem_comercializacao?: { praca: string; uf: string; saida: string } | null;
+
   /** Reunião já agendada (deals.custom_fields.reuniao_agendada), se houver. */
   reuniao_agendada?: { activity_id?: string; status?: string; data_hora?: string } | null;
 

@@ -41,6 +41,12 @@ const REABORDAR_MESES: Record<MotivoTag, number> = {
   burocracia: 1,
   sem_resposta: 1,
   fora_icp: 6,
+  // 6 meses. Este lembrete é a RECHECAGEM da praça, não uma reabordagem comum: quando ele vencer,
+  // o consultor confere se alguma operadora passou a comercializar ali (pedido da Thalita, 09/09 —
+  // "de tempos em tempos pedir pro consultor checar se abriu comercialização"). Abertura de praça
+  // é evento lento; mais curto que isso só entulha a agenda com uma pergunta cuja resposta não
+  // mudou. Se abriu, o lead volta pro jogo; se não, o consultor adia de novo.
+  fora_da_area: 6,
   decisor: 0, // tratado como +2 semanas abaixo
   engano: 0, // nunca usado: `geraReabordagem` barra antes (não é lead)
   outro: 3,

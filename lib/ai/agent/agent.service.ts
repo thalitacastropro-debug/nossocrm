@@ -18,6 +18,7 @@ import { getChannelRouter } from '@/lib/messaging/channel-router.service';
 import { extractAndUpdateBANT } from '../extraction/extraction.service';
 import { runDomainExtraction } from '../extraction/domain-extraction.service';
 import { runScheduling } from '../scheduling/scheduling.service';
+import { pracaSemComercializacao } from '@/lib/config/pracas-sem-comercializacao';
 import { handoffToNextBoard } from '../scheduling/handoff';
 import { noteDeclineAndCheckEscalation, escalateToConsultor } from '../scheduling/escalation';
 import { evaluateStageAdvancement } from './stage-evaluator';
@@ -761,7 +762,20 @@ async function processIncomingMessageInner(
   let justConfirmedMeeting = false;
   let escalateStuckLead = false;
   try {
-    if (context.tier === 'fora_icp') {
+    // Praça sem comercialização: não adianta qualificar bem um lead para quem a Niva não tem
+    // produto. Vem ANTES do gate de ICP porque independe do tier — o lead pode ser ouro e ainda
+    // assim morar onde a operadora não vende. Caso Gabriel Fernandes (Ourinhos-SP): reunião
+    // marcada em 08/09 e desmarcada como perda em 09/09, com lead pago e agenda ocupada.
+    const pracaBloqueada = pracaSemComercializacao(
+      typeof context.qualificacao?.cidade_uf === 'string' ? context.qualificacao.cidade_uf : null,
+    );
+    if (pracaBloqueada) {
+      context.praca_sem_comercializacao = {
+        praca: pracaBloqueada.praca, uf: pracaBloqueada.uf, saida: pracaBloqueada.saida,
+      };
+      context.available_slots = [];
+      context.scheduling_status = { kind: 'none' };
+    } else if (context.tier === 'fora_icp') {
       // Fix 1b: lead FORA DO PERFIL não recebe horário nem é agendado (backstop do gate da persona).
       // O tier é do turno anterior — fora_icp raramente vira qualificado; o guard do is_lost + a
       // persona cobrem o caso raro de o lead qualificar e aceitar um horário no MESMO turno.

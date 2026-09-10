@@ -456,6 +456,28 @@ export function formatContextForPrompt(
     }
   }
 
+  // PRAÇA SEM COMERCIALIZAÇÃO — vem logo depois do que já sabemos, e antes de qualquer coisa
+  // sobre agendamento, porque muda o objetivo do turno inteiro: aqui não há reunião a marcar.
+  //
+  // O texto da saída vem PRONTO da configuração (lib/config/pracas-sem-comercializacao.ts) em vez
+  // de ser improvisado pelo modelo. É informação de negócio — por que não atendemos e o que o lead
+  // deve fazer —, e uma explicação inventada sobre cobertura de operadora é exatamente o tipo de
+  // frase que vira promessa errada na boca de quem representa a Niva.
+  if (context.praca_sem_comercializacao) {
+    const p = context.praca_sem_comercializacao;
+    lines.push('## ⚠️ NÃO HÁ COMERCIALIZAÇÃO NA CIDADE DESTE LEAD');
+    lines.push(
+      `A cidade é ${p.praca}/${p.uf}, e as operadoras não comercializam ali. ` +
+        'NÃO ofereça horário, NÃO marque reunião e NÃO diga que um consultor vai retornar — ' +
+        'não há o que o consultor faça. Diga a verdade UMA vez, com esta informação, ' +
+        'em bolhas curtas e com as suas palavras: ' +
+        `"${p.saida}" ` +
+        'Agradeça o contato e encerre com educação. Se o lead insistir, repita que não conseguimos ' +
+        'atender essa região e não prometa retorno.',
+    );
+    lines.push('');
+  }
+
   // Deal
   if (context.deal) {
     lines.push('## Deal Atual');

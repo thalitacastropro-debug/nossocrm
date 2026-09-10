@@ -43,7 +43,7 @@ export const NivaHealthSchema = z.object({
   algo_a_destacar: z.string().nullable().describe('Algo que o lead queira destacar para o consultor. null se nada'),
   objecoes: z
     .array(MotivoTagSchema)
-    .describe('Objeções levantadas pelo lead, cada uma como categoria da taxonomia (sem_oportunidade [inclui preço/caro], ficou_na_atual, carencia, rede, concorrente, fora_icp, sem_resposta, timing, reembolso, confianca, decisor, burocracia, outro). Array vazio se nenhuma'),
+    .describe('Objeções levantadas pelo lead, cada uma como categoria da taxonomia (sem_oportunidade [inclui preço/caro], ficou_na_atual, carencia, rede, concorrente, fora_icp, sem_resposta, timing, reembolso, confianca, decisor, burocracia, outro). NUNCA use fora_da_area: quem descobre que a operadora não comercializa na praça é o consultor na cotação — não se deduz da conversa. Array vazio se nenhuma'),
   quer_so_cotacao: z
     .boolean()
     .describe(
@@ -69,6 +69,7 @@ REGRAS:
   quanto custa ou dizer quantas vidas quer cotar ("quero cotar com estas vidas apenas") NÃO é recusa — é interesse.
   Se o lead continua respondendo, escolheu um horário, ou não recusou nada explicitamente: false. Na dúvida, false.
 - objecoes: classifique cada objeção levantada numa categoria da taxonomia: sem_oportunidade (inclui "achou caro"/preço), ficou_na_atual, carencia, rede, concorrente, fora_icp, sem_resposta, timing, reembolso, confianca, decisor, burocracia, outro.
+  NUNCA use fora_da_area — essa categoria é do consultor (a operadora não comercializa na praça, coisa que só se descobre na cotação). A cidade do lead NÃO é objeção.
 - Responda em português brasileiro.`;
 
 // =============================================================================
