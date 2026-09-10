@@ -46,3 +46,43 @@ describe('praça sem comercialização chega no prompt da Ana', () => {
     expect(texto).toContain('plano regional');
   });
 });
+
+/**
+ * O bloco "O QUE AINDA FALTA" no prompt da Ana.
+ *
+ * Existe porque `classifyTier` sempre soube o que faltava (`motivos: ['faltam as idades para
+ * classificar com segurança']`) e isso NUNCA era impresso — o contexto só tinha o espelho positivo,
+ * "O QUE JÁ SABEMOS". A instrução para perguntar tudo já existia no `stage_ai_config`: o que faltava
+ * não era instrução, era verificação.
+ */
+describe('bloco de qualificação pendente', () => {
+  it('sem pendência, o prompt não ganha bloco nenhum', () => {
+    const texto = formatContextForPrompt(contextoBase());
+    expect(texto).not.toContain('O QUE AINDA FALTA');
+  });
+
+  it('com pendência, proíbe oferecer horário e pede UMA coisa', () => {
+    const ctx = {
+      ...contextoBase(),
+      qualificacao_pendente: { alvo: 'idades', comoPerguntar: 'a idade de cada uma das pessoas que entram' },
+    };
+    const texto = formatContextForPrompt(ctx);
+    expect(texto).toContain('O QUE AINDA FALTA');
+    expect(texto).toContain('a idade de cada uma das pessoas que entram');
+    expect(texto).toContain('NÃO ofereça horário');
+    expect(texto).toMatch(/UMA coisa só|uma coisa só/i);
+  });
+
+  // A trava contra o caso Isabella: o pedido tem que vir DEPOIS do que já sabemos, para o modelo
+  // ler primeiro a lista do que não pode reperguntar.
+  it('o pedido vem depois do bloco "O QUE JÁ SABEMOS"', () => {
+    const ctx = {
+      ...contextoBase(),
+      qualificacao: { vidas: 3, cidade_uf: 'São Paulo' },
+      qualificacao_pendente: { alvo: 'idades', comoPerguntar: 'a idade de cada uma das pessoas que entram' },
+    };
+    const texto = formatContextForPrompt(ctx);
+    expect(texto.indexOf('O QUE JÁ SABEMOS')).toBeLessThan(texto.indexOf('O QUE AINDA FALTA'));
+    expect(texto).toContain('Vidas: 3');
+  });
+});

@@ -19,6 +19,7 @@ import { extractAndUpdateBANT } from '../extraction/extraction.service';
 import { runDomainExtraction } from '../extraction/domain-extraction.service';
 import { runScheduling } from '../scheduling/scheduling.service';
 import { pracaSemComercializacao } from '@/lib/config/pracas-sem-comercializacao';
+import { qualificacaoParaAgendar } from '../scheduling/qualificacao-gate';
 import { handoffToNextBoard } from '../scheduling/handoff';
 import { noteDeclineAndCheckEscalation, escalateToConsultor } from '../scheduling/escalation';
 import { evaluateStageAdvancement } from './stage-evaluator';
@@ -769,6 +770,7 @@ async function processIncomingMessageInner(
     const pracaBloqueada = pracaSemComercializacao(
       typeof context.qualificacao?.cidade_uf === 'string' ? context.qualificacao.cidade_uf : null,
     );
+    const qualificado = qualificacaoParaAgendar(context.qualificacao);
     if (pracaBloqueada) {
       context.praca_sem_comercializacao = {
         praca: pracaBloqueada.praca, uf: pracaBloqueada.uf, saida: pracaBloqueada.saida,
@@ -781,6 +783,26 @@ async function processIncomingMessageInner(
       // persona cobrem o caso raro de o lead qualificar e aceitar um horário no MESMO turno.
       context.available_slots = [];
       context.scheduling_status = { kind: 'none' };
+    } else if (!context.reuniao_agendada && !qualificado.podeAgendar) {
+      // QUALIFICAÇÃO É PRÉ-CONDIÇÃO DO AGENDAMENTO (decisão de 09/09/2026).
+      //
+      // *"Como ela vai marcar reunião sem arrancar os dados?"* — sem medalha, o consultor recebia
+      // um card em branco e descobria tudo na ligação. A régua é o próprio `classifyTier`: tier
+      // definido (ouro/prata/bronze) = pode oferecer horário.
+      //
+      // A condição de reunião JÁ AGENDADA vem primeiro de propósito: quem já tem horário marcado
+      // precisa poder confirmar, remarcar e ser lembrado. Bloquear aqui quebraria a remarcação de
+      // um lead que só não terminou de qualificar — e a cadência anti-no-show depende disso.
+      //
+      // Não trava o lead para sempre: quem some sem qualificar é entregue ao consultor pela
+      // cadência de silêncio, com a tag `nao_qualificado` (ec45f2d).
+      context.available_slots = [];
+      context.scheduling_status = { kind: 'none' };
+      if (qualificado.alvo && qualificado.comoPerguntar) {
+        context.qualificacao_pendente = {
+          alvo: qualificado.alvo, comoPerguntar: qualificado.comoPerguntar,
+        };
+      }
     } else {
       const sched = await runScheduling({
         supabase,

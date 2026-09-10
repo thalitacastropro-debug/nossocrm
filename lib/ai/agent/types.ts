@@ -120,6 +120,15 @@ export interface LeadContext {
    */
   praca_sem_comercializacao?: { praca: string; uf: string; saida: string } | null;
 
+  /**
+   * Falta dado para classificar o lead — então a Ana ainda NÃO oferece horário.
+   *
+   * Decisão de 09/09/2026: qualificação é pré-condição do agendamento. `alvo` é UM campo por
+   * turno, de propósito: pedir tudo de uma vez é o caminho para a Ana repetir pergunta (caso
+   * Isabella). Preenchido só quando falta algo; ver lib/ai/scheduling/qualificacao-gate.ts.
+   */
+  qualificacao_pendente?: { alvo: string; comoPerguntar: string } | null;
+
   /** Reunião já agendada (deals.custom_fields.reuniao_agendada), se houver. */
   reuniao_agendada?: { activity_id?: string; status?: string; data_hora?: string } | null;
 

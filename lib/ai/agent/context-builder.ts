@@ -456,6 +456,26 @@ export function formatContextForPrompt(
     }
   }
 
+  // O QUE AINDA FALTA — o espelho do bloco de cima, e o motivo de a Ana não oferecer horário agora.
+  //
+  // Vem IMEDIATAMENTE depois de "O QUE JÁ SABEMOS" porque é subordinado a ele: o alvo é escolhido
+  // em código (`qualificacao-gate.ts`) a partir do que está gravado no card, então nunca pede algo
+  // que já apareceu na lista acima. É UM alvo por turno — o caso Isabella foi 5x a mesma pergunta
+  // num lead pago, e o jeito mais rápido de repetir isso seria mandar a Ana "coletar o que falta".
+  if (context.qualificacao_pendente) {
+    lines.push('## O QUE AINDA FALTA — PERGUNTE UMA COISA SÓ');
+    lines.push(
+      `Antes de falar em reunião, você precisa saber ${context.qualificacao_pendente.comoPerguntar}. `
+        + 'Pergunte ISSO e nada mais neste turno — não enfileire as outras perguntas, não repita o '
+        + 'que já está na lista acima e não peça confirmação do que já foi respondido. '
+        + 'NÃO ofereça horário, NÃO diga que vai marcar e NÃO pergunte a preferência de dia ou '
+        + 'turno enquanto este dado não vier: sem ele o consultor entra na ligação sem saber com '
+        + 'quem está falando. Se o lead pedir para marcar antes, diga que precisa só desse dado '
+        + 'para encaixar o horário certo, pergunte, e siga a conversa normalmente.',
+    );
+    lines.push('');
+  }
+
   // PRAÇA SEM COMERCIALIZAÇÃO — vem logo depois do que já sabemos, e antes de qualquer coisa
   // sobre agendamento, porque muda o objetivo do turno inteiro: aqui não há reunião a marcar.
   //
