@@ -861,3 +861,64 @@ describe('venda sem prêmio: a cobrança não pode sumir num dia cheio', () => {
     expect(t).toContain('fechamento do mês');
   });
 });
+
+/**
+ * O QUE É CORTADO DO TOPO TEM QUE CAIR NO ACUMULADO.
+ *
+ * O conserto de 09/09 tratou a venda ANTIGA (vira dívida, aparece no acumulado). Faltou o outro
+ * lado: venda RECENTE entra como novidade e disputa as 5 vagas do topo (`MAX_NO_TEXTO`) — e
+ * `venda-sem-premio` é a última das 7 regras. Num dia cheio ela era cortada do topo e **também não
+ * caía no acumulado**, porque a condição era `estoquePorDono[dono] > novos.length`: com os 3 itens
+ * todos "novos", 3 > 3 é falso.
+ *
+ * Aconteceu de verdade em 10/09/2026: as 3 vendas do Pedro sem prêmio foram carimbadas em 09/09
+ * 13h, então no briefing das 8h tinham 22h de idade — novidade. Se o dia dele tivesse 5 itens mais
+ * prioritários, a cobrança sumiu de novo, no dia seguinte ao conserto.
+ *
+ * A regra certa não é sobre prêmio: é do formatador. Item que não coube no topo continua sendo
+ * pendência, e pendência aparece no acumulado.
+ */
+describe('nada some entre o topo e o acumulado', () => {
+  const diaCheio = (): Diario => ({
+    data: 'quinta-feira, 10/09',
+    ontem: { mensagensDeLead: 3, notasEscritas: 1, reunioesMarcadas: 0 },
+    regras: [
+      {
+        id: 'sem-resposta', titulo: 'Falaram e ninguém respondeu', emoji: '🔴', estoque: 6,
+        novos: Array.from({ length: 6 }, (_, i) => ({
+          donoId: 'u-ped', donoNome: 'Pedro Sellan', contato: `Lead ${i}`, detalhe: '"oi"', idadeHoras: 20 - i,
+        })),
+        estoquePorDono: { 'u-ped': 6 },
+        estoqueItens: [],
+      },
+      {
+        // 3 vendas carimbadas ontem: novidade, mas atrás de 6 itens mais urgentes.
+        id: 'venda-sem-premio', titulo: 'Venda sem o prêmio informado', emoji: '💰',
+        acao: 'Informar o prêmio mensal no card — sem ele a venda não entra no fechamento do mês.',
+        novos: ['Ricardo', 'Nathalia', 'Robson'].map((n) => ({
+          donoId: 'u-ped', donoNome: 'Pedro Sellan', contato: n,
+          detalhe: 'venda fechada sem o prêmio informado', idadeHoras: 22,
+        })),
+        estoque: 3,
+        estoquePorDono: { 'u-ped': 3 },
+        estoqueItens: ['Ricardo', 'Nathalia', 'Robson'].map((n) => ({
+          donoId: 'u-ped', donoNome: 'Pedro Sellan', contato: n,
+          detalhe: 'venda fechada sem o prêmio informado', idadeHoras: 22,
+        })),
+      },
+    ],
+  });
+
+  it('🔴 a cobrança do prêmio não some num dia com 6 urgências na frente', () => {
+    const t = formatarParaColaborador(diaCheio(), 'u-ped')!;
+    expect(t).toContain('Venda sem o prêmio informado');
+    expect(t).toContain('Ricardo');
+    expect(t).toContain('fechamento do mês');
+  });
+
+  it('quem foi listado no topo NÃO se repete no acumulado', () => {
+    const t = formatarParaColaborador(diaCheio(), 'u-ped')!;
+    // Lead 0 é o mais antigo e cabe no topo; não pode aparecer duas vezes.
+    expect(t.match(/Lead 0/g)?.length ?? 0).toBe(1);
+  });
+});

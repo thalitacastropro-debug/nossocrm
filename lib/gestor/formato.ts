@@ -167,21 +167,34 @@ export function formatarParaColaborador(
   const meus: Array<{ regra: Regra; item: ItemAlerta }> = [];
   const meuEstoque: Array<{ regra: Regra; quantos: number; itens: ItemAlerta[] }> = [];
 
-  for (const regra of diario.regras) {
-    if (regra.sigiloso) continue;
+  const visiveis = diario.regras.filter((r) => !r.sigiloso);
+  for (const regra of visiveis) {
     for (const item of regra.novos) if (item.donoId === donoId) meus.push({ regra, item });
+  }
 
-    // Acumulado DELE: o total da regra menos o que já foi listado como novidade
-    // dele. `estoquePorDono` vem preenchido pelas regras que sabem contar por
-    // pessoa; sem ele, não inventamos número.
-    const meusNovos = new Set(regra.novos.filter((i) => i.donoId === donoId));
+  // O QUE FOI EFETIVAMENTE LISTADO no topo — não "tudo que é novo dele".
+  //
+  // O topo mostra no máximo `MAX_NO_TEXTO` itens. Antes, o acumulado era decidido comparando o
+  // total da regra com TODOS os novos da pessoa (`quantos > novos.length`), como se todos tivessem
+  // aparecido — então o que o corte deixou de fora sumia das duas listas. Aconteceu com a cobrança
+  // do prêmio em 10/09/2026: as 3 vendas do Pedro tinham 22h (novidade), ficaram atrás de itens
+  // mais urgentes e desapareceram do relatório no dia seguinte ao conserto que deveria trazê-las.
+  //
+  // Item cortado do topo continua sendo pendência, e pendência aparece no acumulado.
+  const listadosNoTopo = new Set(meus.slice(0, MAX_NO_TEXTO).map((m) => m.item));
+
+  for (const regra of visiveis) {
     const quantos = regra.estoquePorDono?.[donoId] ?? 0;
-    if (quantos > meusNovos.size) {
-      // Os itens vêm do MESMO array que gerou os novos, então dá para excluir
-      // por identidade o que já foi listado acima — ninguém aparece duas vezes.
-      const itens = (regra.estoqueItens ?? []).filter((i) => i.donoId === donoId && !meusNovos.has(i));
-      meuEstoque.push({ regra, quantos, itens });
-    }
+    if (quantos === 0) continue;
+    const jaListados = regra.novos.filter((i) => i.donoId === donoId && listadosNoTopo.has(i)).length;
+    if (quantos <= jaListados) continue;
+
+    // Os itens vêm do MESMO array que gerou os novos, então dá para excluir por identidade o que
+    // já apareceu no topo — ninguém aparece duas vezes. O que foi cortado volta aqui.
+    const itens = (regra.estoqueItens ?? []).filter(
+      (i) => i.donoId === donoId && !listadosNoTopo.has(i),
+    );
+    meuEstoque.push({ regra, quantos, itens });
   }
 
   const equipe = opts.ehGestor ? blocoDaEquipe(diario, donoId) : [];
