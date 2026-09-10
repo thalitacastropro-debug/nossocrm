@@ -11,6 +11,7 @@ import {
   type FollowupState,
 } from './schedule';
 import { COLD_TOUCHES, WARM_FALLBACK, WARM_FIXED_LAST_INDEX, FOLLOWUP_TAG, renderBubbles } from './copy';
+import { pracaSemComercializacao } from '@/lib/config/pracas-sem-comercializacao';
 
 export const ANA_SDR_BOARD_ID = 'c2e36157-1b63-43cc-be35-bb1cab7a287f';
 export const STAGE_NOVO_LEAD = '1e8026b1-88ef-4daa-bc06-fb12b2dceff7';
@@ -135,6 +136,34 @@ export async function runLeadFollowup(deps: FollowupDeps): Promise<FollowupResul
     if (((conv.metadata as CF | null) ?? {}).ai_paused === true) { res.skipped++; continue; }
 
     const cf = (deal.custom_fields as CF | null) ?? {};
+
+    // Praça sem comercialização: ENCERRA a cadência, não só pula.
+    //
+    // O gate do agent.service impede a Ana de oferecer horário — mas a cadência é outro caminho
+    // de saída, e ela varre este board sozinha a cada 15 minutos. Sem este freio, o lead de
+    // Ourinhos não ganhava reunião e mesmo assim levava "ainda por aí?" por três dias: insistir
+    // sem ter o que oferecer é pior do que insistir.
+    //
+    // Encerra por ESTADO (`stopped`) em vez de dar `continue`, pelo mesmo motivo que a perda passou
+    // a fazer isso em `f57e826`: pular por filtro deixa a contagem congelada no meio e o card volta
+    // a ser reavaliado a cada rodada, para sempre.
+    const praca = pracaSemComercializacao(
+      (cf.qualificacao as CF | null)?.cidade_uf as string | null | undefined,
+    );
+    if (praca) {
+      const atual = (cf.followup as FollowupState | undefined) ?? ({} as FollowupState);
+      if (atual.stopped !== true) {
+        // addTag=false: o card nunca recebeu toque, então não carimba a tag de follow-up nele.
+        await persistFollowup(
+          supabase, deal.id as string, cf,
+          { ...atual, stopped: true, stopped_reason: 'fora_da_area' } as FollowupState,
+          false,
+        );
+      }
+      res.skipped++;
+      continue;
+    }
+
     const existing = cf.followup as FollowupState | undefined;
     const convId = conv.id as string;
     const lastMessageAt = conv.last_message_at as string;

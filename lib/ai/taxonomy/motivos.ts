@@ -19,6 +19,13 @@ export const MOTIVO_TAGS = [
   // NÃO é sabida de antemão: é descoberta na cotação, uma a uma
   // (ver lib/config/pracas-sem-comercializacao.ts).
   'fora_da_area',
+  // Registro sem dado de contato: nem perda comercial, nem engano — não há ninguém do outro lado,
+  // o CARD é que está vazio. A limpeza da lista fria de 22/08/2026 produziu 16 assim de uma vez
+  // ("Sem telefone e sem contato vinculado — impossível reativar"). Sem esta tag eles caíam em
+  // `outro`, que gera lembrete: 16 tarefas de ligar para quem não tem número, na agenda de uma
+  // pessoa só. E `outro` viraria 65% do relatório de motivos, dizendo nada sobre por que a Niva
+  // perde. NÃO gera reabordagem (ver `geraReabordagem`).
+  'registro_invalido',
   'sem_resposta',     // sumiu
   'timing',           // adiou
   'reembolso',
@@ -46,6 +53,7 @@ export const MOTIVO_LABELS: Record<MotivoTag, string> = {
   concorrente: 'Foi pro concorrente',
   fora_icp: 'Fora do ICP',
   fora_da_area: 'Fora da área de comercialização',
+  registro_invalido: 'Registro sem contato (limpeza de base)',
   sem_resposta: 'Sem resposta / sumiu',
   timing: 'Timing (adiou)',
   reembolso: 'Reembolso',

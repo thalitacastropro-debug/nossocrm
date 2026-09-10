@@ -40,7 +40,8 @@ const REABORDAR_MESES: Record<MotivoTag, number> = {
   confianca: 2,
   burocracia: 1,
   sem_resposta: 1,
-  fora_icp: 6,
+  fora_icp: 0, // nunca usado: `geraReabordagem` barra antes (o tempo não muda a elegibilidade)
+  registro_invalido: 0, // nunca usado: `geraReabordagem` barra antes (não há telefone para ligar)
   // 6 meses. Este lembrete é a RECHECAGEM da praça, não uma reabordagem comum: quando ele vencer,
   // o consultor confere se alguma operadora passou a comercializar ali (pedido da Thalita, 09/09 —
   // "de tempos em tempos pedir pro consultor checar se abriu comercialização"). Abertura de praça
@@ -56,17 +57,22 @@ const REABORDAR_MESES: Record<MotivoTag, number> = {
  * Este motivo merece lembrete de reabordagem?
  *
  * Regra da Thalita (09/09): todo lead que vai pra perdido leva lembrete pro futuro — **menos**
- * quem nunca foi lead. Dois casos ficam de fora:
+ * quem nunca foi lead. Três casos ficam de fora:
  *  - `engano`: número errado / procurava outra pessoa. Reabordar é incomodar um estranho de novo.
- *  - `fora_icp`: sem CNPJ e sem intenção de abrir, ou plano individual. O produto é empresarial;
- *    o tempo não muda a elegibilidade, então o lembrete só entulha a agenda.
+ *  - `fora_icp`: quem não é comprador. Sem CNPJ e sem intenção de abrir, plano individual — e
+ *    também o curioso que só especula. Uma corretora de seguros "pesquisando" tem CNPJ e é
+ *    elegível no papel, mas nunca vai comprar; reabordá-la é dar cotação de graça para a
+ *    concorrência. O tempo não muda nada disso.
+ *  - `registro_invalido`: card sem telefone e sem contato vinculado. Não existe a quem ligar, então
+ *    o lembrete nasce como tarefa impossível — e é o pior tipo, porque vem em lote (16 de uma vez
+ *    na limpeza de 22/08/2026).
  *
  * Importa porque "Descartado" no funil da Ana serve para perda comercial E para engano: sem esta
  * separação, um número errado ganharia tarefa de ligação para o ano que vem. E agenda cheia de
  * lixo é agenda ignorada — o que mataria justamente os lembretes que valem.
  */
 export function geraReabordagem(motivo: MotivoTag): boolean {
-  return motivo !== 'engano' && motivo !== 'fora_icp';
+  return motivo !== 'engano' && motivo !== 'fora_icp' && motivo !== 'registro_invalido';
 }
 
 export function reabordarEmFallback(motivo: MotivoTag, now: Date): string {

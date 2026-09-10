@@ -51,6 +51,12 @@ describe('geraReabordagem', () => {
     expect(geraReabordagem('fora_icp')).toBe(false);
   });
 
+  // registro_invalido: card sem telefone e sem contato vinculado — a limpeza da lista fria de
+  // 22/08/2026 produziu 16 de uma vez. Não existe quem ligar, então lembrete aqui é tarefa morta.
+  it('registro_invalido NÃO gera lembrete (não existe telefone para ligar)', () => {
+    expect(geraReabordagem('registro_invalido')).toBe(false);
+  });
+
   it('motivos comerciais geram lembrete', () => {
     for (const m of ['concorrente', 'ficou_na_atual', 'timing', 'decisor', 'outro'] as const) {
       expect(geraReabordagem(m)).toBe(true);
@@ -59,8 +65,8 @@ describe('geraReabordagem', () => {
 
   // Trava de completude: tag nova na taxonomia tem que ser decidida aqui de propósito, não herdar
   // "gera lembrete" por omissão — senão a próxima categoria de não-lead volta a entulhar a agenda.
-  it('toda tag da taxonomia tem decisão explícita, e só 2 ficam de fora', () => {
+  it('toda tag da taxonomia tem decisão explícita, e só 3 ficam de fora', () => {
     const semLembrete = MOTIVO_TAGS.filter((m) => !geraReabordagem(m));
-    expect(semLembrete).toEqual(['fora_icp', 'engano']);
+    expect(semLembrete).toEqual(['fora_icp', 'registro_invalido', 'engano']);
   });
 });
