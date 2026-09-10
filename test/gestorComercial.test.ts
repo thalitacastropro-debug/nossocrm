@@ -218,7 +218,13 @@ describe('regra: venda sem prêmio', () => {
     };
     const d = await montarDiario({ supabase: fakeSupabase(cenario), now: AGORA });
     const r = d.regras.find((x) => x.id === 'venda-sem-premio')!;
-    expect(r.novos.map((i) => i.contato)).toEqual(['Mavie']);
+    // A Mavie fechou há 72h: é dívida, não novidade do dia (ver o bloco sobre a
+    // cobrança invisível, no fim deste arquivo). Continua cobrada — no acumulado.
+    expect(r.estoqueItens?.map((i) => i.contato)).toEqual(['Mavie']);
+    expect(r.novos).toHaveLength(0);
+    // O que este teste sempre protegeu: venda DESFEITA (Richard) e venda com
+    // prêmio preenchido (OK) não são pendência de ninguém, em lista nenhuma.
+    expect(r.estoque).toBe(1);
   });
 });
 
@@ -777,5 +783,81 @@ describe('regra 7: próximo passo marcado tira o card da cobrança', () => {
     const d = await montarDiario({ supabase: fakeSupabase(c), now: AGORA });
     const r = d.regras.find((x) => x.id === 'negociacao-parada')!;
     expect(r.novos.map((i) => i.contato)).toContain('Alice Mahlmeister');
+  });
+});
+
+
+/**
+ * O furo que a Thalita achou em 09/09 ao pedir "adicionar na daily do Pedro:
+ * preencher o prêmio das vendas" — a regra JÁ EXISTIA desde 31/08 e mesmo assim
+ * a cobrança nunca chegava nele.
+ *
+ * Motivo: `venda-sem-premio` é a ÚLTIMA das 7 regras e jogava TUDO em `novos`,
+ * inclusive venda fechada há semanas. O relatório individual lista só os 5
+ * primeiros itens (`MAX_NO_TEXTO`), então bastava o Pedro ter 5 itens mais
+ * prioritários para a cobrança sumir — e ele tem 156 cards abertos, então sumia
+ * quase todo dia. Pior: como a regra não preenchia `estoqueItens` e seu
+ * `estoque` era igual a `novos.length`, ela também não caía no bloco "Ainda em
+ * aberto com você". Invisível nos dois lugares, com 3 vendas reais paradas.
+ *
+ * O conserto respeita a divisão NOVO/ESTOQUE do módulo: venda fechada nas
+ * últimas 24h é novidade e disputa o topo; venda antiga sem prêmio é DÍVIDA e
+ * mora no acumulado, que não é cortado pelo slice do topo.
+ */
+describe('venda sem prêmio: a cobrança não pode sumir num dia cheio', () => {
+  const vendaAntiga = (id: string, titulo: string) => ({
+    id, title: titulo, owner_id: 'u-ped', is_lost: false,
+    custom_fields: { venda: { premio_mensal: null, vendido_em: hAtras(200) } },
+  });
+
+  it('venda ANTIGA sem prêmio é dívida (estoque), não novidade', async () => {
+    const d = await montarDiario({
+      supabase: fakeSupabase({
+        profiles: PERFIS,
+        deals: [vendaAntiga('d1', 'Ricardo'), vendaAntiga('d2', 'Nathalia'), vendaAntiga('d3', 'Robson')],
+      }),
+      now: AGORA,
+    });
+    const r = d.regras.find((x) => x.id === 'venda-sem-premio')!;
+    expect(r.novos).toHaveLength(0);
+    expect(r.estoque).toBe(3);
+    expect(r.estoqueItens?.map((i) => i.contato)).toEqual(['Ricardo', 'Nathalia', 'Robson']);
+    expect(r.estoquePorDono?.['u-ped']).toBe(3);
+  });
+
+  it('venda fechada ONTEM sem prêmio é novidade e disputa o topo', async () => {
+    const d = await montarDiario({
+      supabase: fakeSupabase({
+        profiles: PERFIS,
+        deals: [{
+          id: 'd9', title: 'Fechou ontem', owner_id: 'u-ped', is_lost: false,
+          custom_fields: { venda: { premio_mensal: null, vendido_em: hAtras(5) } },
+        }],
+      }),
+      now: AGORA,
+    });
+    const r = d.regras.find((x) => x.id === 'venda-sem-premio')!;
+    expect(r.novos.map((i) => i.contato)).toEqual(['Fechou ontem']);
+  });
+
+  it('🔴 com 6 leads sem resposta na frente, a cobrança do prêmio AINDA chega nele', async () => {
+    const conversas = Array.from({ length: 6 }, (_, i) => ({
+      id: `c${i}`, contact_id: `p${i}`, assigned_user_id: 'u-ped',
+      last_message_at: hAtras(6 + i), last_message_direction: 'inbound',
+      last_message_preview: 'me liga por favor',
+    }));
+    const d = await montarDiario({
+      supabase: fakeSupabase({
+        profiles: PERFIS,
+        messaging_conversations: conversas,
+        contacts: conversas.map((c, i) => ({ id: `p${i}`, name: `Lead ${i}`, owner_id: 'u-ped' })),
+        deals: [vendaAntiga('d1', 'Ricardo'), vendaAntiga('d2', 'Nathalia'), vendaAntiga('d3', 'Robson')],
+      }),
+      now: AGORA,
+    });
+    const t = formatarParaColaborador(d, 'u-ped')!;
+    expect(t).toContain('Venda sem o prêmio informado');
+    expect(t).toContain('Ricardo');
+    expect(t).toContain('fechamento do mês');
   });
 });

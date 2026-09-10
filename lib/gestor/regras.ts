@@ -51,6 +51,16 @@ const HORAS_SEM_PRIMEIRA_RESPOSTA = 24;
 const DIAS_PARADO = 30;
 
 /**
+ * Até quando uma venda sem prêmio ainda conta como NOVIDADE do dia.
+ *
+ * 24h para casar com a janela do resto do diário (o relatório roda uma vez por
+ * dia, às 8h): venda fechada desde o último envio aparece no topo uma vez; da
+ * segunda manhã em diante ela é dívida e desce para o acumulado, que é o lugar
+ * de quem não sai da lista sozinho.
+ */
+const HORAS_VENDA_NOVA = 24;
+
+/**
  * Silêncio tolerado na etapa mais perto da receita.
  *
  * 3 dias porque negociação é a etapa em que o lead já disse sim ao diagnóstico e
@@ -760,7 +770,7 @@ async function regraVendaSemPremio(
     return v && (v.premio_mensal == null || v.premio_mensal === 0);
   });
 
-  const novos: ItemAlerta[] = semPremio.map((d) => ({
+  const itens: ItemAlerta[] = semPremio.map((d) => ({
     donoId: d.owner_id,
     donoNome: nomeDe(perfis.get(d.owner_id ?? '') as Parameters<typeof nomeDe>[0]),
     contato: d.title ?? 'Card sem nome',
@@ -771,16 +781,33 @@ async function regraVendaSemPremio(
     dealId: d.id,
   }));
 
-  // Aqui NÃO cortamos por "novo": prêmio pendente é dinheiro parado, e a lista é
-  // curta por natureza (a base inteira tem 2 vendas). Repetir é o certo.
+  // NOVO vs ESTOQUE, como o resto do módulo — e não "tudo em novos", que era o
+  // que esta regra fazia antes.
+  //
+  // Jogar tudo em `novos` parecia o certo ("prêmio pendente é dinheiro parado,
+  // repetir é bom") e produzia o oposto: `novos` disputa as 5 vagas do topo do
+  // relatório individual (`MAX_NO_TEXTO`), e esta é a ÚLTIMA das 7 regras. Com o
+  // Pedro em 156 cards abertos, as vagas acabavam antes — e como o `estoque`
+  // era igual a `novos.length` e não havia `estoqueItens`, a regra também não
+  // caía no bloco "Ainda em aberto com você". Ficava invisível nos dois lugares:
+  // em 09/09 eram 3 vendas dele sem prêmio, e a Thalita pediu para "adicionar na
+  // daily" uma cobrança que já existia há dez dias e nunca tinha chegado.
+  //
+  // Agora: venda fechada nas últimas 24h é NOVIDADE e briga pelo topo; venda
+  // antiga é DÍVIDA e mora no acumulado, que o corte do topo não alcança. Sem
+  // `vendido_em` não dá para saber a idade — vai para a dívida, que é onde um
+  // card antigo mal preenchido pertence.
+  const novos = itens.filter((i) => i.idadeHoras > 0 && i.idadeHoras <= HORAS_VENDA_NOVA);
+
   return {
     id: 'venda-sem-premio',
     titulo: 'Venda sem o prêmio informado',
     emoji: '💰',
     acao: 'Informar o prêmio mensal no card — sem ele a venda não entra no fechamento do mês.',
     novos: ordenar(novos),
-    estoque: semPremio.length,
-    estoquePorDono: contarPorDono(novos),
+    estoque: itens.length,
+    estoquePorDono: contarPorDono(itens),
+    estoqueItens: ordenar(itens),
   };
 }
 
