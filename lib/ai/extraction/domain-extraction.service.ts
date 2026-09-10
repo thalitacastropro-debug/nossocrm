@@ -17,7 +17,17 @@ import { getModel, type AIProvider } from '../config';
 import { getDomainExtractor } from './domain/registry';
 import { resolveExtractionLoss, PERDA_ORIGEM_EXTRACAO } from './loss-guard';
 
-const MAX_MESSAGES_FOR_EXTRACTION = 30;
+/**
+ * Quantas mensagens da conversa entram na extração.
+ *
+ * 120, medido na base real em 09/2026: com 120 mensagens, **66 das 68 conversas cabem INTEIRAS**
+ * (97%) — com as 30 de antes, só 35 cabiam (51%). Subir mais não compra nada: as duas que sobram
+ * têm ~200 e 388 mensagens, então 200 cobriria as mesmas 66.
+ *
+ * O custo é pequeno porque aqui a "mensagem" é bolha de WhatsApp: 83 caracteres em média (p95 =
+ * 185). 120 delas dão ~10 mil caracteres — a conversa média inteira tem 3 mil.
+ */
+const MAX_MESSAGES_FOR_EXTRACTION = 120;
 
 export interface RunDomainExtractionParams {
   supabase: SupabaseClient;
@@ -52,15 +62,28 @@ export async function runDomainExtraction(
   if (!extractor) return { success: true, applied: false };
 
   try {
-    // 1. Histórico da conversa
-    const { data: messages } = await supabase
+    // 1. Histórico da conversa — as ÚLTIMAS mensagens, não as primeiras.
+    //
+    //    Isto era `ascending: true` + limit, ou seja: as N MAIS ANTIGAS. Numa conversa que passa de
+    //    N, tudo que o lead respondeu depois não existia para a extração — a Ana arrancava o dado,
+    //    o lead respondia, e o card continuava sem ele. Medido antes do conserto: 48,5% das
+    //    conversas (33 de 68) passavam de 30 mensagens, e a maior tinha 388. Em quase metade da
+    //    base a extração lia o pedaço errado da conversa.
+    //
+    //    Buscar DESC e reverter é seguro quando a janela estoura porque `apply()` é incremental:
+    //    ele só sobrescreve campo com valor novo não-vazio, então o que foi extraído do começo em
+    //    turnos anteriores permanece. O que falta é sempre o recente.
+    const { data: recentesPrimeiro } = await supabase
       .from('messaging_messages')
       .select('direction, content, created_at')
       .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(MAX_MESSAGES_FOR_EXTRACTION);
 
-    if (!messages || messages.length < 1) return { success: true, applied: true };
+    if (!recentesPrimeiro || recentesPrimeiro.length < 1) return { success: true, applied: true };
+
+    // O modelo lê a conversa como conversa: ordem cronológica, do mais antigo ao mais novo.
+    const messages = [...recentesPrimeiro].reverse();
 
     const messagesText = messages
       .map((m) => {

@@ -175,12 +175,21 @@ async function buildDealContext(
   let messages: DealContext['messages'] = [];
   const conversations = conversationsResult.data;
   if (conversations && conversations.length > 0) {
-    const { data: messagesData } = await supabase
+    // As ÚLTIMAS mensagens, não as primeiras — e depois em ordem cronológica.
+    //
+    // Era `ascending: true` + limit: o mesmo defeito que a extração tinha. Numa conversa que passa
+    // do limite, isto entrega o COMEÇO e esconde tudo que veio depois. Aqui o dano é direto, porque
+    // este é o briefing PRÉ-REUNIÃO — o consultor abria a ligação com o retrato da primeira hora de
+    // uma conversa de semanas. Em produção 48,5% das conversas passam de 30 mensagens e a maior tem
+    // 388, então não é caso raro.
+    const { data: recentesPrimeiro } = await supabase
       .from('messaging_messages')
       .select('direction, content, created_at, metadata')
       .eq('conversation_id', conversations[0].id)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(MAX_MESSAGES_FOR_BRIEFING);
+
+    const messagesData = recentesPrimeiro ? [...recentesPrimeiro].reverse() : null;
 
     if (messagesData) {
       messages = messagesData.map((msg) => ({
