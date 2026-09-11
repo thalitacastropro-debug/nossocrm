@@ -9,6 +9,7 @@ import { KanbanBoard } from './Kanban/KanbanBoard';
 import { KanbanList } from './Kanban/KanbanList';
 import { DeleteBoardModal } from './Modals/DeleteBoardModal';
 import { LossReasonModal } from '@/components/ui/LossReasonModal';
+import { ConfirmarValorVendaModal } from '@/components/ui/ConfirmarValorVendaModal';
 import type { MotivoTag } from '@/lib/ai/taxonomy/motivos';
 import { DealView, CustomFieldDefinition, Board, BoardStage } from '@/types';
 import { ExportTemplateModal } from './Modals/ExportTemplateModal';
@@ -79,6 +80,16 @@ interface PipelineViewProps {
   } | null;
   handleLossReasonConfirm: (reason: string, tag: MotivoTag) => void;
   handleLossReasonClose: () => void;
+  // Confirmação do valor da venda no move para Ganho (11/09/2026)
+  confirmarVendaModal: {
+    isOpen: boolean;
+    dealId: string;
+    dealTitle: string;
+    stageId: string;
+    valorDoCard: number | null;
+  } | null;
+  handleConfirmarVenda: (premioMensal: number, operadora: string) => void;
+  handleConfirmarVendaClose: () => void;
   boardCreateOverlay?: { title: string; subtitle?: string } | null;
 }
 
@@ -245,6 +256,9 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
   lossReasonModal,
   handleLossReasonConfirm,
   handleLossReasonClose,
+  confirmarVendaModal,
+  handleConfirmarVenda,
+  handleConfirmarVendaClose,
   boardCreateOverlay,
 }) => {
   const { profile } = useAuth();
@@ -426,6 +440,14 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
         onClose={handleLossReasonClose}
         onConfirm={handleLossReasonConfirm}
         dealTitle={lossReasonModal?.dealTitle}
+      />
+
+      <ConfirmarValorVendaModal
+        isOpen={confirmarVendaModal?.isOpen ?? false}
+        onClose={handleConfirmarVendaClose}
+        onConfirm={handleConfirmarVenda}
+        dealTitle={confirmarVendaModal?.dealTitle}
+        valorDoCard={confirmarVendaModal?.valorDoCard ?? null}
       />
 
       {activeBoard && (

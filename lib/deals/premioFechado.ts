@@ -54,6 +54,17 @@ export type ResultadoValidacao =
   | { ok: true; valor: PremioFechado }
   | { ok: false; erro: string };
 
+/**
+ * Só o NÚMERO do prêmio, sem operadora nem vigência.
+ *
+ * Existe porque a confirmação no move para "Fechado — Ganho" (11/09/2026) pergunta uma coisa
+ * só — "o valor do card é o valor da venda?" — e não pode exigir os outros dois campos: uma
+ * pergunta de um clique não pode virar formulário no meio do arrastar.
+ */
+export type ResultadoValorVenda =
+  | { ok: true; valor: number }
+  | { ok: false; erro: string };
+
 /** `YYYY-MM-DD` — o formato do `<input type="date">`. */
 const FORMATO_DATA = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -90,8 +101,8 @@ const dataValida = (texto: string): boolean => {
  * Valida e normaliza o prêmio fechado. Mensagens em português e acionáveis: elas aparecem
  * direto para quem está preenchendo o card.
  */
-export const validarPremioFechado = (entrada: EntradaPremioFechado): ResultadoValidacao => {
-  const premio = paraNumero(entrada.premio_mensal);
+export const validarValorDaVenda = (entrada: unknown): ResultadoValorVenda => {
+  const premio = paraNumero(entrada);
   if (premio === null) {
     return { ok: false, erro: 'Informe o prêmio mensal do plano vendido (ex.: 1.850,00).' };
   }
@@ -105,6 +116,15 @@ export const validarPremioFechado = (entrada: EntradaPremioFechado): ResultadoVa
         + 'O campo é o prêmio MENSAL do plano vendido, não o anual nem a comissão.',
     };
   }
+  // Duas casas: dinheiro. Sem isso, "1234.567" entraria e reapareceria arredondado na tela,
+  // sem bater com o que foi gravado.
+  return { ok: true, valor: Math.round(premio * 100) / 100 };
+};
+
+export const validarPremioFechado = (entrada: EntradaPremioFechado): ResultadoValidacao => {
+  const numero = validarValorDaVenda(entrada.premio_mensal);
+  if (!numero.ok) return numero;
+  const premio = numero.valor;
 
   const operadora = typeof entrada.operadora === 'string' ? entrada.operadora.trim() : '';
   if (operadora === '') {
@@ -123,11 +143,9 @@ export const validarPremioFechado = (entrada: EntradaPremioFechado): ResultadoVa
     vigencia = vigenciaBruta;
   }
 
-  // Duas casas: dinheiro. Sem isso, "1234.567" entraria e reapareceria arredondado na tela,
-  // sem bater com o que foi gravado.
   return {
     ok: true,
-    valor: { premio_mensal: Math.round(premio * 100) / 100, operadora, vigencia_em: vigencia },
+    valor: { premio_mensal: premio, operadora, vigencia_em: vigencia },
   };
 };
 
@@ -156,4 +174,22 @@ export const lerPremioFechado = (venda: unknown): PremioFechado | null => {
 export const precisaInformarPremio = (venda: unknown): boolean => {
   if (typeof venda !== 'object' || venda === null) return false;
   return lerPremioFechado(venda) === null;
+};
+
+/**
+ * Venda com o prêmio informado e SEM operadora — a outra metade da mesma pendência.
+ *
+ * Ela passou a existir em 11/09/2026, quando a confirmação no move para Ganho passou a gravar
+ * o prêmio sozinho (um clique, sem formulário). Antes, o único caminho que preenchia o prêmio
+ * era o formulário completo, que exige operadora — então "tem prêmio" implicava "tem
+ * operadora" e o selo âmbar podia olhar só o número.
+ *
+ * Sem este segundo estado, o selo sumiria com o prêmio e ninguém mais pediria a operadora — e
+ * é ela que define o percentual da comissão no fechamento do mês. Silêncio aqui não seria
+ * "resolvido", seria a coluna de comissão em branco no fim do mês.
+ */
+export const faltaOperadoraDaVenda = (venda: unknown): boolean => {
+  const premio = lerPremioFechado(venda);
+  if (!premio) return false;
+  return premio.operadora.trim() === '';
 };

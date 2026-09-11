@@ -5,7 +5,7 @@ import { Building2, CalendarCheck, CalendarX, Clock, Hourglass, MessageCircle, P
 import { ActivityStatusIcon } from './ActivityStatusIcon';
 import { priorityAriaLabelPtBr } from '@/lib/utils/priority';
 import { formatPhoneBR } from '@/lib/phone';
-import { precisaInformarPremio } from '@/lib/deals/premioFechado';
+import { precisaInformarPremio, faltaOperadoraDaVenda } from '@/lib/deals/premioFechado';
 
 interface DealCardProps {
   deal: DealView;
@@ -206,6 +206,17 @@ const ehCarteiraPropria = (deal: DealView): boolean => {
 const faltaPremioDaVenda = (deal: DealView): boolean =>
   precisaInformarPremio(deal.customFields?.venda);
 
+/**
+ * Venda com prêmio e SEM operadora — a pendência que sobrou depois de 11/09/2026.
+ *
+ * A confirmação no move para Ganho grava o prêmio num clique e deixa a operadora opcional (é ela
+ * que define o percentual da comissão, mas exigi-la transformaria o arrastar num formulário).
+ * Sem este segundo selo, o âmbar sumiria junto com o prêmio e a operadora nunca mais seria
+ * pedida — a coluna de comissão ficaria em branco no fechamento, sem ninguém ter sido avisado.
+ */
+const faltaOperadoraDoPlano = (deal: DealView): boolean =>
+  faltaOperadoraDaVenda(deal.customFields?.venda);
+
 const DealCardComponent: React.FC<DealCardProps> = ({
   deal,
   isRotting,
@@ -250,6 +261,8 @@ const DealCardComponent: React.FC<DealCardProps> = ({
   // excluem, então o selo induziria trabalho inútil — preencher um número que não aparece
   // em lugar nenhum (revisão adversarial de 27/08, caso Richard).
   const pendentePremio = !deal.isLost && faltaPremioDaVenda(deal);
+  // Mesma regra da venda desfeita: só cobra operadora de venda que ainda conta.
+  const pendenteOperadora = !deal.isLost && faltaOperadoraDoPlano(deal);
 
   const handleMarkNoShow = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -482,6 +495,16 @@ const DealCardComponent: React.FC<DealCardProps> = ({
             title="Venda fechada sem o prêmio do plano vendido — abra o card e informe (aba IA Insights). Sem o prêmio, a venda não entra no 'Já ganho no mês' nem em relatório de comissão."
           >
             Falta prêmio
+          </span>
+        )}
+        {/* A outra metade da mesma pendência: prêmio informado, operadora não. A venda já conta
+            no mês; o que falta é o percentual da comissão, que depende da operadora. */}
+        {pendenteOperadora && (
+          <span
+            className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 ring-1 ring-black/5 dark:ring-white/10"
+            title="Venda com o prêmio informado e sem a operadora — abra o card e preencha (aba IA Insights). A venda já conta no mês; sem a operadora, a comissão não pode ser calculada."
+          >
+            Falta operadora
           </span>
         )}
         {/* Selo "Carteira": cliente trazido por alguém do time, não veio do tráfego pago.

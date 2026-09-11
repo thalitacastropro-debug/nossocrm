@@ -21,6 +21,7 @@ import { contactsService } from '@/lib/supabase/contacts';
 import type { Deal, DealView, Board, Activity } from '@/types';
 import { conferirCoerenciaDoMove } from '@/lib/deals/coerenciaDoMove';
 import { resolverEtapaDoMove } from '@/lib/deals/moverParaFunil';
+import { ehEtapaDeGanho } from '@/lib/deals/etapaDeGanho';
 import type { MotivoTag } from '@/lib/ai/taxonomy/motivos';
 import { deveCriarLembrete, reabordarEmFallback } from '@/lib/ai/call-outcome/routing';
 import { MOTIVO_LABELS } from '@/lib/ai/taxonomy/motivos';
@@ -35,6 +36,17 @@ interface MoveDealParams {
    * preenchido em apenas **1 dos 36** perdidos — e decide a data do lembrete de reabordagem.
    */
   lossTag?: MotivoTag;
+  /**
+   * Valor da venda CONFIRMADO no move para Ganho (11/09/2026). Vai para
+   * `custom_fields.venda.premio_mensal` e, quando difere do `deals.value` atual, também
+   * SOBRESCREVE o valor do card — que é exatamente o que o consultor fazia na mão.
+   *
+   * Ausente = ninguém confirmou (desfecho por voz, API, promoção de lead): a rota carimba a
+   * venda sem prêmio e o selo âmbar do card continua cobrando, como antes.
+   */
+  premioMensal?: number;
+  /** Operadora do plano vendido, opcional: a confirmação não obriga a preencher. */
+  operadoraDaVenda?: string;
   // Context needed for automations
   deal: Deal | DealView;
   board: Board;
@@ -91,6 +103,9 @@ interface EnviarParaProximoFunilParams {
   /** Funil de origem — onde a venda foi fechada. Serve para desfazer o otimismo do cache. */
   board: Board;
   queryClient: QueryClient;
+  /** Valor da venda confirmado na tela, quando houve confirmação. */
+  premioMensal?: number;
+  operadoraDaVenda?: string;
 }
 
 /** Corpo devolvido por `POST /api/deals/[dealId]/proximo-funil`. */
@@ -135,11 +150,19 @@ async function enviarParaProximoFunil({
   deal,
   board,
   queryClient,
+  premioMensal,
+  operadoraDaVenda,
 }: EnviarParaProximoFunilParams): Promise<void> {
+  // O corpo carrega SÓ o que a tela apurou com o consultor (o valor confirmado da venda). Quem
+  // responde "este card acabou de ser ganho?" continua sendo o BANCO, dentro da rota — é esse
+  // guard que impede uma segunda chamada de empurrar o card adiante sozinha.
   const res = await fetch(`/api/deals/${deal.id}/proximo-funil`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify({
+      ...(typeof premioMensal === 'number' ? { premioMensal } : {}),
+      ...(operadoraDaVenda ? { operadora: operadoraDaVenda } : {}),
+    }),
   });
   const corpo = (await res.json().catch(() => ({}))) as RespostaProximoFunil;
 
@@ -195,7 +218,7 @@ export const useMoveDeal = () => {
   const queryClient = useQueryClient();
 
   return useMutation<MoveDealResult, Error, MoveDealParams, MoveDealContext>({
-    mutationFn: async ({ dealId, targetStageId, lossReason, lossTag, deal, board, lifecycleStages, explicitWin, explicitLost }) => {
+    mutationFn: async ({ dealId, targetStageId, lossReason, lossTag, premioMensal, operadoraDaVenda, deal, board, lifecycleStages, explicitWin, explicitLost }) => {
       // TRAVA DO CARD ÓRFÃO (27/08/2026, caso Richard Gois): este update grava `stage_id`
       // e NUNCA `board_id` — mover de funil é outro caminho. Se a tela estiver mostrando
       // um funil do qual o card já saiu no servidor (foi o que a automação de desfecho da
@@ -223,11 +246,9 @@ export const useMoveDeal = () => {
       } else if (
         // Prefer explicit won/lost stages when configured on the board.
         // Fallback to lifecycle hints ONLY when the board doesn't define won/lost IDs.
-        (
-          board.wonStageId
-            ? targetStageId === board.wonStageId
-            : (board.linkedLifecycleStage !== 'CUSTOMER' && targetStage?.linkedLifecycleStage === 'CUSTOMER')
-        )
+        // A regra mora em `lib/deals/etapaDeGanho` porque a TELA precisa da mesma resposta
+        // antes de mover, para confirmar o valor da venda com o consultor.
+        ehEtapaDeGanho(board, targetStageId)
       ) {
         isWon = true;
         isLost = false;
@@ -279,6 +300,18 @@ export const useMoveDeal = () => {
             }
           : undefined;
 
+      // GANHO COM VALOR CORRIGIDO → o card recebe o valor da venda.
+      //
+      // `deals.value` muda de significado na vida do card: nasce com a mensalidade que o lead
+      // paga HOJE (vem do formulário) e o consultor a sobrescreve com o valor da venda ao
+      // fechar. Era uma etapa manual — e quando ela era esquecida, o funil somava o plano
+      // velho. Aqui ela vira consequência da resposta "Não, corrigir".
+      //
+      // Só grava quando MUDA: confirmar o valor que já está lá não precisa de UPDATE, e um
+      // update à toa acorda o Realtime de todo mundo que está com o board aberto.
+      const corrigeValorDoCard =
+        isWon === true && typeof premioMensal === 'number' && premioMensal !== deal.value;
+
       // Build updates object
       const updates: Partial<Deal> = {
         status: targetStageId,
@@ -288,6 +321,7 @@ export const useMoveDeal = () => {
         ...(isLost !== undefined && { isLost }),
         ...(closedAt !== undefined && { closedAt: closedAt as string }),
         ...(customFieldsComMotivo && { customFields: customFieldsComMotivo }),
+        ...(corrigeValorDoCard && { value: premioMensal }),
       };
 
       // 1. Update the deal
@@ -420,7 +454,7 @@ export const useMoveDeal = () => {
         // Quem decide se há próximo funil de verdade é a ROTA (lê `boards.next_board_id` com
         // service role); o `board.nextBoardId` daqui é só para não gastar uma request à toa.
         try {
-          await enviarParaProximoFunil({ deal, board, queryClient });
+          await enviarParaProximoFunil({ deal, board, queryClient, premioMensal, operadoraDaVenda });
           // A barra de meta e o "Já ganho no mês" leem o CARIMBO da venda
           // (`custom_fields.venda`), não `is_won` — porque o card ganho sai deste funil. Sem esta
           // invalidação os dois números ficariam parados até o staleTime de 2 min ou um foco de
@@ -601,7 +635,13 @@ export const useMoveDealSimple = (
     explicitLost?: boolean,
     // Último e opcional de propósito: só o fluxo de perda passa, e assim nenhum dos outros
     // chamadores de `moveDeal` precisou mudar quando o motivo virou estruturado (09/09/2026).
-    lossTag?: MotivoTag
+    lossTag?: MotivoTag,
+    /**
+     * O que a confirmação do GANHO apurou (11/09/2026). Objeto, e não mais dois posicionais:
+     * a lista já ia em seis e um `undefined, undefined, undefined` no meio da chamada é
+     * exatamente como se troca um argumento de lugar sem o compilador reclamar.
+     */
+    vendaConfirmada?: { premioMensal?: number; operadoraDaVenda?: string }
   ) => {
     if (!board) {
       console.error('[useMoveDealSimple] No board provided');
@@ -613,6 +653,12 @@ export const useMoveDealSimple = (
       targetStageId,
       lossReason,
       lossTag,
+      ...(vendaConfirmada?.premioMensal !== undefined
+        ? { premioMensal: vendaConfirmada.premioMensal }
+        : {}),
+      ...(vendaConfirmada?.operadoraDaVenda
+        ? { operadoraDaVenda: vendaConfirmada.operadoraDaVenda }
+        : {}),
       deal,
       board,
       lifecycleStages,

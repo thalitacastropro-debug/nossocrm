@@ -26,8 +26,18 @@ vi.mock('@/lib/supabase/staticAdminClient', () => ({ createStaticAdminClient: vi
 
 import { POST } from '@/app/api/deals/[dealId]/proximo-funil/route';
 
-async function chamar(): Promise<Response> {
-  const req = new Request(`http://localhost/api/deals/${DEAL_ID}/proximo-funil`, { method: 'POST' });
+/**
+ * Sem argumento, o POST vai SEM CORPO NENHUM — de propósito. É como a rota foi chamada de 26/08
+ * a 11/09 e como qualquer caminho que não confirme valor continua chamando; se um corpo ausente
+ * passar a derrubar a rota, a venda para de ser carimbada e ninguém percebe.
+ */
+async function chamar(corpo?: unknown): Promise<Response> {
+  const req = new Request(`http://localhost/api/deals/${DEAL_ID}/proximo-funil`, {
+    method: 'POST',
+    ...(corpo === undefined
+      ? {}
+      : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) }),
+  });
   return POST(req as never, { params: Promise.resolve({ dealId: DEAL_ID }) } as never);
 }
 
@@ -157,4 +167,62 @@ describe('POST proximo-funil — ganho em funil sem próximo funil', () => {
     expect(corpo.movido).toBe(false);
     expect(dealUpdateSpy).not.toHaveBeenCalled();
   });
+
+/**
+ * O PRÊMIO CONFIRMADO NA TELA (11/09/2026).
+ *
+ * A venda fechada pelo kanban nascia sem `premio_mensal` e caía no selo âmbar e na regra do
+ * gestor diário, que pediam DE NOVO um número que já estava na tela — o consultor acabara de
+ * escrevê-lo em `deals.value`. A confirmação no move manda esse número junto.
+ */
+describe('POST proximo-funil — o prêmio confirmado no move', () => {
+  it('grava `premio_mensal` quando a tela confirmou o valor da venda', async () => {
+    const corpo = await (await chamar({ premioMensal: 715, operadora: ' Bradesco Saúde ' })).json();
+    expect(corpo.venda).toMatchObject({
+      valor_na_venda: 715,
+      premio_mensal: 715,
+      operadora: 'Bradesco Saúde',
+    });
+  });
+
+  it('prêmio DIFERENTE do valor congelado continua cabendo — são dois campos, não um', async () => {
+    // Acontece quando o consultor corrige o valor pelo modal e a gravação do card ainda não
+    // chegou ao banco quando este POST lê o deal.
+    const corpo = await (await chamar({ premioMensal: 1850 })).json();
+    expect(corpo.venda).toMatchObject({ valor_na_venda: 715, premio_mensal: 1850 });
+  });
+
+  it('sem corpo, a venda é carimbada SEM prêmio — o selo âmbar continua cobrando', async () => {
+    const corpo = await (await chamar()).json();
+    expect(corpo.venda.premio_mensal).toBeUndefined();
+    expect(corpo.venda.operadora).toBeUndefined();
+  });
+
+  it('lixo no corpo não vira prêmio (nem derruba a rota): a venda vale mais que o campo', async () => {
+    for (const premioMensal of ['1850', 0, -5, 10_000_000, null, { a: 1 }]) {
+      dealUpdateSpy.mockClear();
+      const corpo = await (await chamar({ premioMensal })).json();
+      expect(corpo.venda, `premioMensal=${JSON.stringify(premioMensal)}`).toBeTruthy();
+      expect(corpo.venda.premio_mensal, `premioMensal=${JSON.stringify(premioMensal)}`).toBeUndefined();
+    }
+  });
+
+  it('corpo malformado não impede o carimbo', async () => {
+    const req = new Request(`http://localhost/api/deals/${DEAL_ID}/proximo-funil`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{ isto não é json',
+    });
+    const r = await POST(req as never, { params: Promise.resolve({ dealId: DEAL_ID }) } as never);
+    expect(r.status).toBe(200);
+    expect((await r.json()).venda).toBeTruthy();
+  });
+
+  it('prêmio no corpo NÃO transforma um card não-ganho em venda — quem decide é o banco', async () => {
+    dealRow.is_won = false;
+    const corpo = await (await chamar({ premioMensal: 1850 })).json();
+    expect(corpo.venda).toBeNull();
+    expect(dealUpdateSpy).not.toHaveBeenCalled();
+  });
+});
 });

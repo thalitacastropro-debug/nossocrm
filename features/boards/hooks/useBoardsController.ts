@@ -23,6 +23,7 @@ import { useLifecycleStages } from '@/lib/query/hooks/useLifecycleStagesQuery';
 import { useOrgMembersQuery } from '@/lib/query/hooks/useOrgMembersQuery';
 import { useAI } from '@/context/AIContext';
 import type { MotivoTag } from '@/lib/ai/taxonomy/motivos';
+import { ehEtapaDeGanho } from '@/lib/deals/etapaDeGanho';
 
 /**
  * Função pública `isDealRotting` do projeto.
@@ -364,6 +365,22 @@ export const useBoardsController = () => {
     stageId: string;
   } | null>(null);
 
+  /**
+   * Confirmação do valor da venda no move para Ganho (11/09/2026).
+   *
+   * Simétrico ao modal de perda, e pela mesma razão: a etapa terminal do funil grava um dado
+   * que nenhuma tela consegue adivinhar depois. `deals.value` nasce com a mensalidade que o
+   * lead paga hoje e o consultor a sobrescreve com o valor da venda — o CRM não tinha como
+   * saber em qual dos dois significados o número estava.
+   */
+  const [confirmarVendaModal, setConfirmarVendaModal] = useState<{
+    isOpen: boolean;
+    dealId: string;
+    dealTitle: string;
+    stageId: string;
+    valorDoCard: number | null;
+  } | null>(null);
+
   // Open deal from URL param (e.g., /boards?deal=xxx)
   useEffect(() => {
     if (!searchParams) return;
@@ -555,8 +572,17 @@ export const useBoardsController = () => {
           dealTitle: deal.title,
           stageId,
         });
+      } else if (ehEtapaDeGanho(activeBoard, stageId)) {
+        // GANHO: confirmar o valor da venda ANTES de mover (ver o modal).
+        setConfirmarVendaModal({
+          isOpen: true,
+          dealId,
+          dealTitle: deal.title,
+          stageId,
+          valorDoCard: deal.value ?? null,
+        });
       } else {
-        // Use unified moveDeal for all other cases (WON or regular stages)
+        // Use unified moveDeal for all other cases (regular stages)
         moveDealMutation.mutate({
           dealId,
           targetStageId: stageId,
@@ -596,6 +622,36 @@ export const useBoardsController = () => {
   };
 
   /**
+   * Confirmou o valor da venda → move, carimbando o prêmio junto.
+   *
+   * `operadora` vem vazia quando a pessoa não quis preencher: é opcional de propósito, e o selo
+   * âmbar do card continua cobrando quem pulou.
+   */
+  const handleConfirmarVenda = (premioMensal: number, operadora: string) => {
+    if (confirmarVendaModal && activeBoard) {
+      const deal = deals.find(d => d.id === confirmarVendaModal.dealId);
+      if (deal) {
+        moveDealMutation.mutate({
+          dealId: confirmarVendaModal.dealId,
+          targetStageId: confirmarVendaModal.stageId,
+          premioMensal,
+          ...(operadora ? { operadoraDaVenda: operadora } : {}),
+          deal,
+          board: activeBoard,
+          lifecycleStages,
+        });
+      }
+      setConfirmarVendaModal(null);
+    }
+  };
+
+  // Cancelou: o card NÃO se move. Mesma regra do modal de perda — sem a resposta, a etapa
+  // terminal gravaria um dado que ninguém mais consegue reconstituir depois.
+  const handleConfirmarVendaClose = () => {
+    setConfirmarVendaModal(null);
+  };
+
+  /**
    * Keyboard-accessible handler to move a deal to a new stage.
    * This is the accessibility alternative to drag-and-drop.
    */
@@ -623,8 +679,18 @@ export const useBoardsController = () => {
         dealTitle: deal.title,
         stageId: newStageId,
       });
+    } else if (ehEtapaDeGanho(activeBoard, newStageId)) {
+      // GANHO pelo teclado: mesma confirmação do arrastar — o caminho acessível não pode ser
+      // o atalho que grava venda sem prêmio.
+      setConfirmarVendaModal({
+        isOpen: true,
+        dealId,
+        dealTitle: deal.title,
+        stageId: newStageId,
+        valorDoCard: deal.value ?? null,
+      });
     } else {
-      // Regular move or WON stage
+      // Regular move
       moveDealMutation.mutate({
         dealId,
         targetStageId: newStageId,
@@ -957,6 +1023,9 @@ export const useBoardsController = () => {
     lossReasonModal,
     handleLossReasonConfirm,
     handleLossReasonClose,
+    confirmarVendaModal,
+    handleConfirmarVenda,
+    handleConfirmarVendaClose,
     // UX: global overlay while creating board (start-from-zero flow)
     boardCreateOverlay,
   };

@@ -24,6 +24,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { ConfirmDialog as ConfirmModal } from '@/components/ui/confirm-dialog';
 import { LossReasonModal } from '@/components/ui/LossReasonModal';
+import { ConfirmarValorVendaModal } from '@/components/ui/ConfirmarValorVendaModal';
+import { ehEtapaDeGanho } from '@/lib/deals/etapaDeGanho';
 import { useMoveDealSimple } from '@/lib/query/hooks';
 import { DEALS_VIEW_KEY, queryKeys } from '@/lib/query';
 import { FocusTrap, useFocusReturn } from '@/lib/a11y';
@@ -217,6 +219,8 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showLossReasonModal, setShowLossReasonModal] = useState(false);
+  /** Confirmação do valor da venda antes de dar o card como ganho (11/09/2026). */
+  const [showConfirmarVendaModal, setShowConfirmarVendaModal] = useState(false);
   const [pendingLostStageId, setPendingLostStageId] = useState<string | null>(null);
   const [lossReasonOrigin, setLossReasonOrigin] = useState<'button' | 'stage'>('button');
   const [showBriefingDrawer, setShowBriefingDrawer] = useState(false);
@@ -692,39 +696,10 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                   /* Se aberto: mostra botões Ganho e Perdido */
                   <>
                     <button
-                      onClick={() => {
-                        // Intelligent "Won" Logic:
-                        // 0. Check for "Stay in Stage" flag (Archive/Close in place)
-                        if (dealBoard?.wonStayInStage) {
-                          moveDeal(deal, deal.status, undefined, true, false);
-                          onClose();
-                          return;
-                        }
-
-                        // 1. Check if board has explicit Won Stage configured
-                        if (dealBoard?.wonStageId) {
-                          moveDeal(deal, dealBoard.wonStageId);
-                          onClose();
-                          return;
-                        }
-
-                        // 2. Find the appropriate "Success Stage" for this board based on lifecycle
-                        const successStage = dealBoard?.stages.find(
-                          s => s.linkedLifecycleStage === 'CUSTOMER'
-                        ) || dealBoard?.stages.find(
-                          s => s.linkedLifecycleStage === 'MQL'
-                        ) || dealBoard?.stages.find(
-                          s => s.linkedLifecycleStage === 'SALES_QUALIFIED'
-                        );
-
-                        if (successStage) {
-                          moveDeal(deal, successStage.id);
-                        } else {
-                          // Fallback: just mark as won without moving
-                          updateDeal(deal.id, { isWon: true, isLost: false, closedAt: new Date().toISOString() });
-                        }
-                        onClose();
-                      }}
+                      // O botão não fecha mais a venda direto: ele ABRE a confirmação do valor.
+                      // Mesma pergunta do kanban (11/09/2026) — senão este botão seria o atalho
+                      // por onde a venda continua nascendo sem prêmio.
+                      onClick={() => setShowConfirmarVendaModal(true)}
                       className="px-3.5 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-lg font-medium text-xs flex items-center gap-1.5 transition-colors"
                     >
                       <ThumbsUp size={14} /> Ganho
@@ -839,6 +814,10 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
                     setPendingLostStageId(stageId);
                     setLossReasonOrigin('stage');
                     setShowLossReasonModal(true);
+                  } else if (ehEtapaDeGanho(dealBoard, stageId)) {
+                    // Clicar na etapa de ganho é fechar a venda: mesma confirmação de valor do
+                    // botão Ganho e do kanban. A confirmação resolve para onde o card vai.
+                    setShowConfirmarVendaModal(true);
                   } else {
                     // Regular move
                     moveDeal(deal, stageId);
@@ -1516,6 +1495,60 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
           message="Tem certeza que deseja excluir este negócio? Esta ação não pode ser desfeita."
           confirmText="Excluir"
           variant="danger"
+        />
+
+        <ConfirmarValorVendaModal
+          isOpen={showConfirmarVendaModal}
+          onClose={() => setShowConfirmarVendaModal(false)}
+          dealTitle={deal.title}
+          valorDoCard={deal.value ?? null}
+          onConfirm={(premioMensal, operadora) => {
+            setShowConfirmarVendaModal(false);
+            const vendaConfirmada = {
+              premioMensal,
+              ...(operadora ? { operadoraDaVenda: operadora } : {}),
+            };
+
+            // Intelligent "Won" Logic:
+            // 0. Check for "Stay in Stage" flag (Archive/Close in place)
+            if (dealBoard?.wonStayInStage) {
+              moveDeal(deal, deal.status, undefined, true, false, undefined, vendaConfirmada);
+              onClose();
+              return;
+            }
+
+            // 1. Check if board has explicit Won Stage configured
+            if (dealBoard?.wonStageId) {
+              moveDeal(deal, dealBoard.wonStageId, undefined, undefined, undefined, undefined, vendaConfirmada);
+              onClose();
+              return;
+            }
+
+            // 2. Find the appropriate "Success Stage" for this board based on lifecycle
+            const successStage = dealBoard?.stages.find(
+              s => s.linkedLifecycleStage === 'CUSTOMER'
+            ) || dealBoard?.stages.find(
+              s => s.linkedLifecycleStage === 'MQL'
+            ) || dealBoard?.stages.find(
+              s => s.linkedLifecycleStage === 'SALES_QUALIFIED'
+            );
+
+            if (successStage) {
+              moveDeal(deal, successStage.id, undefined, undefined, undefined, undefined, vendaConfirmada);
+            } else {
+              // Fallback: just mark as won without moving. Este caminho não passa pelo
+              // useMoveDeal nem pela rota, então não há carimbo de venda a gravar — mas o valor
+              // confirmado tem que ficar no card, senão a correção que a pessoa acabou de
+              // digitar seria descartada em silêncio.
+              updateDeal(deal.id, {
+                isWon: true,
+                isLost: false,
+                closedAt: new Date().toISOString(),
+                ...(premioMensal !== deal.value ? { value: premioMensal } : {}),
+              });
+            }
+            onClose();
+          }}
         />
 
         <LossReasonModal

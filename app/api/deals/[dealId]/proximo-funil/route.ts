@@ -25,14 +25,19 @@
  * ("quando o card for pra implantação já tem que identificar quem fez a venda, para termos essas
  * métricas nos relatórios").
  *
- * A ROTA NÃO LÊ NADA DO CORPO DA REQUISIÇÃO: quem responde "esse card acabou de ser ganho?" é o
- * BANCO. Como um POST repetido (clique duplo, retry, chamada solta) cairia de novo aqui, existe o
- * guard da etapa de ganho — sem ele a segunda chamada leria o `next_board_id` do DESTINO e
- * empurraria o card da Implantação para Clientes Ativos sem ninguém ter pedido.
+ * QUEM RESPONDE "esse card acabou de ser ganho?" É O BANCO, nunca o corpo da requisição. Como um
+ * POST repetido (clique duplo, retry, chamada solta) cairia de novo aqui, existe o guard da etapa
+ * de ganho — sem ele a segunda chamada leria o `next_board_id` do DESTINO e empurraria o card da
+ * Implantação para Clientes Ativos sem ninguém ter pedido.
+ *
+ * O corpo carrega UMA coisa só, e opcional: o `premioMensal` confirmado com o consultor na tela
+ * antes do move (11/09/2026). Ele não decide nada — se o banco disser que não houve venda, não há
+ * carimbo e o número é ignorado. Ausente, a venda é carimbada sem prêmio, como sempre foi.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createStaticAdminClient } from '@/lib/supabase/staticAdminClient';
+import { montarCarimboVenda, type CarimboVenda } from '@/lib/deals/carimboVenda';
 
 export const maxDuration = 30;
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,15 +48,30 @@ const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
  */
 const ETAPAS_DE_PROMOCAO = ['MQL', 'SALES_QUALIFIED'];
 
-/** Contrato fixo de `deals.custom_fields.venda` (já existe em produção nos cards recuperados). */
-interface CarimboVenda {
-  vendedor_id: string | null;
-  vendedor_nome: string | null;
-  vendido_em: string;
-  board_id_da_venda: string;
-  funil_da_venda: string;
-  etapa_da_venda: string;
-  valor_na_venda: number;
+const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/** O que a tela pode mandar junto — nada aqui é confiável e nada aqui decide o move. */
+interface CorpoDoMove {
+  premioMensal?: unknown;
+  operadora?: unknown;
+}
+
+/**
+ * Lê o corpo sem nunca falhar por causa dele.
+ *
+ * A rota é chamada com `'{}'` desde 26/08 e vai continuar sendo chamada assim por qualquer
+ * caminho que não confirme valor (desfecho por voz, API, promoção de lead). Corpo vazio, ausente
+ * ou malformado não pode impedir um card ganho de ir para a Implantação: a venda vale mais que o
+ * campo opcional.
+ */
+async function lerCorpo(request: NextRequest): Promise<CorpoDoMove> {
+  try {
+    const corpo = await request.json();
+    if (typeof corpo === 'object' && corpo !== null) return corpo as CorpoDoMove;
+  } catch {
+    // Silêncio de propósito — ver acima.
+  }
+  return {};
 }
 
 interface DealRow {
@@ -109,6 +129,7 @@ async function carimbarVendaSemMover(
   origem: BoardRow | null,
   orgId: string,
   boardOrigemId: string,
+  corpo: CorpoDoMove,
 ): Promise<CarimboVenda | null> {
   if (deal.is_won !== true) return null;
 
@@ -148,15 +169,17 @@ async function carimbarVendaSemMover(
   }
 
   const agora = new Date().toISOString();
-  const venda: CarimboVenda = {
-    vendedor_id: deal.owner_id,
-    vendedor_nome: vendedorNome,
-    vendido_em: agora,
-    board_id_da_venda: boardOrigemId,
-    funil_da_venda: origem?.name ?? 'Funil',
-    etapa_da_venda: etapaNome,
-    valor_na_venda: deal.value ?? 0,
-  };
+  const venda = montarCarimboVenda({
+    vendedorId: deal.owner_id,
+    vendedorNome,
+    vendidoEm: agora,
+    boardIdDaVenda: boardOrigemId,
+    funilDaVenda: origem?.name ?? 'Funil',
+    etapaDaVenda: etapaNome,
+    valorNaVenda: deal.value ?? 0,
+    premioMensal: corpo.premioMensal,
+    operadora: corpo.operadora,
+  });
   customFields.venda = venda;
 
   const { data: gravadoRaw, error: carimboErr } = await admin
@@ -183,7 +206,10 @@ async function carimbarVendaSemMover(
       title: 'Venda registrada',
       description: `Venda fechada em "${origem?.name ?? 'este funil'}"`
         + `${vendedorNome ? `, creditada a ${vendedorNome}` : ''}. O funil não tem próximo funil`
-        + ' configurado, então o card fica aqui. Falta informar o prêmio do plano vendido.',
+        + ' configurado, então o card fica aqui.'
+        + (venda.premio_mensal !== undefined
+          ? ` Prêmio do plano vendido: ${BRL.format(venda.premio_mensal)}.`
+          : ' Falta informar o prêmio do plano vendido.'),
       date: agora,
       completed: true,
     });
@@ -195,13 +221,15 @@ async function carimbarVendaSemMover(
   return venda;
 }
 
-export async function POST(_request: NextRequest, { params }: { params: Promise<{ dealId: string }> }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ dealId: string }> }) {
   const { dealId } = await params;
   if (!dealId || !uuidRegex.test(dealId)) {
     return NextResponse.json({ error: 'Card inválido.' }, { status: 400 });
   }
 
   try {
+    const corpo = await lerCorpo(request);
+
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Sessão expirada. Entre de novo.' }, { status: 401 });
@@ -275,7 +303,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     // nenhum, nem gerava a pendência de prêmio fechado. O card não sai do lugar; a venda
     // fica registrada onde todos os painéis leem.
     if (!nextBoardId || nextBoardId === boardOrigemId) {
-      const vendaCarimbada = await carimbarVendaSemMover(admin, deal, origem, orgId, boardOrigemId);
+      const vendaCarimbada = await carimbarVendaSemMover(admin, deal, origem, orgId, boardOrigemId, corpo);
       return NextResponse.json(
         { movido: false, motivo: 'sem_proximo_funil', venda: vendaCarimbada },
         { status: 200 },
@@ -434,16 +462,24 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     // (MQL/SALES_QUALIFIED), que não é venda.
     if (houveVenda && !jaTemCarimbo) {
       // `owner_id` de ANTES do move: logo abaixo ele passa a ser o responsável do destino.
-      venda = {
-        vendedor_id: deal.owner_id,
-        vendedor_nome: nomeDoPerfil(perfilVendedor),
-        vendido_em: agora,
-        board_id_da_venda: boardOrigemId,
-        funil_da_venda: origem?.name ?? 'Funil',
+      //
+      // `valor_na_venda` e `premio_mensal` costumam ser IGUAIS quando a venda passou pela
+      // confirmação da tela, e isso está certo: ali o consultor acabou de dizer que o valor do
+      // card é o valor da venda (e o cliente já o gravou em `deals.value` antes deste POST, se
+      // tiver corrigido). Os dois campos continuam existindo separados porque nos outros
+      // caminhos — voz, API, carimbo antigo — eles são números diferentes.
+      venda = montarCarimboVenda({
+        vendedorId: deal.owner_id,
+        vendedorNome: nomeDoPerfil(perfilVendedor),
+        vendidoEm: agora,
+        boardIdDaVenda: boardOrigemId,
+        funilDaVenda: origem?.name ?? 'Funil',
         // Nome da etapa em que a venda foi fechada (a etapa atual do card, antes do move).
-        etapa_da_venda: etapaAtual?.label || etapaAtual?.name || 'Ganho',
-        valor_na_venda: deal.value ?? 0,
-      };
+        etapaDaVenda: etapaAtual?.label || etapaAtual?.name || 'Ganho',
+        valorNaVenda: deal.value ?? 0,
+        premioMensal: corpo.premioMensal,
+        operadora: corpo.operadora,
+      });
       customFields.venda = venda;
 
       // Escrita própria (e não só junto do move) para que, se o move falhar — card duplicado no
@@ -560,6 +596,10 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     try {
       const creditoVenda = venda
         ? ` Venda creditada a ${venda.vendedor_nome ?? 'quem era o responsável no fechamento'}.`
+          + (venda.premio_mensal !== undefined
+            ? ` Prêmio do plano vendido: ${BRL.format(venda.premio_mensal)}`
+              + `${venda.operadora ? ` (${venda.operadora})` : ''}, confirmado no fechamento.`
+            : '')
         : '';
       const trocaDeDono =
         novoDonoId && novoDonoId !== deal.owner_id
