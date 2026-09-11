@@ -1083,8 +1083,16 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
             </div>
 
             {/* Right Content (Tabs & Timeline) */}
-            <div className="flex-1 min-h-0 flex flex-col bg-white dark:bg-dark-card">
-              <div className="h-14 border-b border-slate-200 dark:border-white/5 flex items-center px-6 shrink-0">
+            {/* `min-w-0` é o par horizontal do `min-h-0`, e a falta dele espremia a coluna da
+                ESQUERDA (print do Pedro, 04/09/2026). Sem ele, um flex item não encolhe abaixo do
+                próprio min-content: a direita congela no tamanho do conteúdo da aba ativa e a
+                esquerda paga a conta inteira — ela é `md:w-1/3` com `overflow-y-auto` (:857), e o
+                `overflow` zera o mínimo automático dela, então encolhe até sobrar só o padding, com
+                o texto quebrando palavra por palavra. Medido: o conteúdo da aba sozinho já a levava
+                a 124–150px num modal de 896px, com fonte e zoom normais. */}
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-white dark:bg-dark-card">
+              {/* `overflow-x-auto` é o par natural: as abas rolam em vez de empurrar a largura. */}
+              <div className="h-14 border-b border-slate-200 dark:border-white/5 flex items-center px-6 shrink-0 overflow-x-auto">
                 {/* Ordem pedida pela Thalita (25/08/2026): o que o consultor quer
                     ao abrir o card é o resumo da IA; a timeline vem depois, e
                     produtos por último (raramente usado nesta operação). */}
