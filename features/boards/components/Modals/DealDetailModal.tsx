@@ -520,12 +520,29 @@ export const DealDetailModal: React.FC<DealDetailModalProps> = ({ dealId, isOpen
     setShowCustomItem(false);
   };
 
-  const confirmDeleteDeal = () => {
-    if (deleteId) {
-      deleteDeal(deleteId);
+  /**
+   * Exclui o card — e só diz que excluiu depois que o servidor confirmar.
+   *
+   * Antes (16/09/2026) isto disparava `deleteDeal(deleteId)` SEM `await` e sem `catch`, e anunciava
+   * "Negócio excluído com sucesso" na linha seguinte. Quando a exclusão falhava, a pessoa via a
+   * mensagem de sucesso, o modal fechava, o card sumia pelo update otimista — e voltava sozinho no
+   * próximo sincronismo, sem erro nenhum na tela. É o pior formato de falha que existe: o CRM
+   * afirma que fez, e desfaz em silêncio. A promise rejeitada ainda virava unhandled rejection.
+   *
+   * O modal só fecha no sucesso: se falhar, ele continua aberto com o card à vista, que é onde a
+   * pessoa precisa estar para tentar de novo ou entender o que aconteceu.
+   */
+  const confirmDeleteDeal = async () => {
+    if (!deleteId) return;
+    try {
+      await deleteDeal(deleteId);
       addToast('Negócio excluído com sucesso', 'success');
       setDeleteId(null);
       onClose();
+    } catch (err) {
+      const motivo = err instanceof Error ? err.message : 'erro desconhecido';
+      addToast(`Não deu para excluir este negócio: ${motivo}`, 'error');
+      setDeleteId(null);
     }
   };
 
