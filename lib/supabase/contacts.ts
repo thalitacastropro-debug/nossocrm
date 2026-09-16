@@ -603,11 +603,41 @@ export const contactsService = {
 };
 
 /**
+ * Empresa da organização com este nome, ou `null`.
+ *
+ * `ilike` sem curinga é igualdade que ignora maiúsculas — o mesmo critério do índice único
+ * `crm_companies_nome_unico_por_org`, para a busca e a trava do banco nunca discordarem.
+ *
+ * `.limit(1)` antes do `maybeSingle()` é proposital: `maybeSingle` sozinho ESTOURA (PGRST116)
+ * quando há mais de uma linha, e o banco pode ter duplicatas anteriores ao índice. Achar uma
+ * delas é o comportamento certo aqui; quebrar a criação por causa de lixo velho, não.
+ */
+async function buscarEmpresaPorNome(
+  nome: string,
+  organizationId: string | null,
+): Promise<CRMCompany | null> {
+  if (!supabase) return null;
+  const alvo = nome.trim();
+  if (!alvo) return null;
+  try {
+    let busca = supabase.from('crm_companies').select('*').ilike('name', alvo);
+    if (organizationId) busca = busca.eq('organization_id', organizationId);
+    const { data, error } = await busca.limit(1).maybeSingle();
+    if (error || !data) return null;
+    return transformCRMCompany(data as DbCRMCompany);
+  } catch {
+    // Busca é otimização contra duplicata: falhar aqui devolve ao insert, que ainda tem o índice
+    // único atrás dele. Nunca pode impedir a criação.
+    return null;
+  }
+}
+
+/**
  * Serviço de empresas CRM do Supabase.
- * 
+ *
  * Fornece operações CRUD para a tabela `crm_companies`.
  * Empresas CRM são as empresas dos clientes, não o tenant.
- * 
+ *
  * @example
  * ```typescript
  * const { data, error } = await companiesService.getAll();
@@ -675,19 +705,46 @@ export const companiesService = {
   },
 
   /**
-   * Cria uma nova empresa CRM.
-   * 
+   * Cria uma empresa CRM — ou devolve a que já existe com o mesmo nome.
+   *
+   * É **find-or-create**, não um insert cego, e essa é a única forma de não duplicar: este método
+   * é o funil por onde passam TODOS os caminhos de empresa da interface logada (o modal de novo
+   * negócio, via `useCreateDealWithContact`, e o modal "Nova Empresa" da tela de Contatos, via
+   * `useCreateCompany`). Corrigir só um caller deixaria o outro duplicando.
+   *
+   * O caso que obrigou (16/09/2026): seis linhas idênticas "TEAM MONTEIRO TREINAMENTOS LTDA" em
+   * dois minutos. A empresa é a PRIMEIRA escrita da criação de negócio e o contato vem depois —
+   * quando o contato falhava, a mutation abortava mas a empresa já estava gravada, sem
+   * compensação. Cada nova tentativa do vendedor deixava mais uma.
+   *
+   * ⚠️ REUSAR NÃO SOBRESCREVE. Se a empresa já existe, `industry` e `website` digitados agora são
+   * ignorados: apagar em silêncio o que já estava lá seria pior do que a duplicata que este método
+   * evita. Quem quiser corrigir esses campos usa `update`.
+   *
+   * ⚠️ O EMPATE É POR NOME, e nome é tudo o que esta tabela tem para desempatar (não há CNPJ;
+   * `website` fica vazio em todos os caminhos automáticos). A comparação é a mesma do índice
+   * `crm_companies_nome_unico_por_org`: sem espaço nas pontas, sem diferenciar maiúsculas. Não é
+   * fuzzy de propósito — "Monteiro Ltda" e "Monteiro ME" continuam duas empresas.
+   *
    * @param company - Dados da empresa.
-   * @returns Promise com empresa criada ou erro.
+   * @returns Promise com a empresa (nova ou reaproveitada) ou erro.
    */
   async create(company: Omit<CRMCompany, 'id' | 'createdAt' | 'updatedAt'>): Promise<{ data: CRMCompany | null; error: Error | null }> {
     try {
       if (!supabase) {
         return { data: null, error: new Error('Supabase não configurado') };
       }
+      const nome = (company.name ?? '').trim();
+      if (!nome) {
+        return { data: null, error: new Error('Informe o nome da empresa.') };
+      }
       const organizationId = await getCurrentOrganizationId();
+
+      const jaExiste = await buscarEmpresaPorNome(nome, organizationId);
+      if (jaExiste) return { data: jaExiste, error: null };
+
       const insertData = {
-        name: company.name,
+        name: nome,
         industry: sanitizeText(company.industry),
         website: sanitizeText(company.website),
         ...(organizationId ? { organization_id: organizationId } : {}),
@@ -699,7 +756,16 @@ export const companiesService = {
         .select()
         .single();
 
-      if (error) return { data: null, error };
+      if (error) {
+        // 23505 = o índice único pegou. Duas abas (ou dois usuários) passaram pela busca acima
+        // antes de qualquer uma inserir: a busca-antes-de-inserir não é atômica, e é o banco que
+        // decide o empate. Perder a corrida não é erro — é encontrar a empresa.
+        if (String((error as { code?: string }).code ?? '') === '23505') {
+          const vencedora = await buscarEmpresaPorNome(nome, organizationId);
+          if (vencedora) return { data: vencedora, error: null };
+        }
+        return { data: null, error };
+      }
       return { data: transformCRMCompany(data as DbCRMCompany), error: null };
     } catch (e) {
       return { data: null, error: e as Error };

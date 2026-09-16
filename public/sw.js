@@ -2,7 +2,20 @@
 // Minimal Service Worker (MVP): cache app shell assets for faster launch.
 // Note: This does NOT provide offline data sync.
 
-const CACHE_NAME = 'nossocrm-shell-v2';
+// ⚠️ SUBA ESTE NÚMERO SEMPRE QUE UM CONSERTO PRECISAR CHEGAR HOJE NA MÁQUINA DE ALGUÉM.
+//
+// Este arquivo é o que o navegador compara para decidir se o service worker mudou. Enquanto ele
+// for byte-idêntico, o SW instalado continua o mesmo e o `activate` logo abaixo — que é quem APAGA
+// os caches antigos — nunca roda. Mudar a versão é o único gesto que limpa a casa de todo mundo:
+// `install` chama `skipWaiting()` e `activate` faz `clients.claim()`, então o SW novo assume já no
+// primeiro carregamento, sem depender de fechar as abas.
+//
+// 16/09/2026: o conserto que destravava a criação de negócio do Pedro entrou em produção e ele
+// continuou batendo no MESMO erro — o navegador dele seguia executando o JS antigo, e um F5 não
+// resolveu. Dava para ver no log do Supabase: o código novo faz uma busca antes de gravar a
+// empresa e duas chamadas de autenticação ao criar o contato, e as requisições dele não tinham
+// nenhuma das duas.
+const CACHE_NAME = 'nossocrm-shell-v3';
 const SHELL_URLS = [
   '/',
   '/login',

@@ -596,8 +596,17 @@ export const useCreateDealWithContact = () => {
       let finalCompanyId = deal.companyId;
       let finalContactId = deal.contactId;
 
-      // Create company if name provided
-      if (relatedData?.companyName) {
+      // EMPRESA JÁ ESCOLHIDA GANHA DO NOME DIGITADO.
+      //
+      // Até 16/09/2026 este bloco rodava sempre que viesse um `companyName`, e o modal manda o
+      // nome MESMO quando a pessoa escolheu uma empresa já cadastrada na busca. Resultado: escolher
+      // uma empresa existente criava uma CÓPIA dela — e, pior, o `finalCompanyId` sobrescrevia o
+      // `deal.companyId` logo abaixo, então o negócio ficava preso à cópia e a original seguia sem
+      // ele. Duplicação silenciosa, sem erro nenhum na tela.
+      //
+      // O `create` virou find-or-create, então mesmo caindo aqui com um nome repetido ele reusa em
+      // vez de duplicar — mas pular a ida ao servidor quando já se tem o id é o caminho certo.
+      if (!finalCompanyId && relatedData?.companyName?.trim()) {
         const { data: company, error: companyError } = await companiesService.create({ name: relatedData.companyName });
         if (companyError) throw companyError;
         if (company) finalCompanyId = company.id;
