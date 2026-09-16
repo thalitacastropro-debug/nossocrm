@@ -29,6 +29,16 @@ async function getCurrentOrganizationId(): Promise<string | null> {
   return (profile as any)?.organization_id ?? null;
 }
 
+/**
+ * Quem está criando. Vira o `owner_id` do contato novo — e sem ele a criação FALHA inteira para
+ * quem não é admin (ver o comentário de `create`).
+ */
+async function getCurrentUserId(): Promise<string | null> {
+  if (!supabase) return null;
+  const { data: { user } } = await supabase.auth.getUser();
+  return user?.id ?? null;
+}
+
 // ============================================
 // CONTACTS SERVICE
 // ============================================
@@ -412,7 +422,22 @@ export const contactsService = {
 
   /**
    * Cria um novo contato.
-   * 
+   *
+   * ⚠️ `owner_id` É OBRIGATÓRIO AQUI, e não é preferência de produto — é o que faz a criação
+   * FUNCIONAR para quem não é admin (16/09/2026, caso do Pedro).
+   *
+   * A cadeia, medida em produção: este insert sai SEM dono → o trigger `zz_dono_padrao_lead_novo`
+   * carimba o Denilson (ele existe para os 5 caminhos AUTOMÁTICOS de entrada de lead; o próprio
+   * comentário dele diz que "card criado na mão pela UI já nasce com o dono do criador") → o
+   * `.select()` do PostgREST faz `INSERT ... RETURNING`, que o Postgres submete à policy de
+   * SELECT (`contacts_select` = `ve_tudo() or owner_id = auth.uid()`) → o vendedor não enxerga a
+   * linha que acabou de criar → **42501, e a transação inteira é revertida**. O contato não é
+   * criado, o negócio não é criado, e a tela diz só "Erro ao criar negócio".
+   *
+   * Provado no banco: o mesmo insert SEM `returning` passa; COM `returning` dá 42501; e com
+   * `owner_id` explícito passa com `returning`. Admin nunca viu o bug porque `ve_tudo()` é true
+   * para ele — o bug só existia para o papel que mais cria lead na mão.
+   *
    * @param contact - Dados do contato (sem id e createdAt).
    * @returns Promise com contato criado ou erro.
    */
@@ -422,7 +447,10 @@ export const contactsService = {
         return { data: null, error: new Error('Supabase não configurado') };
       }
       const phoneE164 = normalizePhoneE164(contact.phone);
-      const organizationId = await getCurrentOrganizationId();
+      const [organizationId, ownerId] = await Promise.all([
+        getCurrentOrganizationId(),
+        getCurrentUserId(),
+      ]);
       const insertData = {
         name: contact.name,
         email: sanitizeText(contact.email),
@@ -439,6 +467,7 @@ export const contactsService = {
         last_purchase_date: sanitizeText(contact.lastPurchaseDate),
         total_value: sanitizeNumber(contact.totalValue, 0),
         ...(organizationId ? { organization_id: organizationId } : {}),
+        ...(ownerId ? { owner_id: ownerId } : {}),
       };
 
       const { data, error } = await supabase
