@@ -143,6 +143,37 @@ export async function POST(request: Request) {
     .select('id,name,website,industry,created_at,updated_at')
     .single();
   if (error) {
+    // 23505 = o índice `crm_companies_nome_unico_por_org` pegou (16/09/2026). Acontece quando a
+    // busca lá em cima foi feita por WEBSITE — que tem precedência — e não achou, mas já existe
+    // empresa com o MESMO NOME e outro site. Antes do índice isso criava uma duplicata em
+    // silêncio; sem este tratamento viraria 500 PERMANENTE, porque repetir dá exatamente no mesmo.
+    // O certo é o que o endpoint promete ser: upsert. Cai para a busca por nome e atualiza.
+    if (String((error as { code?: string }).code ?? '') === '23505') {
+      const porNome = await sb
+        .from('crm_companies')
+        .select('id')
+        .eq('organization_id', auth.organizationId)
+        .is('deleted_at', null)
+        .ilike('name', name)
+        .limit(1)
+        .maybeSingle();
+      if (porNome.data?.id) {
+        const { data: atualizada, error: erroUpdate } = await sb
+          .from('crm_companies')
+          .update(payload)
+          .eq('id', porNome.data.id)
+          .select('id,name,website,industry,created_at,updated_at')
+          .single();
+        if (!erroUpdate) return NextResponse.json({ data: atualizada, action: 'updated' });
+        console.error('[API] Database error:', erroUpdate)
+      }
+      // Não achou nem por nome: 409 diz ao integrador que o pedido conflita com o que já existe —
+      // 500 diria "erro nosso, tente de novo", e tentar de novo não resolveria nunca.
+      return NextResponse.json(
+        { error: 'A company with this name already exists', code: 'CONFLICT' },
+        { status: 409 },
+      );
+    }
     console.error('[API] Database error:', error)
     return NextResponse.json({ error: 'Internal server error', code: 'DB_ERROR' }, { status: 500 })
   }

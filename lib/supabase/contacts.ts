@@ -603,10 +603,29 @@ export const contactsService = {
 };
 
 /**
+ * Escapa o que o `ilike` do Postgres trataria como CURINGA.
+ *
+ * `ilike` recebe um PATTERN, não um texto: `%` casa qualquer coisa e `_` casa um caractere. O
+ * postgrest-js manda o valor cru na URL, sem escapar nada. Sem isto, criar um negócio para
+ * "SAUDE 100_ LTDA" acharia "SAUDE 1000 LTDA" e ligaria o negócio à EMPRESA ERRADA — silenciosamente,
+ * que é o pior desfecho possível para uma busca que existe justamente para evitar confusão.
+ *
+ * A barra invertida é o escape padrão do LIKE, e precisa vir primeiro para não escapar os escapes.
+ */
+const escaparCuringasDoLike = (texto: string): string =>
+  texto.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+
+/**
  * Empresa da organização com este nome, ou `null`.
  *
- * `ilike` sem curinga é igualdade que ignora maiúsculas — o mesmo critério do índice único
- * `crm_companies_nome_unico_por_org`, para a busca e a trava do banco nunca discordarem.
+ * `ilike` com os curingas escapados é igualdade que ignora maiúsculas. Some-se a isso o `trim` do
+ * alvo aqui e o `trim` de TODO caminho que grava nome (inclusive `update`, que não trimava até
+ * 16/09/2026) e a busca passa a concordar com o índice `lower(btrim(name))`.
+ *
+ * ⚠️ POR QUE A CONCORDÂNCIA IMPORTA: se a busca não acha e o índice acha, o insert bate em 23505,
+ * a reconsulta erra pelo mesmo motivo e o negócio NUNCA é criado — bloqueio permanente, porque o
+ * estado do banco não muda entre as tentativas. Era exatamente isso que acontecia com um nome
+ * gravado com espaço no fim.
  *
  * `.limit(1)` antes do `maybeSingle()` é proposital: `maybeSingle` sozinho ESTOURA (PGRST116)
  * quando há mais de uma linha, e o banco pode ter duplicatas anteriores ao índice. Achar uma
@@ -620,7 +639,10 @@ async function buscarEmpresaPorNome(
   const alvo = nome.trim();
   if (!alvo) return null;
   try {
-    let busca = supabase.from('crm_companies').select('*').ilike('name', alvo);
+    let busca = supabase
+      .from('crm_companies')
+      .select('*')
+      .ilike('name', escaparCuringasDoLike(alvo));
     if (organizationId) busca = busca.eq('organization_id', organizationId);
     const { data, error } = await busca.limit(1).maybeSingle();
     if (error || !data) return null;
@@ -763,6 +785,18 @@ export const companiesService = {
         if (String((error as { code?: string }).code ?? '') === '23505') {
           const vencedora = await buscarEmpresaPorNome(nome, organizationId);
           if (vencedora) return { data: vencedora, error: null };
+          // O banco diz que existe e a busca não acha: os dois critérios discordaram. Não deveria
+          // acontecer (todo caminho de escrita trima o nome), mas se acontecer é um beco sem saída
+          // — repetir dá no mesmo, porque o estado do banco não muda. Uma mensagem que diz o que
+          // fazer vale mais que a string crua do Postgres na cara de quem só queria criar um card.
+          return {
+            data: null,
+            error: new Error(
+              `Já existe uma empresa com o nome "${nome}", mas não consegui encontrá-la para `
+              + 'reaproveitar. Escolha a empresa pela busca em vez de digitar o nome, ou ajuste o '
+              + 'cadastro dela em Contatos → Empresas.',
+            ),
+          };
         }
         return { data: null, error };
       }
@@ -785,7 +819,12 @@ export const companiesService = {
         return { error: new Error('Supabase não configurado') };
       }
       const dbUpdates: Partial<DbCRMCompany> = {};
-      if (updates.name !== undefined) dbUpdates.name = updates.name;
+      // TRIM OBRIGATÓRIO. Este era o ÚNICO caminho de escrita que gravava o nome cru (todos os
+      // outros — criação, import, rotas públicas, webhook — já aparavam), e bastava alguém colar
+      // "TEAM MONTEIRO " de uma planilha aqui para o índice `lower(btrim(name))` e a busca por
+      // nome passarem a discordar: a busca não acharia a empresa, o insert bateria no índice, e
+      // criar negócio com esse nome ficaria bloqueado para sempre. O espaço é invisível na tela.
+      if (updates.name !== undefined) dbUpdates.name = (updates.name ?? '').trim();
       if (updates.industry !== undefined) dbUpdates.industry = updates.industry || null;
       if (updates.website !== undefined) dbUpdates.website = updates.website || null;
       dbUpdates.updated_at = new Date().toISOString();

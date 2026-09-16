@@ -612,8 +612,17 @@ export const useCreateDealWithContact = () => {
         if (company) finalCompanyId = company.id;
       }
 
-      // Create contact if provided
-      if (relatedData?.contact?.name) {
+      // CONTATO JÁ ESCOLHIDO GANHA DO NOME DIGITADO — o mesmo defeito da empresa, na pessoa.
+      //
+      // O modal manda `relatedData.contact` com nome, e-mail e telefone MESMO quando a pessoa
+      // escolheu um contato existente na busca (CreateDealModal.tsx:165) — e este bloco criava um
+      // contato NOVO a partir desses dados, ignorando o `deal.contactId` que já estava ali. O
+      // resultado é um contato duplicado a cada negócio criado para alguém que já estava no CRM, e
+      // o card ligado à CÓPIA: a conversa de WhatsApp, o histórico e a posse continuam no contato
+      // original, e o card novo nasce oco. Achado por revisão adversarial em 16/09/2026; é
+      // anterior ao conserto da empresa e nunca tinha aparecido porque a criação manual de negócio
+      // mal era usada.
+      if (!finalContactId && relatedData?.contact?.name) {
         const { data: contact, error: contactError } = await contactsService.create({
           name: relatedData.contact.name,
           email: relatedData.contact.email || '',

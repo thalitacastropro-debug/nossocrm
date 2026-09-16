@@ -32,6 +32,30 @@ vi.mock('@/lib/supabase/client', () => ({
 
 import { companiesService } from '@/lib/supabase/contacts';
 
+/**
+ * `ILIKE` DE VERDADE, não comparação de igualdade.
+ *
+ * Isto é o que dá valor ao teste do curinga: o mock precisa interpretar `%` e `_` como o Postgres
+ * interpreta, senão o teste passaria mesmo com o escape removido do código de produção — que foi
+ * exatamente a ressalva que a revisão adversarial levantou sobre a primeira versão destes testes.
+ * `\` escapa o caractere seguinte, como no LIKE.
+ */
+function casaComoIlike(valorDaColuna: string, pattern: string): boolean {
+  const BARRA = String.fromCharCode(92);
+  let regex = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === BARRA && i + 1 < pattern.length) {
+      regex += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, (m) => BARRA + m);
+      continue;
+    }
+    if (ch === '%') { regex += '.*'; continue; }
+    if (ch === '_') { regex += '.'; continue; }
+    regex += ch.replace(/[.*+?^${}()|[\]\\]/g, (m) => BARRA + m);
+  }
+  return new RegExp('^' + regex + '$', 'i').test(valorDaColuna);
+}
+
 /** Builder mínimo de `crm_companies`: só o que o serviço encadeia de verdade. */
 function crmCompaniesBuilder() {
   let alvo: string | null = null;
@@ -44,9 +68,7 @@ function crmCompaniesBuilder() {
     eq: () => b,
     limit: () => b,
     maybeSingle: async () => {
-      const achada = empresas.find(
-        (e) => e.name.trim().toLowerCase() === String(alvo ?? '').trim().toLowerCase(),
-      );
+      const achada = empresas.find((e) => casaComoIlike(e.name, String(alvo ?? '')));
       return { data: achada ?? null, error: null };
     },
     insert: (payload: Record<string, unknown>) => {
@@ -156,5 +178,87 @@ describe('companiesService.create — find-or-create', () => {
     expect(data).toBeNull();
     expect(error).toBeTruthy();
     expect(inserts).toHaveLength(0);
+  });
+});
+
+/**
+ * OS ACHADOS DA REVISÃO ADVERSARIAL (16/09/2026) — o que quase passou.
+ *
+ * O conserto do find-or-create foi submetido a quatro revisores independentes e cada achado a dois
+ * céticos. Estes são os que sobreviveram e viraram bug de verdade.
+ */
+describe('companiesService.create — o que a revisão pescou', () => {
+  beforeEach(() => {
+    empresas = [];
+    inserts = [];
+    erroDoInsert = null;
+    supabaseMock = {
+      auth: { getUser: vi.fn(async () => ({ data: { user: { id: USER_ID } }, error: null })) },
+      from: vi.fn((tabela: string) => {
+        if (tabela === 'profiles') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn(async () => ({ data: { organization_id: ORG_ID }, error: null })),
+          };
+        }
+        if (tabela === 'crm_companies') return crmCompaniesBuilder();
+        throw new Error('tabela inesperada: ' + tabela);
+      }),
+    };
+  });
+
+  it('`%` no nome não vira curinga — senão liga o negócio à empresa ERRADA', async () => {
+    // O `ilike` do Postgres recebe um PATTERN. Sem escapar, "SAUDE %" casaria "SAUDE 1000 LTDA".
+    empresas.push({ id: 'saude-mil', name: 'SAUDE 1000 LTDA', organization_id: ORG_ID });
+
+    const { data } = await companiesService.create({ name: 'SAUDE %' } as never);
+
+    expect(data?.id).not.toBe('saude-mil');
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].name).toBe('SAUDE %');
+  });
+
+  it('`_` no nome também não casa o vizinho errado', async () => {
+    empresas.push({ id: 'saude-1000', name: 'SAUDE 1000 LTDA', organization_id: ORG_ID });
+
+    const { data } = await companiesService.create({ name: 'SAUDE 100_ LTDA' } as never);
+
+    expect(data?.id).not.toBe('saude-1000');
+    expect(inserts).toHaveLength(1);
+  });
+
+  it('23505 sem conseguir reconsultar devolve instrução, não a string crua do Postgres', async () => {
+    erroDoInsert = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "crm_companies_nome_unico_por_org"',
+    };
+
+    const { data, error } = await companiesService.create({ name: 'FANTASMA LTDA' } as never);
+
+    expect(data).toBeNull();
+    expect(error?.message).not.toContain('duplicate key');
+    expect(error?.message).toContain('FANTASMA LTDA');
+    expect(error?.message).toMatch(/busca|Empresas/i);
+  });
+
+  it('o UPDATE apara o nome — era o único caminho que gravava espaço e travava a busca', async () => {
+    let atualizado: Record<string, unknown> | null = null;
+    supabaseMock.from = vi.fn((tabela: string) => {
+      if (tabela === 'crm_companies') {
+        return {
+          update: (payload: Record<string, unknown>) => {
+            atualizado = payload;
+            return { eq: async () => ({ error: null }) };
+          },
+        };
+      }
+      throw new Error('tabela inesperada: ' + tabela);
+    });
+
+    await companiesService.update('empresa-1', { name: '  TEAM MONTEIRO  ' } as never);
+
+    expect(atualizado).not.toBeNull();
+    expect((atualizado as unknown as { name: string }).name).toBe('TEAM MONTEIRO');
   });
 });

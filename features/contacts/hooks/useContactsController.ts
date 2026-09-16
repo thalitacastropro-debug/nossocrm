@@ -215,6 +215,27 @@ export const useContactsController = () => {
         }
       );
     } else {
+      // NOME JÁ CADASTRADO: avisa, em vez de dizer que criou.
+      //
+      // Desde que `companiesService.create` virou find-or-create (16/09/2026), mandar um nome que
+      // já existe NÃO cria nada — ele devolve a empresa existente e descarta o ramo e o site que a
+      // pessoa acabou de digitar. Sem este aviso a tela diria "Empresa criada!" para uma criação
+      // que não aconteceu, e os campos sumiriam em silêncio: a pessoa sairia daqui achando que
+      // cadastrou, com o dado antigo no lugar do que ela digitou.
+      //
+      // A checagem é sobre o cache da lista, então é aproximada — quem garante de verdade são o
+      // serviço e o índice único do banco. Ela existe para a MENSAGEM estar certa no caso normal.
+      const nomeNovo = (data.name || '').trim().toLowerCase();
+      const jaCadastrada = companies.find(c => (c.name || '').trim().toLowerCase() === nomeNovo);
+      if (jaCadastrada) {
+        setIsCompanyModalOpen(false);
+        (addToast || showToast)(
+          `"${jaCadastrada.name}" já está cadastrada — use a que já existe, ou edite os dados dela.`,
+          'info',
+        );
+        return;
+      }
+
       // Close immediately for better UX (same pattern as contact creation)
       setIsCompanyModalOpen(false);
       (addToast || showToast)('Criando empresa...', 'info');

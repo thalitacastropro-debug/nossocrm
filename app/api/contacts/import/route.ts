@@ -220,25 +220,51 @@ export async function POST(req: Request) {
       if (c?.id && c?.name) companyIdByName.set(normalizeHeader(c.name), c.id);
     }
 
-    const missingCompanies = new Set<string>();
+    // CHAVE NORMALIZADA → nome cru. Era um `Set` de nomes CRUS, e essa diferença matava o import
+    // inteiro (16/09/2026): um CSV com "Team Monteiro" numa linha e "TEAM MONTEIRO" noutra gerava
+    // DUAS entradas — a checagem usava a chave normalizada, mas o `companyIdByName` só é
+    // atualizado depois do insert, então a segunda linha também caía como "faltando". As duas iam
+    // no mesmo lote, colidiam no índice `crm_companies_nome_unico_por_org`, e o insert em lote é
+    // tudo-ou-nada: 23505 → 400 → ZERO contatos importados. Antes do índice isso só criava duas
+    // empresas duplicadas; depois dele, derrubava o import.
+    //
+    // `normalizeHeader` (trim + minúsculas + sem acento) é mais agressiva que o índice
+    // (`lower(btrim)`), então tudo que colide no banco já colide aqui — dedupe suficiente.
+    const missingCompanies = new Map<string, string>();
     if (createCompanies) {
       for (const p of parsed) {
         const companyName = (p.data.company || '').trim();
         if (!companyName) continue;
         const key = normalizeHeader(companyName);
-        if (!companyIdByName.has(key)) missingCompanies.add(companyName);
+        if (!companyIdByName.has(key) && !missingCompanies.has(key)) {
+          missingCompanies.set(key, companyName);
+        }
       }
     }
 
     if (createCompanies && missingCompanies.size) {
-      const payload = Array.from(missingCompanies).map(name => ({ name, organization_id: orgId }));
+      const payload = Array.from(missingCompanies.values()).map(name => ({ name, organization_id: orgId }));
       const { data: createdCompanies, error: createCompaniesError } = await supabase
         .from('crm_companies')
         .insert(payload)
         .select('id,name');
 
       if (createCompaniesError) {
-        return NextResponse.json({ error: createCompaniesError.message }, { status: 400 });
+        // Corrida com outro import (ou empresa criada entre o preload e agora): o lote bateu no
+        // índice único. Não é motivo para perder o arquivo inteiro — recarrega o mapa e segue; os
+        // contatos cujo nome de empresa não resolver ficam sem vínculo, que é o mesmo desfecho de
+        // um import com `createCompanies` desligado.
+        if (String((createCompaniesError as { code?: string }).code ?? '') === '23505') {
+          const { data: recarregadas } = await supabase
+            .from('crm_companies')
+            .select('id,name')
+            .is('deleted_at', null);
+          for (const c of (recarregadas || []) as Array<{ id: string; name: string }>) {
+            if (c?.id && c?.name) companyIdByName.set(normalizeHeader(c.name), c.id);
+          }
+        } else {
+          return NextResponse.json({ error: createCompaniesError.message }, { status: 400 });
+        }
       }
       for (const c of (createdCompanies || []) as Array<{ id: string; name: string }>) {
         if (c?.id && c?.name) companyIdByName.set(normalizeHeader(c.name), c.id);
