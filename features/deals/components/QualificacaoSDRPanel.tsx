@@ -116,13 +116,20 @@ function detectData(customFields?: Record<string, unknown> | null): { hasQual: b
 }
 
 /**
- * O card deve renderizar o painel? Compact (barra lateral) só quando há qualificação;
- * completo (aba IA Insights) quando há qualificação OU formulário do Meta. Usado pelo
- * DealDetailModal pra não deixar um bloco vazio.
+ * O card deve renderizar o painel? Qualificação OU formulário do Meta, nos dois modos.
+ *
+ * ⚠️ O compact EXIGIA qualificação até 17/09/2026, e isso escondia o dado exatamente quando ele
+ * era a única coisa que existia. Caso da Sara Teles: lead do anúncio que chegou com CNPJ, vidas e
+ * valor respondidos no formulário, mas cujo primeiro toque falhou (WhatsApp caiu) — sem conversa,
+ * não há `qualificacao`, então a coluna do card ficava VAZIA e parecia que o formulário não tinha
+ * vindo. Tinha: estava só na aba IA Insights, que ninguém abre num lead que acabou de entrar.
+ *
+ * Lead recém-chegado é justamente quem mais precisa que o formulário apareça de cara.
  */
 export function sdrPanelHasData(customFields?: Record<string, unknown> | null, opts?: { compact?: boolean }): boolean {
   const { hasQual, hasForm } = detectData(customFields);
-  return opts?.compact ? hasQual : hasQual || hasForm;
+  void opts;
+  return hasQual || hasForm;
 }
 
 function Row({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
@@ -160,7 +167,6 @@ export function QualificacaoSDRPanel({ customFields, compact, className }: Quali
   const formFields = leadForm?.fields && typeof leadForm.fields === 'object' ? leadForm.fields : null;
 
   if (!hasQual && !hasForm) return null;
-  if (compact && !hasQual) return null; // compact (sidebar) só mostra a qualificação; o formulário fica na aba IA Insights
 
   const idades = Array.isArray(q?.idades) ? q!.idades!.filter((n) => typeof n === 'number') : [];
   const vidasStr = typeof q?.vidas === 'number'
@@ -176,8 +182,12 @@ export function QualificacaoSDRPanel({ customFields, compact, className }: Quali
     <div className={className}>
       <div className="flex items-center gap-2 mb-3">
         <ClipboardList className="w-4 h-4 text-primary-500" />
-        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Qualificação (Ana)</h4>
-        {hasQual && (
+        {/* Sem conversa ainda, o título mentiria: não houve qualificação nenhuma, o que existe é
+            o que a pessoa respondeu no anúncio. */}
+        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+          {hasQual ? 'Qualificação (Ana)' : 'Respostas do anúncio'}
+        </h4>
+        {(hasQual || tier) && (
           <span className={cn('ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full', tm.badge)}>
             {tm.label}{tier?.provisorio ? ' · provisório' : ''}
           </span>
@@ -237,7 +247,10 @@ export function QualificacaoSDRPanel({ customFields, compact, className }: Quali
         </p>
       )}
 
-      {!compact && hasForm && (
+      {/* Na barra lateral, o formulário só aparece quando NÃO há qualificação: com conversa, o que
+          a Ana apurou é mais completo e mais novo que o anúncio, e repetir os dois vira ruído. Sem
+          conversa, é a única informação que existe — e era isso que sumia. */}
+      {(!compact || !hasQual) && hasForm && (
         <div className="mt-4 pt-3 border-t border-slate-100 dark:border-white/5">
           <div className="flex items-center gap-2 mb-2">
             <Megaphone className="w-3.5 h-3.5 text-indigo-500" />

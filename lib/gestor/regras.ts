@@ -237,6 +237,9 @@ export async function montarDiario(deps: DepsGestor): Promise<Diario> {
   regras.push(await regraContradicao(supabase, now, ontem, perfis));
   regras.push(await regraEnvioFalhou(supabase, now, ontem));
   regras.push(await regraVendaSemPremio(supabase, now, perfis));
+  // Canal caído vai ANTES do orçamento: com o WhatsApp fora, nada mais no relatório importa —
+  // nenhuma das outras cobranças é executável enquanto a mensagem não sai.
+  regras.push(await regraCanalCaido(supabase, now));
   regras.push(await regraOrcamentoIA(supabase, now));
 
   return { data: diaBrt(now), regras, ontem: await pulsoDeOntem(supabase, ontem) };
@@ -852,6 +855,107 @@ async function regraVendaSemPremio(
 
 /** A partir de quanto do teto mensal de tokens o relatório começa a avisar. */
 const AVISO_ORCAMENTO_IA = 0.8;
+
+/** Janela de busca por envios que morreram com o WhatsApp fora do ar. */
+const HORAS_CANAL_CAIDO = 24;
+
+/**
+ * 9. O WHATSAPP CAIU — a mensagem não chegou no lead.
+ *
+ * 🔴 O CASO (17/09/2026): a instância da UAZAPI caiu em **16/09 às 01:10** com
+ * `401: logged out from another device` (alguém deslogou o WhatsApp do celular ou abriu o
+ * WhatsApp Web em outro aparelho — a MESMA causa da queda de 28/08). Por **32 horas** nada entrou
+ * e nada saiu. A Sara Teles, lead do Meta que chegou às 23:15, levou **4 tentativas e 4 falhas**:
+ * nunca soube que a Niva existe. Quem avisou foi uma pessoa, não o sistema.
+ *
+ * ⚠️ **NÃO dá para perguntar ao banco se o canal está no ar.** `messaging_channels.status` diz
+ * `connected` e **não é atualizado** — o `updated_at` dessa linha é de 24/06, ou seja, ela
+ * afirmou "conectado" durante as 32 horas inteiras de queda. Confiar nela seria construir o
+ * alerta sobre o campo que já mentiu.
+ *
+ * O sinal usado aqui é o que a queda PRODUZ e que não mente: envio que morreu com erro de
+ * desconexão. Ele tem a vantagem de medir o dano real (mensagem que não chegou no lead), e não a
+ * saúde abstrata da conexão.
+ *
+ * ⚠️ **Por que NÃO uso "faz X horas que não entra mensagem":** neste funil, silêncio de entrada é
+ * ROTINA — já houve intervalos de 24 a 70 horas sem nenhum lead escrever, com tudo funcionando
+ * (medido em 01/09). Um alerta baseado nisso gritaria falso na maioria dos dias, e alerta que
+ * grita errado é desligado pela pessoa em uma semana.
+ */
+async function regraCanalCaido(supabase: SupabaseClient, now: Date): Promise<Regra> {
+  const vazia: Regra = {
+    id: 'canal-caido',
+    titulo: 'WhatsApp fora do ar',
+    emoji: '📵',
+    novos: [],
+    estoque: 0,
+  };
+
+  try {
+    const desde = new Date(now.getTime() - HORAS_CANAL_CAIDO * 36e5).toISOString();
+    const { data } = await supabase
+      .from('messaging_messages')
+      .select('id, conversation_id, created_at, error_message')
+      .eq('direction', 'outbound')
+      .eq('status', 'failed')
+      .gte('created_at', desde)
+      .order('created_at', { ascending: true });
+
+    const linhas = (data ?? []) as Array<{
+      id: string; conversation_id: string | null; created_at: string; error_message: string | null;
+    }>;
+
+    // Só as falhas de DESCONEXÃO. `SEND_FAILED` sozinho também cobre número inválido e outros
+    // erros do lead — misturar faria o alerta acusar queda de canal onde não houve.
+    const porQueda = linhas.filter((l) => /disconnect/i.test(l.error_message ?? ''));
+    if (porQueda.length === 0) return vazia;
+
+    // Quantos LEADS ficaram sem receber — é o número que dói, não o de mensagens.
+    const convIds = [...new Set(porQueda.map((l) => l.conversation_id).filter(Boolean))] as string[];
+    let quemNaoRecebeu: string[] = [];
+    if (convIds.length > 0) {
+      const { data: convs } = await supabase
+        .from('messaging_conversations')
+        .select('id, contact_id')
+        .in('id', convIds);
+      const contatoIds = [...new Set(
+        ((convs ?? []) as Array<{ contact_id: string | null }>).map((c) => c.contact_id).filter(Boolean),
+      )] as string[];
+      if (contatoIds.length > 0) {
+        const { data: cs } = await supabase.from('contacts').select('id, name').in('id', contatoIds);
+        quemNaoRecebeu = ((cs ?? []) as Array<{ name: string | null }>)
+          .map((c) => c.name ?? 'sem nome');
+      }
+    }
+
+    const primeira = porQueda[0].created_at;
+    const nomes = quemNaoRecebeu.slice(0, 3).join(', ');
+    const sobra = quemNaoRecebeu.length - 3;
+
+    const item: ItemAlerta = {
+      donoId: null,
+      donoNome: 'WhatsApp',
+      contato: 'Mensagem não chegou no lead',
+      detalhe:
+        `${porQueda.length} ${porQueda.length === 1 ? 'mensagem morreu' : 'mensagens morreram'} `
+        + `com o WhatsApp desconectado`
+        + (quemNaoRecebeu.length ? ` — ${nomes}${sobra > 0 ? ` e mais ${sobra}` : ''} não ${quemNaoRecebeu.length === 1 ? 'recebeu' : 'receberam'} nada` : '')
+        + '. Reconecte o WhatsApp na UAZAPI (ler o QR) e destrave quem parou',
+      idadeHoras: horasEntre(now, new Date(primeira)),
+    };
+
+    return {
+      ...vazia,
+      acao: 'Reconectar o WhatsApp lendo o QR na UAZAPI. Depois, procurar quem travou por '
+        + 'falha de envio: a cadência para sozinha na 3ª falha e NÃO volta ao reconectar.',
+      novos: [item],
+      estoque: 1,
+    };
+  } catch (err) {
+    console.error('[gestor] regraCanalCaido falhou (não-fatal):', err);
+    return vazia;
+  }
+}
 
 /**
  * 8. O ORÇAMENTO DE IA DA ANA ESTÁ ACABANDO (ou já acabou).

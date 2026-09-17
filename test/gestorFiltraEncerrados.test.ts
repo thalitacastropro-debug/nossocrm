@@ -482,3 +482,89 @@ describe('diário — o alerta não pode divergir de quem bloqueia', () => {
     expect(texto).toContain('ai_monthly_token_limit');
   });
 });
+
+/**
+ * O WHATSAPP CAIU E QUEM AVISOU FOI UMA PESSOA (17/09/2026).
+ *
+ * A instância da UAZAPI caiu em 16/09 às 01:10 (`401: logged out from another device`, a mesma
+ * causa de 28/08) e ficou 32 horas fora. A Sara Teles, lead do Meta que chegou às 23:15, levou 4
+ * tentativas e 4 falhas — nunca soube que a Niva existe. O relatório não disse nada.
+ */
+describe('diário — WhatsApp fora do ar', () => {
+  const falha = (id: string, conv: string, quando: string, erro: string) => ({
+    id, conversation_id: conv, direction: 'outbound', status: 'failed',
+    created_at: quando, error_message: erro,
+  });
+
+  const DESCONECTADO = 'UazAPI 503: {"error":true,"message":"WhatsApp disconnected: session is not reconnectable"}';
+
+  it('grita quando a mensagem morreu por desconexão, e diz quem ficou sem receber', async () => {
+    const diario = await montarDiario({
+      now: AGORA,
+      supabase: fakeSupabase({
+        profiles: PERFIS,
+        messaging_messages: [
+          falha('m1', 'c1', hAtras(10), DESCONECTADO),
+          falha('m2', 'c1', hAtras(4), DESCONECTADO),
+        ],
+        messaging_conversations: [{ id: 'c1', contact_id: 'ct-sara' }],
+        contacts: [{ id: 'ct-sara', name: 'Sara Teles', owner_id: null, phone: '5511957899810' }],
+      }),
+    });
+
+    const r = itensDe(diario, 'canal-caido');
+    expect(r.estoque).toBe(1);
+    expect(r.novos[0].detalhe).toContain('2 mensagens morreram');
+    expect(r.novos[0].detalhe).toContain('Sara Teles');
+    expect(r.novos[0].detalhe).toContain('Reconecte');
+  });
+
+  it('falha de envio que NÃO é desconexão não vira alarme de canal', async () => {
+    const diario = await montarDiario({
+      now: AGORA,
+      supabase: fakeSupabase({
+        profiles: PERFIS,
+        messaging_messages: [falha('m1', 'c1', hAtras(3), 'UazAPI 400: invalid phone number')],
+        messaging_conversations: [{ id: 'c1', contact_id: 'ct-x' }],
+        contacts: [{ id: 'ct-x', name: 'Número Errado', owner_id: null, phone: '55119' }],
+      }),
+    });
+
+    expect(itensDe(diario, 'canal-caido').estoque).toBe(0);
+  });
+
+  it('sem falha nenhuma, o alerta fica quieto', async () => {
+    const diario = await montarDiario({ now: AGORA, supabase: fakeSupabase({ profiles: PERFIS }) });
+    expect(itensDe(diario, 'canal-caido').estoque).toBe(0);
+  });
+
+  it('falha antiga (fora da janela de 24h) não ressuscita o alarme', async () => {
+    const diario = await montarDiario({
+      now: AGORA,
+      supabase: fakeSupabase({
+        profiles: PERFIS,
+        messaging_messages: [falha('m1', 'c1', hAtras(48), DESCONECTADO)],
+        messaging_conversations: [{ id: 'c1', contact_id: 'ct-x' }],
+        contacts: [{ id: 'ct-x', name: 'Antigo', owner_id: null, phone: '5511999' }],
+      }),
+    });
+
+    expect(itensDe(diario, 'canal-caido').estoque).toBe(0);
+  });
+
+  it('aparece no relatório da dona com o que fazer', async () => {
+    const diario = await montarDiario({
+      now: AGORA,
+      supabase: fakeSupabase({
+        profiles: PERFIS,
+        messaging_messages: [falha('m1', 'c1', hAtras(6), DESCONECTADO)],
+        messaging_conversations: [{ id: 'c1', contact_id: 'ct-sara' }],
+        contacts: [{ id: 'ct-sara', name: 'Sara Teles', owner_id: null, phone: '5511957899810' }],
+      }),
+    });
+
+    const texto = formatarDiario(diario as never, true);
+    expect(texto).toContain('Mensagem não chegou no lead');
+    expect(texto).toContain('Sara Teles');
+  });
+});

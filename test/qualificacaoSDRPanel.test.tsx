@@ -64,11 +64,29 @@ describe('QualificacaoSDRPanel', () => {
     expect(html(<QualificacaoSDRPanel customFields={{}} />)).toBe('');
   });
 
-  it('compact não renderiza só com formulário (form fica na aba completa)', () => {
+  /**
+   * MUDOU EM 17/09/2026 (pedido dela). Antes o compact exigia qualificação e o formulário ficava
+   * só na aba IA Insights — o que escondia o dado exatamente quando ele era a ÚNICA coisa que
+   * existia. Caso da Sara Teles: lead do anúncio que chegou com CNPJ, vidas e valor respondidos, e
+   * cujo primeiro toque falhou (WhatsApp caiu). Sem conversa não há `qualificacao`, então a coluna
+   * do card ficava vazia e parecia que o formulário não tinha vindo. Tinha.
+   */
+  it('compact MOSTRA o formulário quando ainda não há qualificação', () => {
     const cf = { lead_form: { fields: { 'Você possuí CNPJ': 'sim' } } };
-    expect(html(<QualificacaoSDRPanel customFields={cf} compact />)).toBe('');
-    expect(sdrPanelHasData(cf, { compact: true })).toBe(false);
+    const out = html(<QualificacaoSDRPanel customFields={cf} compact />);
+    expect(out).not.toBe('');
+    expect(out).toContain('Você possuí CNPJ');
+    // Sem conversa, o título não pode dizer "Qualificação (Ana)" — ela não qualificou nada.
+    expect(out).toContain('Respostas do anúncio');
+    expect(sdrPanelHasData(cf, { compact: true })).toBe(true);
     expect(sdrPanelHasData(cf)).toBe(true);
+  });
+
+  it('com qualificação, o compact NÃO repete o formulário — a conversa é mais nova', () => {
+    const cf = { qualificacao: QUAL, lead_form: { fields: { 'Você possuí CNPJ': 'sim' } } };
+    const out = html(<QualificacaoSDRPanel customFields={cf} compact />);
+    expect(out).toContain('Qualificação (Ana)');
+    expect(out).not.toContain('Formulário do anúncio');
   });
 
   it('sdrPanelHasData: qualificação vazia não conta', () => {
