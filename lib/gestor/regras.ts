@@ -237,6 +237,7 @@ export async function montarDiario(deps: DepsGestor): Promise<Diario> {
   regras.push(await regraContradicao(supabase, now, ontem, perfis));
   regras.push(await regraEnvioFalhou(supabase, now, ontem));
   regras.push(await regraVendaSemPremio(supabase, now, perfis));
+  regras.push(await regraOrcamentoIA(supabase, now));
 
   return { data: diaBrt(now), regras, ontem: await pulsoDeOntem(supabase, ontem) };
 }
@@ -280,9 +281,12 @@ async function regraSemResposta(
   );
 
   const { telefonesInternos, nomesInternos } = await internos(supabase);
+  // Card já encerrado não é pendência — ver `contatosSemCardAberto`.
+  const encerrados = await contatosSemCardAberto(supabase, contatoIds);
 
   const todos: ItemAlerta[] = linhas
     .filter((l) => {
+      if (l.contact_id && encerrados.has(l.contact_id)) return false;
       const c = l.contact_id ? contatos.get(l.contact_id) : undefined;
       return !ehRuido({
         nomeContato: c?.name ?? null,
@@ -533,9 +537,13 @@ async function regraSemPrimeiraResposta(
   );
 
   const { telefonesInternos, nomesInternos } = await internos(supabase);
+  // Card já encerrado não é pendência. Era AQUI que doía mais: em 16/09/2026, 5 dos 7 itens desta
+  // regra na lista do Pedro eram leads perdidos, o mais antigo havia 51 dias.
+  const encerrados = await contatosSemCardAberto(supabase, contatoIds);
 
   const todos: ItemAlerta[] = mudas
     .filter((l) => {
+      if (l.contact_id && encerrados.has(l.contact_id)) return false;
       const c = l.contact_id ? contatos.get(l.contact_id) : undefined;
       // `ultimaFala` fica de fora de propósito: a última fala aqui é NOSSA, e o
       // filtro de ruído existe para julgar o que o LEAD disse.
@@ -594,16 +602,23 @@ async function regraReuniaoVencida(
 
   const linhas = (data ?? []) as Array<{ id: string; deal_id: string | null; owner_id: string | null; title: string | null; date: string }>;
   const dealIds = [...new Set(linhas.map((l) => l.deal_id).filter(Boolean))] as string[];
-  const nomes = await nomesDosCards(supabase, dealIds);
+  const [nomes, fechados] = await Promise.all([
+    nomesDosCards(supabase, dealIds),
+    // Reunião num card que virou perdido/ganho não é desfecho pendente — o desfecho foi o
+    // fechamento. Sem isto, o relatório cobrava reuniões de 51 e 63 dias atrás de cards encerrados.
+    cardsFechados(supabase, dealIds),
+  ]);
 
-  const todos: ItemAlerta[] = linhas.map((l) => ({
-    donoId: l.owner_id,
-    donoNome: nomeDe(perfis.get(l.owner_id ?? '') as Parameters<typeof nomeDe>[0]),
-    contato: nomes.get(l.deal_id ?? '') ?? l.title ?? 'Card sem nome',
-    detalhe: 'aconteceu? deu no-show? ninguém marcou',
-    idadeHoras: horasEntre(now, new Date(l.date)),
-    dealId: l.deal_id ?? undefined,
-  }));
+  const todos: ItemAlerta[] = linhas
+    .filter((l) => !(l.deal_id && fechados.has(l.deal_id)))
+    .map((l) => ({
+      donoId: l.owner_id,
+      donoNome: nomeDe(perfis.get(l.owner_id ?? '') as Parameters<typeof nomeDe>[0]),
+      contato: nomes.get(l.deal_id ?? '') ?? l.title ?? 'Card sem nome',
+      detalhe: 'aconteceu? deu no-show? ninguém marcou',
+      idadeHoras: horasEntre(now, new Date(l.date)),
+      dealId: l.deal_id ?? undefined,
+    }));
 
   const novos = todos.filter((i) => i.idadeHoras <= horasEntre(now, ontem));
 
@@ -811,6 +826,90 @@ async function regraVendaSemPremio(
   };
 }
 
+/** A partir de quanto do teto mensal de tokens o relatório começa a avisar. */
+const AVISO_ORCAMENTO_IA = 0.8;
+
+/**
+ * 8. O ORÇAMENTO DE IA DA ANA ESTÁ ACABANDO (ou já acabou).
+ *
+ * 🔴 O CASO QUE ORIGINOU A REGRA (16/09/2026): a Ana bateu o teto mensal de tokens em 14/09 às
+ * 14h24 — no turno seguinte a um lead dizer que paga R$ 2.680 — e **ficou muda por dois dias sem
+ * ninguém saber**. O bloqueio não gerava alerta, não entrava em relatório e não marcava o card: o
+ * único rastro era uma linha em `ai_conversation_log` com `action_taken = 'skipped'`. Do lado de
+ * fora parecia só "um lead parado em qualificação".
+ *
+ * Como o contador zera na virada do mês (UTC), estourar no dia 14 significa duas semanas e meia de
+ * silêncio — e o teto que causou isso protegia menos de US$ 1 de gasto mensal.
+ *
+ * 🔒 SIGILOSA, como a contradição: teto de IA é decisão de configuração e de custo da dona, não
+ * tarefa do time. O consultor não tem o que fazer com esta informação, e ela pareceria cobrança.
+ *
+ * A conta é a MESMA de `lib/ai/agent/token-budget.ts` — soma do mês corrente em UTC, porque é
+ * assim que o bloqueio conta. Copiar o critério é proposital: um alerta que medisse diferente do
+ * bloqueio avisaria na hora errada.
+ */
+async function regraOrcamentoIA(supabase: SupabaseClient, now: Date): Promise<Regra> {
+  const vazia: Regra = {
+    id: 'orcamento-ia',
+    titulo: 'Orçamento de IA da Ana',
+    emoji: '🤖',
+    sigiloso: true,
+    novos: [],
+    estoque: 0,
+  };
+
+  try {
+    const { data: cfg } = await supabase
+      .from('organization_settings')
+      .select('ai_monthly_token_limit')
+      .maybeSingle();
+    const teto = Number((cfg as { ai_monthly_token_limit: number | null } | null)?.ai_monthly_token_limit ?? 0)
+      || 1_000_000;
+
+    const inicioDoMes = new Date(now);
+    inicioDoMes.setUTCDate(1);
+    inicioDoMes.setUTCHours(0, 0, 0, 0);
+
+    const { data: linhas } = await supabase
+      .from('ai_conversation_log')
+      .select('tokens_used')
+      .gte('created_at', inicioDoMes.toISOString());
+
+    const usado = ((linhas ?? []) as Array<{ tokens_used: number | null }>)
+      .reduce((soma, l) => soma + (l.tokens_used ?? 0), 0);
+
+    const fracao = teto > 0 ? usado / teto : 0;
+    if (fracao < AVISO_ORCAMENTO_IA) return vazia;
+
+    const pct = Math.round(fracao * 100);
+    const estourou = usado >= teto;
+    const item: ItemAlerta = {
+      donoId: null,
+      donoNome: 'Ana (IA)',
+      contato: estourou ? 'A Ana PAROU de responder' : 'A Ana está perto de parar',
+      detalhe: estourou
+        ? `teto mensal de tokens estourado (${usado.toLocaleString('pt-BR')} de ${teto.toLocaleString('pt-BR')}) — ela não responde mais até virar o mês`
+        : `${pct}% do teto mensal de tokens já usado (${usado.toLocaleString('pt-BR')} de ${teto.toLocaleString('pt-BR')})`,
+      // Sem idade: não é uma pendência que envelhece, é um estado de agora.
+      idadeHoras: 0,
+    };
+
+    return {
+      ...vazia,
+      emoji: estourou ? '🔴' : '🤖',
+      acao: 'Aumentar o teto em Configurações (organization_settings.ai_monthly_token_limit). '
+        + 'Enquanto estiver estourado, todo lead novo fica sem resposta.',
+      novos: [item],
+      estoque: 1,
+    };
+  } catch (err) {
+    // Alerta que derruba o relatório inteiro é pior que alerta ausente: o diário das 8h é o
+    // produto, este bloco é um adendo.
+    console.error('[gestor] regraOrcamentoIA falhou (não-fatal):', err);
+    return vazia;
+  }
+}
+
 /** Sinal de vida: o que a operação de fato produziu ontem. */
 async function pulsoDeOntem(supabase: SupabaseClient, ontem: Date) {
   const desde = ontem.toISOString();
@@ -853,6 +952,68 @@ async function internos(supabase: SupabaseClient): Promise<{ telefonesInternos: 
   }
 
   return { telefonesInternos, nomesInternos };
+}
+
+/**
+ * Contatos cujos cards estão TODOS fechados (perdidos ou ganhos) — ou seja, quem não é mais
+ * pendência de ninguém.
+ *
+ * ⚠️ POR QUE ISTO EXISTE (16/09/2026). As regras que partem de `messaging_conversations` não
+ * enxergam o estado do card, e por isso cobravam trabalho MORTO: no relatório do dia, 5 dos 7
+ * "não respondeu ao primeiro contato" do Pedro eram leads **já dados como perdidos**, com motivo
+ * registrado e lembrete de reabordagem agendado — um deles perdido havia 51 dias. Uma lista de
+ * pendências que inclui o que já foi encerrado ensina a pessoa a ignorar a lista inteira.
+ *
+ * REGRA DO SILÊNCIO: contato **sem card nenhum** NÃO entra aqui. Ausência de card não é prova de
+ * que o assunto acabou — pode ser lead solto que ninguém cadastrou, e esse é exatamente o tipo de
+ * coisa que o relatório deve continuar mostrando. Só sai quem tem card e nenhum aberto.
+ */
+async function contatosSemCardAberto(
+  supabase: SupabaseClient,
+  contatoIds: string[],
+): Promise<Set<string>> {
+  const fechados = new Set<string>();
+  if (contatoIds.length === 0) return fechados;
+
+  const { data } = await supabase
+    .from('deals')
+    .select('contact_id, is_won, is_lost')
+    .in('contact_id', contatoIds)
+    .is('deleted_at', null);
+
+  const linhas = (data ?? []) as Array<{
+    contact_id: string | null; is_won: boolean | null; is_lost: boolean | null;
+  }>;
+
+  const temAberto = new Set<string>();
+  const temAlgumCard = new Set<string>();
+  for (const l of linhas) {
+    if (!l.contact_id) continue;
+    temAlgumCard.add(l.contact_id);
+    if (l.is_won !== true && l.is_lost !== true) temAberto.add(l.contact_id);
+  }
+  for (const id of temAlgumCard) {
+    if (!temAberto.has(id)) fechados.add(id);
+  }
+  return fechados;
+}
+
+/**
+ * Cards fechados (ganhos ou perdidos) dentre os informados.
+ *
+ * Mesma razão do helper acima, no eixo do CARD: reunião marcada num card que depois virou perdido
+ * não é desfecho pendente — o desfecho foi a perda. O relatório listava reuniões de 51 e 63 dias
+ * atrás de cards que já estavam encerrados.
+ */
+async function cardsFechados(supabase: SupabaseClient, dealIds: string[]): Promise<Set<string>> {
+  if (dealIds.length === 0) return new Set();
+  const { data } = await supabase
+    .from('deals')
+    .select('id, is_won, is_lost')
+    .in('id', dealIds)
+    .is('deleted_at', null);
+  const linhas = (data ?? []) as Array<{ id: string; is_won: boolean | null; is_lost: boolean | null }>;
+  return new Set(linhas.filter((l) => l.is_won === true || l.is_lost === true).map((l) => l.id));
 }
 
 async function nomesDosCards(supabase: SupabaseClient, dealIds: string[]): Promise<Map<string, string>> {
