@@ -258,12 +258,27 @@ describe('diário — aviso de orçamento da IA', () => {
   });
 
   it('é SIGILOSO: vai para a dona, nunca para o consultor', async () => {
-    const diario = await montarDiario({ now: AGORA, supabase: fakeSupabase(comOrcamento(1_000_000, [1_200_000])) });
+    // ⚠️ A 1ª versão deste teste passava VAZIO: chamava `formatarParaColaborador` com um OBJETO
+    // onde a assinatura pede o `donoId` em string, então a função devolvia null e o
+    // `not.toContain` passava sem testar nada. Achado pela revisão adversarial — por isso aqui o
+    // Pedro precisa TER um item próprio, para o relatório dele existir e a ausência significar algo.
+    const diario = await montarDiario({
+      now: AGORA,
+      supabase: fakeSupabase({
+        ...comOrcamento(1_000_000, [1_200_000]),
+        messaging_conversations: [conversaMuda('c1', 'ct-ped')],
+        contacts: [contato('ct-ped', 'Lead do Pedro')],
+        deals: [{ id: 'd1', contact_id: 'ct-ped', owner_id: 'u-ped', is_won: false, is_lost: false, closed_at: null, deleted_at: null }],
+      }),
+    });
 
     const paraDona = formatarDiario(diario as never, true);
     expect(paraDona).toContain('PAROU');
 
-    const paraPedro = formatarParaColaborador(diario as never, { id: 'u-ped', nome: 'Pedro' } as never);
+    const paraPedro = formatarParaColaborador(diario as never, 'u-ped');
+    // O relatório dele existe de verdade — sem isto, o teste provaria nada.
+    expect(paraPedro).toBeTruthy();
+    expect(paraPedro).toContain('Lead do Pedro');
     expect(paraPedro ?? '').not.toContain('PAROU');
     expect(paraPedro ?? '').not.toContain('teto mensal');
   });
@@ -418,5 +433,52 @@ describe('diário — a soma de tokens não pode ser truncada', () => {
     const r = itensDe(diario, 'orcamento-ia');
     expect(r.estoque).toBe(1);
     expect(r.novos[0].detalhe).toContain('16.000.000');
+  });
+});
+
+describe('diário — o alerta não pode divergir de quem bloqueia', () => {
+  it('teto gravado como 0 é ZERO, não 1.000.000', async () => {
+    // `token-budget.ts` lê 0 como zero: `used < 0` é sempre falso, então a Ana cala em TUDO.
+    // Se aqui o 0 virasse o default de 1M, o relatório diria "sobrando orçamento" com a Ana muda.
+    const diario = await montarDiario({
+      now: AGORA,
+      supabase: fakeSupabase({
+        profiles: PERFIS,
+        organization_settings: [{ ai_monthly_token_limit: 0 }],
+        ai_conversation_log: [{ id: 'l1', tokens_used: 10, created_at: new Date('2026-09-10T12:00:00Z').toISOString() }],
+      }),
+    });
+
+    const r = itensDe(diario, 'orcamento-ia');
+    expect(r.estoque).toBe(1);
+    expect(r.novos[0].contato).toContain('PAROU');
+  });
+
+  it('teto ausente cai no default de 1.000.000', async () => {
+    const diario = await montarDiario({
+      now: AGORA,
+      supabase: fakeSupabase({
+        profiles: PERFIS,
+        organization_settings: [{ ai_monthly_token_limit: null }],
+        ai_conversation_log: [{ id: 'l1', tokens_used: 900_000, created_at: new Date('2026-09-10T12:00:00Z').toISOString() }],
+      }),
+    });
+
+    const r = itensDe(diario, 'orcamento-ia');
+    expect(r.novos[0].detalhe).toContain('1.000.000');
+    expect(r.novos[0].detalhe).toContain('90%');
+  });
+
+  it('o alerta diz O QUE FAZER no próprio detalhe — a `acao` não é renderizada', async () => {
+    const diario = await montarDiario({
+      now: AGORA,
+      supabase: fakeSupabase({
+        profiles: PERFIS,
+        organization_settings: [{ ai_monthly_token_limit: 1_000_000 }],
+        ai_conversation_log: [{ id: 'l1', tokens_used: 1_200_000, created_at: new Date('2026-09-10T12:00:00Z').toISOString() }],
+      }),
+    });
+    const texto = formatarDiario(diario as never, true);
+    expect(texto).toContain('ai_monthly_token_limit');
   });
 });

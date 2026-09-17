@@ -887,8 +887,12 @@ async function regraOrcamentoIA(supabase: SupabaseClient, now: Date): Promise<Re
       .from('organization_settings')
       .select('ai_monthly_token_limit')
       .maybeSingle();
-    const teto = Number((cfg as { ai_monthly_token_limit: number | null } | null)?.ai_monthly_token_limit ?? 0)
-      || 1_000_000;
+    // `??`, NÃO `||`. Com `||`, um teto gravado como **0** virava 1.000.000 aqui — e o bloqueio
+    // (`token-budget.ts`) lê 0 como zero, o que faz `used < limit` ser sempre falso: a Ana calaria
+    // em TUDO enquanto este relatório dissesse que está sobrando orçamento. Divergir de quem
+    // bloqueia é exatamente o que esta regra não pode fazer.
+    const tetoCru = (cfg as { ai_monthly_token_limit: number | null } | null)?.ai_monthly_token_limit;
+    const teto = typeof tetoCru === 'number' && Number.isFinite(tetoCru) ? tetoCru : 1_000_000;
 
     const inicioDoMes = new Date(now);
     inicioDoMes.setUTCDate(1);
@@ -929,18 +933,24 @@ async function regraOrcamentoIA(supabase: SupabaseClient, now: Date): Promise<Re
       }
     }
 
-    const fracao = teto > 0 ? usado / teto : 0;
+    // Teto ZERO (ou negativo) não é "sem limite" — é limite nenhum: `used < 0` é sempre falso no
+    // `token-budget.ts`, então a Ana cala em TUDO. Tratar como fração 0 deixaria o relatório calado
+    // justamente no cenário mais grave, que é o oposto do que esta regra existe para fazer.
+    const fracao = teto > 0 ? usado / teto : Number.POSITIVE_INFINITY;
     if (fracao < AVISO_ORCAMENTO_IA) return vazia;
 
-    const pct = Math.round(fracao * 100);
     const estourou = usado >= teto;
+    const pct = Number.isFinite(fracao) ? Math.round(fracao * 100) : 100;
     const item: ItemAlerta = {
       donoId: null,
       donoNome: 'Ana (IA)',
       contato: estourou ? 'A Ana PAROU de responder' : 'A Ana está perto de parar',
+      // A instrução vai no DETALHE, não só na `acao` da regra: o relatório da dona imprime
+      // `emoji + contato + detalhe` e não renderiza `acao` em lugar nenhum — um alerta que diz
+      // que parou sem dizer o que fazer obriga a pessoa a ir descobrir.
       detalhe: estourou
-        ? `teto mensal de tokens estourado (${usado.toLocaleString('pt-BR')} de ${teto.toLocaleString('pt-BR')}) — ela não responde mais até virar o mês`
-        : `${pct}% do teto mensal de tokens já usado (${usado.toLocaleString('pt-BR')} de ${teto.toLocaleString('pt-BR')})`,
+        ? `teto mensal de tokens estourado (${usado.toLocaleString('pt-BR')} de ${teto.toLocaleString('pt-BR')}) — ela não responde mais até virar o mês. Aumente ai_monthly_token_limit`
+        : `${pct}% do teto mensal de tokens já usado (${usado.toLocaleString('pt-BR')} de ${teto.toLocaleString('pt-BR')}) — aumente ai_monthly_token_limit antes de ela calar`,
       // Sem idade: não é uma pendência que envelhece, é um estado de agora.
       idadeHoras: 0,
     };
