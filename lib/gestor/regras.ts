@@ -281,12 +281,32 @@ async function regraSemResposta(
   );
 
   const { telefonesInternos, nomesInternos } = await internos(supabase);
-  // Card já encerrado não é pendência — ver `contatosSemCardAberto`.
   const encerrados = await contatosSemCardAberto(supabase, contatoIds);
+
+  /**
+   * ⚠️ AQUI O FILTRO DE CARD ENCERRADO TEM UMA EXCEÇÃO, E ELA É O ITEM MAIS VALIOSO DA REGRA.
+   *
+   * Nesta regra quem falou por último foi o LEAD. Se o card dele já estava fechado e ele voltou a
+   * escrever DEPOIS do fechamento, isso não é trabalho morto — é um perdido ressuscitando, que é
+   * justamente o que a Thalita pediu para não perder em 11/09/2026 (o caso da Flávia com o Pedro:
+   * *"quando vai pra perdido o lead some; precisamos ter onde resgatar esse lead caso ele volte a
+   * conversar"*). Esta regra era a ÚNICA rede que pegava isso, por varrer conversa em vez de card.
+   *
+   * Então: sai da lista quem está encerrado E ficou quieto desde o fechamento. Quem voltou a falar
+   * continua — e com o detalhe dizendo que voltou, para o consultor saber que é reabertura, não
+   * uma mensagem qualquer. Sem `closed_at` (fechamento antigo, sem carimbo), mantém: na dúvida,
+   * mostrar é mais barato que esconder um lead que voltou.
+   */
+  const voltouDepoisDeFechar = (contactId: string | null, quandoFalou: string): boolean => {
+    if (!contactId || !encerrados.has(contactId)) return false;
+    const fechadoEm = encerrados.get(contactId) ?? null;
+    return fechadoEm === null || quandoFalou > fechadoEm;
+  };
 
   const todos: ItemAlerta[] = linhas
     .filter((l) => {
-      if (l.contact_id && encerrados.has(l.contact_id)) return false;
+      if (l.contact_id && encerrados.has(l.contact_id)
+          && !voltouDepoisDeFechar(l.contact_id, l.last_message_at)) return false;
       const c = l.contact_id ? contatos.get(l.contact_id) : undefined;
       return !ehRuido({
         nomeContato: c?.name ?? null,
@@ -300,11 +320,15 @@ async function regraSemResposta(
       const c = l.contact_id ? contatos.get(l.contact_id) : undefined;
       const donoId = l.assigned_user_id ?? c?.owner_id ?? null;
       const previa = (l.last_message_preview ?? '').trim().replace(/\s+/g, ' ').slice(0, 60);
+      // O card estava fechado e ele voltou: dizer isso muda a ação de quem lê — é reabertura,
+      // não mais uma mensagem na fila.
+      const voltou = voltouDepoisDeFechar(l.contact_id, l.last_message_at);
+      const texto = previa ? `"${previa}"` : '(sem texto)';
       return {
         donoId,
         donoNome: nomeDe(perfis.get(donoId ?? '') as Parameters<typeof nomeDe>[0]),
         contato: c?.name ?? 'Sem nome',
-        detalhe: previa ? `"${previa}"` : '(sem texto)',
+        detalhe: voltou ? `${texto} — VOLTOU a falar depois de fechado` : texto,
         idadeHoras: horasEntre(now, new Date(l.last_message_at)),
         dealId: undefined,
       };
@@ -870,13 +894,40 @@ async function regraOrcamentoIA(supabase: SupabaseClient, now: Date): Promise<Re
     inicioDoMes.setUTCDate(1);
     inicioDoMes.setUTCHours(0, 0, 0, 0);
 
-    const { data: linhas } = await supabase
+    // AGREGAÇÃO NO SERVIDOR, não soma no cliente.
+    //
+    // ⚠️ `select('tokens_used')` sem agregação volta no máximo 1000 linhas (teto padrão do
+    // PostgREST) — e a soma truncada é MENOR que a real, então o alerta simplesmente nunca
+    // dispararia justamente quando mais importa: com o teto em 5.000.000 e ~8.000 tokens por
+    // chamada, o mês passa de 1000 chamadas bem antes de chegar aos 80%. Um alerta que emudece
+    // quando o volume cresce é pior do que não ter alerta.
+    //
+    // É a mesma agregação de `lib/ai/agent/token-budget.ts`, que é quem BLOQUEIA. Medir igual a
+    // quem bloqueia é o ponto: um alerta com outra conta avisaria na hora errada.
+    let usado = 0;
+    const { data: agregado, error: erroAgregado } = await supabase
       .from('ai_conversation_log')
-      .select('tokens_used')
-      .gte('created_at', inicioDoMes.toISOString());
+      .select('tokens_used.sum()')
+      .gte('created_at', inicioDoMes.toISOString())
+      .single();
 
-    const usado = ((linhas ?? []) as Array<{ tokens_used: number | null }>)
-      .reduce((soma, l) => soma + (l.tokens_used ?? 0), 0);
+    if (!erroAgregado && agregado) {
+      usado = Number((agregado as { sum: number | null }).sum ?? 0);
+    } else {
+      // Fallback paginado: se a agregação não estiver disponível, ainda é melhor somar páginas
+      // do que aceitar o corte silencioso em 1000.
+      const PAGINA = 1000;
+      for (let inicio = 0; ; inicio += PAGINA) {
+        const { data: pagina } = await supabase
+          .from('ai_conversation_log')
+          .select('tokens_used')
+          .gte('created_at', inicioDoMes.toISOString())
+          .range(inicio, inicio + PAGINA - 1);
+        const linhas = (pagina ?? []) as Array<{ tokens_used: number | null }>;
+        usado += linhas.reduce((soma, l) => soma + (l.tokens_used ?? 0), 0);
+        if (linhas.length < PAGINA) break;
+      }
+    }
 
     const fracao = teto > 0 ? usado / teto : 0;
     if (fracao < AVISO_ORCAMENTO_IA) return vazia;
@@ -971,29 +1022,35 @@ async function internos(supabase: SupabaseClient): Promise<{ telefonesInternos: 
 async function contatosSemCardAberto(
   supabase: SupabaseClient,
   contatoIds: string[],
-): Promise<Set<string>> {
-  const fechados = new Set<string>();
+): Promise<Map<string, string | null>> {
+  const fechados = new Map<string, string | null>();
   if (contatoIds.length === 0) return fechados;
 
   const { data } = await supabase
     .from('deals')
-    .select('contact_id, is_won, is_lost')
+    .select('contact_id, is_won, is_lost, closed_at')
     .in('contact_id', contatoIds)
     .is('deleted_at', null);
 
   const linhas = (data ?? []) as Array<{
-    contact_id: string | null; is_won: boolean | null; is_lost: boolean | null;
+    contact_id: string | null; is_won: boolean | null; is_lost: boolean | null; closed_at: string | null;
   }>;
 
   const temAberto = new Set<string>();
-  const temAlgumCard = new Set<string>();
+  const ultimoFechamento = new Map<string, string | null>();
   for (const l of linhas) {
     if (!l.contact_id) continue;
-    temAlgumCard.add(l.contact_id);
-    if (l.is_won !== true && l.is_lost !== true) temAberto.add(l.contact_id);
+    if (l.is_won !== true && l.is_lost !== true) {
+      temAberto.add(l.contact_id);
+      continue;
+    }
+    const atual = ultimoFechamento.get(l.contact_id) ?? null;
+    if (!ultimoFechamento.has(l.contact_id) || (l.closed_at && (!atual || l.closed_at > atual))) {
+      ultimoFechamento.set(l.contact_id, l.closed_at ?? atual);
+    }
   }
-  for (const id of temAlgumCard) {
-    if (!temAberto.has(id)) fechados.add(id);
+  for (const [id, quando] of ultimoFechamento) {
+    if (!temAberto.has(id)) fechados.set(id, quando);
   }
   return fechados;
 }
