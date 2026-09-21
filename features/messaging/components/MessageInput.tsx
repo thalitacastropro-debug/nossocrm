@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 import { useSendTextMessage, useSendMessage } from '@/lib/query/hooks/useMessagingMessagesQuery';
 import { useAssignConversation } from '@/lib/query/hooks/useConversationsQuery';
 import { useAuth } from '@/context/AuthContext';
+import { useToast } from '@/context/ToastContext';
 import { useMediaUploadMutation } from '@/lib/query/hooks/useMediaUploadMutation';
 import {
   useApprovedTemplatesQuery,
@@ -145,6 +146,7 @@ export function MessageInput({ conversation, replyTo, onCancelReply }: MessageIn
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { profile } = useAuth();
+  const { addToast } = useToast();
   const { mutate: sendTextMessage } = useSendTextMessage();
   const sendMessage = useSendMessage();
   const uploadMedia = useMediaUploadMutation();
@@ -369,11 +371,19 @@ export function MessageInput({ conversation, replyTo, onCancelReply }: MessageIn
   };
 
   const handleSendMedia = useCallback(async () => {
-    if (!pendingMedia || isDisabled) return;
+    if (!pendingMedia) return;
+    // Guarda de segurança: com `isDisabled` o campo e o botão já estão desabilitados, então
+    // ninguém chega aqui pela tela.
+    if (isDisabled) return;
 
     uploadMedia.mutate(
       { file: pendingMedia.file, conversationId: conversation.id },
       {
+        // O upload também morria calado: o anexo sumia da tela sem nenhum aviso.
+        onError: (erro: unknown) => {
+          const motivo = erro instanceof Error ? erro.message : 'erro desconhecido';
+          addToast(`O arquivo não foi enviado: ${motivo}`, 'error');
+        },
         onSuccess: (result) => {
           const content: MessageContent = {
             type: result.mediaType,
@@ -398,12 +408,18 @@ export function MessageInput({ conversation, replyTo, onCancelReply }: MessageIn
                 onCancelReply?.();
                 textareaRef.current?.focus();
               },
+              // O arquivo subiu, mas o envio ao lead falhou. Sem isto, a bolha some e o anexo
+              // continua ali como se nada tivesse acontecido.
+              onError: (erro: unknown) => {
+                const motivo = erro instanceof Error ? erro.message : 'erro desconhecido';
+                addToast(`O arquivo subiu, mas não foi entregue ao lead: ${motivo}`, 'error');
+              },
             }
           );
         },
       }
     );
-  }, [pendingMedia, isDisabled, uploadMedia, conversation.id, text, sendMessage]);
+  }, [pendingMedia, isDisabled, uploadMedia, conversation.id, text, sendMessage, addToast]);
 
   const handleTemplateSelect = useCallback(
     (template: TemplateData, params?: Record<string, string>) => {
@@ -424,10 +440,16 @@ export function MessageInput({ conversation, replyTo, onCancelReply }: MessageIn
           onSuccess: () => {
             setShowTemplates(false);
           },
+          // Mesma falha invisível do envio de texto: sem isto, o seletor apenas parava de
+          // carregar e o lead nunca recebia nada (21/09/2026).
+          onError: (erro: unknown) => {
+            const motivo = erro instanceof Error ? erro.message : 'erro desconhecido';
+            addToast(`O template não foi enviado: ${motivo}`, 'error');
+          },
         }
       );
     },
-    [sendTemplate, conversation.id, claimConversation]
+    [sendTemplate, conversation.id, claimConversation, addToast]
   );
 
   const handleSubmit = useCallback((e?: React.FormEvent) => {
@@ -441,7 +463,10 @@ export function MessageInput({ conversation, replyTo, onCancelReply }: MessageIn
     }
 
     const trimmedText = text.trim();
-    if (!trimmedText || isDisabled) return;
+    if (!trimmedText) return;
+
+    // Guarda de segurança: a tela já desabilita campo e botão quando `isDisabled`.
+    if (isDisabled) return;
 
     // Clear immediately — optimistic message already in cache via onMutate
     setText('');
@@ -451,9 +476,30 @@ export function MessageInput({ conversation, replyTo, onCancelReply }: MessageIn
     textareaRef.current?.focus();
 
     claimConversation();
-    sendTextMessage({ conversationId: conversation.id, text: trimmedText, replyToMessageId: replyTo?.id });
+    sendTextMessage(
+      { conversationId: conversation.id, text: trimmedText, replyToMessageId: replyTo?.id },
+      {
+        /**
+         * ⚠️ A FALHA PRECISA APARECER — era daqui que vinha "a mensagem some".
+         *
+         * O caminho do envio é otimista: o texto é limpo na hora e a bolha entra na tela antes da
+         * resposta do servidor. Quando o envio falhava, o `onError` do `useSendMessage` removia a
+         * bolha do cache e NINGUÉM avisava: sumia o texto que a pessoa escreveu E a bolha, sem
+         * erro nenhum. Foi exatamente o relato do Pedro com a Camila Santos em 21/09/2026 — e,
+         * como a requisição também não deixava rastro no servidor, nem o log dizia o motivo.
+         *
+         * Agora a falha devolve o texto ao campo (ninguém deve perder o que escreveu por causa de
+         * um erro nosso) e diz o que aconteceu.
+         */
+        onError: (erro: unknown) => {
+          const motivo = erro instanceof Error ? erro.message : 'erro desconhecido';
+          setText((atual) => (atual.trim() ? atual : trimmedText));
+          addToast(`A mensagem não foi enviada: ${motivo}`, 'error');
+        },
+      }
+    );
     onCancelReply?.();
-  }, [text, isDisabled, sendTextMessage, conversation.id, pendingMedia, handleSendMedia, replyTo, onCancelReply, claimConversation]);
+  }, [text, isDisabled, sendTextMessage, conversation.id, pendingMedia, handleSendMedia, replyTo, onCancelReply, claimConversation, addToast]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
