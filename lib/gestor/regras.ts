@@ -831,6 +831,17 @@ async function regraReuniaoVencida(
 
   const novos = todos.filter((i) => i.idadeHoras <= horasEntre(now, ontem));
 
+  /**
+   * O acumulado vai do MAIS RECENTE para o mais antigo — ao contrário do `ordenar`, que põe o
+   * mais velho na frente.
+   *
+   * Nas regras de dívida nossa o mais antigo é o mais grave. Aqui não: desfecho de reunião é
+   * MEMÓRIA, e memória vence. A de 6 dias alguém ainda reconstitui; a de 77 (existe uma, de
+   * 13/07) ninguém lembra, e cobrá-la primeiro só ensina a ignorar o bloco. Em 28/09 eram 12
+   * vencidas sem desfecho: com a ordem antiga, as três nomeadas seriam as três mais mortas.
+   */
+  const doMaisFresco = [...todos].sort((a, b) => a.idadeHoras - b.idadeHoras).slice(0, MAX_GUARDADOS);
+
   return {
     id: 'reuniao-vencida',
     titulo: 'Reunião de ontem sem desfecho',
@@ -839,7 +850,7 @@ async function regraReuniaoVencida(
     novos: ordenar(novos),
     estoque: todos.length,
     estoquePorDono: contarPorDono(todos),
-    estoqueItens: ordenar(todos),
+    estoqueItens: doMaisFresco,
   };
 }
 

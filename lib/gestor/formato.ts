@@ -103,11 +103,28 @@ export function formatarDiario(diario: Diario, paraDona: boolean): string {
     }
   }
 
-  // --- o estoque, só como número: o que não mudou não vira lista
+  // --- o estoque: o número, e os primeiros COM NOME
+  //
+  // Era só a contagem ("Reunião de ontem sem desfecho: 12"), pela regra de não repetir lista
+  // inteira todo dia. Só que contagem não é pauta: a Thalita abria o relatório sabendo que havia
+  // 12 e tinha que ir ao CRM descobrir quais — o mesmo motivo que já tinha feito o relatório do
+  // colaborador ganhar nomes em 03/09. Pedido dela em 28/09, véspera da reunião de time.
+  //
+  // O corte em MAX_NO_ESTOQUE segura o tamanho: são os primeiros da lista que a regra ordenou
+  // (cada uma sabe o que é mais urgente na sua natureza), e o resto continua como número.
   const estoque = regras.filter((r) => r.estoque > r.novos.length);
   if (estoque.length) {
     linhas.push('', '<i>Acumulado (sem novidade desde ontem):</i>');
-    for (const r of estoque) linhas.push(`· ${esc(r.titulo)}: ${r.estoque}`);
+    for (const r of estoque) {
+      const jaListados = new Set(r.novos);
+      const nomeados = (r.estoqueItens ?? []).filter((i) => !jaListados.has(i)).slice(0, MAX_NO_ESTOQUE);
+      linhas.push(`· ${esc(r.titulo)}: ${r.estoque}`);
+      for (const item of nomeados) {
+        linhas.push(`    · ${esc(item.contato)} — ${esc(item.donoNome)} (${idadeLegivel(item.idadeHoras)})`);
+      }
+      const sobra = r.estoque - nomeados.length;
+      if (nomeados.length > 0 && sobra > 0) linhas.push(`    <i>… e mais ${sobra}</i>`);
+    }
   }
 
   if (!temAlgo) {
