@@ -71,6 +71,17 @@ const HORAS_VENDA_NOVA = 24;
  */
 const DIAS_NEGOCIACAO_PARADA = 3;
 
+/**
+ * Silêncio tolerado na etapa onde o lead cai quando a Ana não conseguiu resposta.
+ *
+ * 5 dias, com os números de 28/09/2026 na mão: dos 22 cards abertos ali, 21 passavam de 2 dias,
+ * 20 de 3, 16 de 5 e 10 de 15. Com 3 a regra estrearia cobrando a coluna inteira — papel de
+ * parede no primeiro dia, que é o que este arquivo existe para evitar. Com 15 deixaria passar
+ * quase metade da pilha justamente enquanto o lead ainda atende o telefone. 5 dias é uma semana
+ * útil: quem recebeu o card teve os dias de trabalho para ligar.
+ */
+const DIAS_QUALIFICACAO_PARADA = 5;
+
 /** Teto por lista NO TEXTO: o Pedro tem 156 cards abertos; relatório de 40 linhas ninguém lê. */
 const MAX_POR_LISTA = 5;
 
@@ -233,6 +244,10 @@ export async function montarDiario(deps: DepsGestor): Promise<Diario> {
   regras.push(await regraNegociacaoParada(supabase, now, perfis));
   regras.push(await regraSemResposta(supabase, now, ontem, perfis));
   regras.push(await regraSemPrimeiraResposta(supabase, now, perfis));
+  // Junto das duas de cima porque é a mesma natureza — silêncio do lead, ação é telefone — e
+  // porque foi o buraco que nenhuma das outras alcançava: 23 cards parados até 34 dias, nunca
+  // relatados (28/09/2026).
+  regras.push(await regraQualificacaoParada(supabase, now, perfis));
   regras.push(await regraReuniaoVencida(supabase, now, ontem, perfis));
   regras.push(await regraContradicao(supabase, now, ontem, perfis));
   regras.push(await regraEnvioFalhou(supabase, now, ontem));
@@ -606,6 +621,161 @@ async function regraSemPrimeiraResposta(
   const doMaisFresco = [...todos].sort((a, b) => a.idadeHoras - b.idadeHoras).slice(0, MAX_GUARDADOS);
 
   return { ...vazia, novos: doMaisFresco, estoque: todos.length, estoquePorDono: contarPorDono(todos) };
+}
+
+/**
+ * 1c. CAÍRAM NA MESA DO CONSULTOR E NINGUÉM ENCOSTOU.
+ *
+ * O TERCEIRO buraco — e o maior. Em 28/09/2026 a Thalita foi olhar o CRM e achou 23 cards
+ * empilhados em "Comercial — Consultor / qualificação", parados de 2 a 34 dias, 21 deles no nome
+ * do Denilson. Nenhum tinha aparecido em relatório nenhum, nem uma vez.
+ *
+ * ## Por que o diário era estruturalmente cego para eles
+ *
+ * As duas regras que poderiam pegar não alcançam esta etapa, cada uma por um motivo:
+ * - `regraSemResposta` filtra `last_message_direction = 'inbound'` — só vê conversa em que o LEAD
+ *   falou por último. Nesses cards quem falou por último foi sempre a Ana, encerrando a cadência
+ *   com "vou pausar por aqui".
+ * - `regraNegociacaoParada` filtra `.eq('name', 'negociacao')`. Era o ÚNICO filtro de etapa do
+ *   arquivo inteiro. Ninguém olhava `qualificacao`.
+ *
+ * ## O que esta etapa significa
+ *
+ * É onde o `handoffToNextBoard` larga o lead quando a Ana não resolveu — 13 dos 23 chegaram com
+ * `motivo = sem_resposta_ligar`, que quer dizer exatamente "eu não consegui, um humano precisa
+ * ligar". A Ana fica DESLIGADA aqui por desenho (`"AI não habilitado para este estágio"` domina o
+ * `ai_conversation_log`). Ou seja: é a única etapa do CRM em que ninguém está trabalhando o lead —
+ * nem a IA, porque foi desligada, nem o humano, porque nada o avisa. Vira cemitério.
+ *
+ * ## Escolhas
+ *
+ * Isenta quem já marcou o próximo passo, igual à regra de negociação: silêncio com retorno
+ * agendado é plano, não abandono. E ordena do MAIS RECENTE para o mais antigo, como a 1b — aqui o
+ * silêncio é do lead, e quem parou de responder há 34 dias já esfriou; quem caiu na mesa
+ * anteontem ainda atende. Ordenar pelo mais velho enterraria os recuperáveis embaixo dos mortos.
+ *
+ * ⚠️ O RELÓGIO ZERA NO REPASSE, e isso é decisão, não acidente. Qualquer activity do card conta
+ * como "alguém encostou" — inclusive a nota "Responsável alterado" que a rota de repasse grava
+ * (`app/api/deals/[dealId]/owner/route.ts`). Então card que troca de dono hoje só começa a cobrar
+ * o novo responsável daqui a `DIAS_QUALIFICACAO_PARADA` dias. É o certo: quem acabou de receber a
+ * carteira não pode abrir o relatório da manhã seguinte já devendo. Descoberto rodando a regra
+ * contra a produção em 28/09/2026, logo depois de passar 12 leads do Denilson para o Pedro — os
+ * 12 apareceram com silêncio zero, e o comportamento estava certo pelo motivo errado.
+ */
+async function regraQualificacaoParada(
+  supabase: SupabaseClient, now: Date, perfis: Map<string, unknown>,
+): Promise<Regra> {
+  const vazia: Regra = {
+    id: 'qualificacao-parada',
+    titulo: 'Lead na sua mesa sem ninguém ligar',
+    emoji: '📵',
+    acao: 'Ligar hoje e registrar no card o que aconteceu. Se já esfriou, mover para Nutrição — parado na qualificação ele não é trabalhado por ninguém, nem pela Ana.',
+    novos: [],
+    estoque: 0,
+  };
+
+  const { data: etapasRaw } = await supabase
+    .from('board_stages').select('id, name').eq('name', 'qualificacao');
+  const etapas = ((etapasRaw ?? []) as Array<{ id: string }>).map((e) => e.id);
+  if (etapas.length === 0) return vazia;
+
+  const { data: dealsRaw } = await supabase
+    .from('deals')
+    .select('id, title, owner_id, contact_id, last_stage_change_date, custom_fields')
+    .in('stage_id', etapas)
+    .eq('is_won', false)
+    .eq('is_lost', false)
+    .is('deleted_at', null);
+  const cards = (dealsRaw ?? []) as Array<{
+    id: string; title: string | null; owner_id: string | null; contact_id: string | null;
+    last_stage_change_date: string | null; custom_fields: Record<string, unknown> | null;
+  }>;
+  if (cards.length === 0) return vazia;
+
+  const contatoIds = [...new Set(cards.map((d) => d.contact_id).filter(Boolean))] as string[];
+  const { data: contatosRaw } = contatoIds.length
+    ? await supabase.from('contacts').select('id, name, owner_id').in('id', contatoIds)
+    : { data: [] };
+  const contatos = new Map(
+    ((contatosRaw ?? []) as Array<{ id: string; name: string | null; owner_id: string | null }>)
+      .map((c) => [c.id, c]),
+  );
+
+  const { data: convsRaw } = contatoIds.length
+    ? await supabase.from('messaging_conversations').select('contact_id, last_message_at').in('contact_id', contatoIds)
+    : { data: [] };
+  const ultimaMensagem = new Map<string, number>();
+  for (const c of ((convsRaw ?? []) as Array<{ contact_id: string | null; last_message_at: string | null }>)) {
+    if (!c.contact_id || !c.last_message_at) continue;
+    const t = new Date(c.last_message_at).getTime();
+    ultimaMensagem.set(c.contact_id, Math.max(ultimaMensagem.get(c.contact_id) ?? 0, t));
+  }
+
+  const { data: ativRaw } = await supabase
+    .from('activities').select('deal_id, created_at, date, completed')
+    .in('deal_id', cards.map((d) => d.id))
+    .is('deleted_at', null);
+
+  const ultimaNota = new Map<string, number>();
+  // Mesmo teto da regra de negociação: sem ele bastaria marcar uma tarefa para 2027 e o card
+  // sumiria da cobrança para sempre.
+  const temProximoPasso = new Set<string>();
+  const tetoMs = now.getTime() + DIAS_PARADO * 24 * 36e5;
+  for (const a of ((ativRaw ?? []) as Array<{
+    deal_id: string | null; created_at: string | null; date: string | null; completed: boolean | null;
+  }>)) {
+    if (!a.deal_id) continue;
+    if (a.created_at) {
+      const t = new Date(a.created_at).getTime();
+      ultimaNota.set(a.deal_id, Math.max(ultimaNota.get(a.deal_id) ?? 0, t));
+    }
+    if (a.completed === false && a.date) {
+      const quando = new Date(a.date).getTime();
+      if (quando > now.getTime() && quando <= tetoMs) temProximoPasso.add(a.deal_id);
+    }
+  }
+
+  const limiteMs = DIAS_QUALIFICACAO_PARADA * 24 * 36e5;
+
+  const todos: ItemAlerta[] = [];
+  for (const d of cards) {
+    if (temProximoPasso.has(d.id)) continue;
+
+    const sinal = Math.max(
+      d.contact_id ? (ultimaMensagem.get(d.contact_id) ?? 0) : 0,
+      ultimaNota.get(d.id) ?? 0,
+      d.last_stage_change_date ? new Date(d.last_stage_change_date).getTime() : 0,
+    );
+    if (sinal === 0) continue;
+
+    const silencioMs = now.getTime() - sinal;
+    if (silencioMs < limiteMs) continue;
+
+    const c = d.contact_id ? contatos.get(d.contact_id) : undefined;
+    const donoId = d.owner_id ?? c?.owner_id ?? null;
+
+    // Dizer COMO o card chegou aqui muda o que a pessoa faz com ele: `sem_resposta_ligar` é a Ana
+    // avisando que já tentou por escrito e não adiantou — insistir por mensagem é repetir o canal
+    // que falhou.
+    const motivo = ((d.custom_fields?.handoff_consultor as { motivo?: unknown } | undefined)?.motivo);
+    const detalhe = motivo === 'sem_resposta_ligar'
+      ? 'a Ana não conseguiu resposta e passou para ligação'
+      : motivo === 'ana_nao_resolveu'
+        ? 'a Ana não resolveu e passou para você'
+        : 'parado na qualificação, sem nota nem mensagem';
+
+    todos.push({
+      donoId,
+      donoNome: nomeDe(perfis.get(donoId ?? '') as Parameters<typeof nomeDe>[0]),
+      contato: c?.name ?? d.title ?? 'Card sem nome',
+      detalhe,
+      idadeHoras: silencioMs / 36e5,
+      dealId: d.id,
+    });
+  }
+
+  const doMaisFresco = [...todos].sort((a, b) => a.idadeHoras - b.idadeHoras).slice(0, MAX_GUARDADOS);
+  return { ...vazia, novos: doMaisFresco, estoque: todos.length, estoquePorDono: contarPorDono(todos), estoqueItens: doMaisFresco };
 }
 
 /**
