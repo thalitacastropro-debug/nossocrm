@@ -57,6 +57,77 @@ const LEAKAGE_PATTERNS: Array<[RegExp, string]> = [
   [/INSTRUÇÃO\s+ESPECÍFICA.*:/iu, 'instruction_dump_pt'],
 ];
 
+/**
+ * NARRAÇÃO INTERNA — a Ana falando SOBRE a conversa em vez de dentro dela.
+ *
+ * Categoria diferente do vazamento de prompt acima: aqui ela não revela regra nem diz que é IA.
+ * Ela **pensa em voz alta e o pensamento vira bolha no WhatsApp do lead**. Nenhum dos padrões de
+ * cima pega, porque o texto não tem nada de "sistema" — é português normal, só que endereçado à
+ * pessoa errada.
+ *
+ * Os 3 incidentes reais, achados varrendo as 1726 mensagens que a Ana já enviou:
+ *
+ *  - 16/08, Richard Gois (duas bolhas seguidas):
+ *      "No momento, você já fez a pergunta de abertura (...) e o lead respondeu apenas com 'Olá'"
+ *      "Relance a pergunta de forma leve e direta, sem repetir a introdução:"
+ *  - 21/09, Brooksfield: "Sem resposta ainda do lead sobre a imagem. Vou reengajar retomando de
+ *    onde parou:"
+ *  - 28/09, Regina Balbino: "Aqui está o follow-up:"
+ *
+ * ## Os padrões saíram do corpus, não da imaginação
+ *
+ * Cada regex abaixo foi medida contra as 1726 mensagens antes de entrar. As quatro juntas casam
+ * exatamente as 4 bolhas acima e NENHUMA outra — zero falso positivo no histórico inteiro.
+ *
+ * ⚠️ O que FICOU DE FORA e por quê: `de onde paramos` parecia ótimo (está no vazamento do
+ * Brooksfield) e casaria 5 mensagens — 3 delas legítimas, do tipo *"Lay, ainda por aí? Podemos
+ * continuar de onde paramos."*, que é follow-up correto. Padrão que pega o bug e mata a conversa
+ * boa não entra.
+ *
+ * ## Sobre o dois-pontos no fim
+ *
+ * É o mais largo dos quatro e o que mais rende: sozinho pegou 3 dos 4 casos, inclusive os dois que
+ * ninguém tinha achado. A razão é que mensagem de verdade para uma pessoa não termina em ":" —
+ * quem anuncia "aqui está:" está entregando resultado a um sistema, não conversando. Se um dia a
+ * Ana quiser abrir uma lista assim, ela cai na ponte e o time recebe o alarme: falha MACIA e
+ * VISÍVEL, que é o oposto do problema que estamos consertando aqui.
+ */
+const NARRACAO_INTERNA: Array<[RegExp, string]> = [
+  // Ela nunca chama a pessoa de "lead" — quem faz isso está falando DO lead, não COM ele.
+  [/\blead(s|es)?\b/iu, 'narracao:fala_do_lead_em_terceira_pessoa'],
+  // Anunciou e não entregou: o conteúdo ficou do outro lado dos dois-pontos.
+  [/:\s*$/u, 'narracao:anuncia_e_nao_entrega'],
+  // Rótulo de saída — endereçado a quem PEDIU o texto, não a quem vai ler.
+  //
+  // Dois formatos, e os dois exigem os dois-pontos: "aqui está" solto é conversa normal.
+  // ⚠️ O rótulo seco ("Resposta:", "Mensagem:") pede dois-pontos COLADO, de propósito. Escrevi
+  // primeiro como "rótulo + até 40 caracteres + dois-pontos" e isso passou a casar
+  // "Resposta RAG: produto X resolve seu problema." — frase que não estava no corpus que eu medi.
+  // Foi alargamento meu depois da medição, e quebrou um teste que existia. Padrão só vale na
+  // forma em que foi medido.
+  [/^\s*(aqui\s+est[áa]|segue\s+(o|a))\b[^:\n]{0,40}:/iu, 'narracao:rotulo_de_saida'],
+  [/^\s*(resposta|mensagem|sa[íi]da)\s*:/iu, 'narracao:rotulo_seco'],
+];
+
+/*
+ * ⚠️ O QUE EU TIREI DAQUI, e por que a lista é curta de propósito.
+ *
+ * A primeira versão tinha um quinto padrão, para imperativo dirigido a si mesma:
+ *   /^\s*(relance|reformule|retome|prossiga|pergunte|responda|confirme|evite|mantenha)\b/
+ *
+ * Ele saiu por duas razões que só aparecem quando se mede:
+ *
+ * 1. RECALL ZERO. O único caso real que ele pegava — "Relance a pergunta de forma leve e direta,
+ *    sem repetir a introdução:" — termina em dois-pontos e já cai no padrão de cima. Ele não
+ *    acrescentava captura nenhuma.
+ * 2. RISCO ALTO. "Confirme se entendi certo: são 5 vidas?" e "Responda quando puder" são frases
+ *    que a Ana diz PARA o lead, e as duas seriam bloqueadas. Trocar mensagem boa por ponte, numa
+ *    conversa de lead pago, custa mais caro que o vazamento que ele não pegava.
+ *
+ * Padrão que não aumenta captura e aumenta falso positivo é prejuízo líquido. A régua para
+ * acrescentar o próximo é a mesma: medir contra o histórico antes, não depois.
+ */
+
 // =============================================================================
 // PII Detection
 // =============================================================================
@@ -168,6 +239,13 @@ export function validateAIOutput(
   for (const [pattern, label] of LEAKAGE_PATTERNS) {
     if (pattern.test(response)) {
       issues.push(`leakage:${label}`);
+    }
+  }
+
+  // Check 1b: narração interna — ela pensando em voz alta na bolha do lead
+  for (const [pattern, label] of NARRACAO_INTERNA) {
+    if (pattern.test(response)) {
+      issues.push(label);
     }
   }
 

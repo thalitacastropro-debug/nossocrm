@@ -258,3 +258,80 @@ describe('mensagem usada quando a resposta é bloqueada', () => {
     expect(BLOCKED_OUTPUT_BRIDGE).toMatch(/j[áa] te respondo/i)
   })
 })
+
+// ---------------------------------------------------------------------------
+// NARRAÇÃO INTERNA — a Ana pensando em voz alta na bolha do lead
+//
+// Três incidentes reais em produção, achados varrendo as 1726 mensagens que ela já enviou. Nenhum
+// era vazamento de prompt: é português normal, endereçado à pessoa errada. Por isso nenhum dos
+// padrões antigos pegava.
+// ---------------------------------------------------------------------------
+describe('narração interna não pode virar mensagem do lead', () => {
+  /** As quatro bolhas reais, com data e destinatário. */
+  const VAZAMENTOS_REAIS: Array<[string, string]> = [
+    [
+      'Richard Gois, 16/08',
+      'No momento, você já fez a pergunta de abertura ("você tem plano de saúde hoje, ou seria o primeiro?") e o lead respondeu apenas com "Olá", sem responder à pergunta.',
+    ],
+    ['Richard Gois, 16/08 (bolha seguinte)', 'Relance a pergunta de forma leve e direta, sem repetir a introdução:'],
+    ['Brooksfield, 21/09', 'Sem resposta ainda do lead sobre a imagem. Vou reengajar retomando de onde parou:'],
+    ['Regina Balbino, 28/09', 'Aqui está o follow-up:'],
+  ];
+
+  it.each(VAZAMENTOS_REAIS)('bloqueia o vazamento de %s', (_quem, texto) => {
+    const r = validateAIOutput(texto, EMPTY_CONTEXT)
+    expect(r.safe).toBe(false)
+    expect(r.response).toBe(FALLBACK)
+    expect(r.issues.some((i) => i.startsWith('narracao:'))).toBe(true)
+  })
+
+  /**
+   * O outro lado da trava, e o mais importante: ela não pode matar conversa boa.
+   *
+   * O "de onde paramos" é o exemplo que quase entrou como padrão — está no vazamento do
+   * Brooksfield, mas a Ana usa a mesma expressão em follow-up legítimo, e são 3 casos reais.
+   */
+  const LEGITIMAS = [
+    'Lay, ainda por aí? Podemos continuar de onde paramos.',
+    'Adriane, ainda por aí? Podemos continuar de onde paramos.',
+    'Oi Rafael, sou a Ana, da Niva.',
+    'Qual é a operadora do seu plano hoje?',
+    'A Niva trabalha com Porto, Amil, SulAmérica, Alice, Bradesco e MedSênior.',
+    'Vi que você tem interesse em otimizar seu plano de saúde e que são 5 ou mais vidas, certo?',
+    'Rafael, vou pausar por aqui. Quando quiser retomar, é só responder.',
+    'Entendo, às vezes a galera quer saber as opções antes de falar da situação atual.',
+    'Consigo terça às 10h ou quarta às 14h. Qual fica melhor?',
+    'Perfeito! O consultor te liga nesse horário.',
+    // As duas abaixo seriam bloqueadas pelo padrão de imperativo que eu tirei — ficam aqui como
+    // trava para ele não voltar sem medir.
+    'Confirme se entendi certo: são 5 vidas, você e mais quatro?',
+    'Responda quando puder que eu sigo daqui.',
+  ]
+
+  it.each(LEGITIMAS)('deixa passar mensagem de verdade: %s', (texto) => {
+    const r = validateAIOutput(texto, EMPTY_CONTEXT)
+    expect(r.issues).toEqual([])
+    expect(r.safe).toBe(true)
+    expect(r.response).toBe(texto)
+  })
+
+  it('"lead" é a palavra que ela nunca diz — quem diz está falando DO lead, não COM ele', () => {
+    const r = validateAIOutput('Vou confirmar os dados do lead e te retorno.', EMPTY_CONTEXT)
+    expect(r.safe).toBe(false)
+    expect(r.issues).toContain('narracao:fala_do_lead_em_terceira_pessoa')
+  })
+
+  it('anunciar sem entregar (termina em dois-pontos) é bloqueado', () => {
+    const r = validateAIOutput('Segue a mensagem para o cliente:', EMPTY_CONTEXT)
+    expect(r.safe).toBe(false)
+    expect(r.issues).toContain('narracao:anuncia_e_nao_entrega')
+  })
+
+  it('a falha é MACIA: cai na ponte e o time é avisado, não some calada', () => {
+    const r = validateAIOutput('Aqui está o follow-up:', EMPTY_CONTEXT)
+    // `safe: false` é o gatilho do alarme no agent.service (Telegram + nota na timeline).
+    expect(r.safe).toBe(false)
+    expect(r.response).toBe(BLOCKED_OUTPUT_BRIDGE)
+    expect(r.issues.length).toBeGreaterThan(0)
+  })
+})
