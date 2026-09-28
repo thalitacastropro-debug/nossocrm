@@ -665,11 +665,23 @@ async function regraSemPrimeiraResposta(
 async function regraQualificacaoParada(
   supabase: SupabaseClient, now: Date, perfis: Map<string, unknown>,
 ): Promise<Regra> {
+  /**
+   * ⚠️ A LINGUAGEM AQUI É DELIBERADA (pedido da Thalita, 28/09/2026).
+   *
+   * A primeira versão dizia *"parado na qualificação, sem nota nem mensagem"* — descrição do
+   * ESTADO DO CARD, na língua de quem lê banco de dados. A palavra dela: *"nada de 'sem nota nem
+   * msg', tem que dizer claramente que eles não estão fazendo o follow up e deixando lead parado
+   * sem preencher nada no CRM. Preciso que seja mais incisiva, cobre mesmo."*
+   *
+   * Então o texto nomeia a OMISSÃO, não o estado: quem lê tem que entender, na primeira linha,
+   * que o lead está parado porque ele não ligou. Firme e factual — a régua é o registro, não a
+   * palavra de ninguém (é o que o rodapé `COMO_FUNCIONA` do relatório já contratualiza).
+   */
   const vazia: Regra = {
     id: 'qualificacao-parada',
-    titulo: 'Lead na sua mesa sem ninguém ligar',
-    emoji: '📵',
-    acao: 'Ligar hoje e registrar no card o que aconteceu. Se já esfriou, mover para Nutrição — parado na qualificação ele não é trabalhado por ninguém, nem pela Ana.',
+    titulo: 'Lead parado esperando follow-up seu',
+    emoji: '🚨',
+    acao: 'Liga HOJE e escreve no card o que aconteceu. Sem registro, para a empresa esse lead não foi trabalhado — e ele não volta sozinho. Se já esfriou de vez, manda pra Nutrição em vez de deixar parado.',
     novos: [],
     estoque: 0,
   };
@@ -759,10 +771,10 @@ async function regraQualificacaoParada(
     // que falhou.
     const motivo = ((d.custom_fields?.handoff_consultor as { motivo?: unknown } | undefined)?.motivo);
     const detalhe = motivo === 'sem_resposta_ligar'
-      ? 'a Ana não conseguiu resposta e passou para ligação'
+      ? 'a Ana entregou para ligação e até agora ninguém ligou'
       : motivo === 'ana_nao_resolveu'
-        ? 'a Ana não resolveu e passou para você'
-        : 'parado na qualificação, sem nota nem mensagem';
+        ? 'a Ana não resolveu, passou pra você e parou aí'
+        : 'nenhuma ligação, nenhuma nota, nada preenchido no card';
 
     todos.push({
       donoId,

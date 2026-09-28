@@ -188,9 +188,9 @@ describe('diário — lead largado na etapa de qualificação', () => {
     const porNome = new Map(regra(d).novos.map((i) => [i.contato, i.detalhe]));
     // `sem_resposta_ligar` é a Ana avisando que já tentou por escrito: insistir por mensagem é
     // repetir o canal que falhou.
-    expect(porNome.get('Veio da Ana')).toContain('ligação');
+    expect(porNome.get('Veio da Ana')).toContain('ninguém ligou');
     expect(porNome.get('Ana não resolveu')).toContain('não resolveu');
-    expect(porNome.get('Chegou na mão')).toContain('sem nota nem mensagem');
+    expect(porNome.get('Chegou na mão')).toContain('nada preenchido no card');
   });
 
   it('ordena do MAIS RECENTE — quem caiu anteontem ainda atende o telefone', async () => {
@@ -203,7 +203,7 @@ describe('diário — lead largado na etapa de qualificação', () => {
 
   it('a ação diz o gesto exato, incluindo a saída por Nutrição', async () => {
     const d = await rodar({ deals: [card('d1', 'Qualquer', 6)], contacts: [contatoDe('d1', 'Qualquer')] });
-    expect(regra(d).acao).toMatch(/Ligar hoje/);
+    expect(regra(d).acao).toMatch(/Liga HOJE/);
     expect(regra(d).acao).toMatch(/Nutrição/);
   });
 

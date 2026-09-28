@@ -209,13 +209,24 @@ export function formatarParaColaborador(
     // ficava lá nas regras, era sobre a fila do time inteiro: bastava os mais
     // antigos serem de outra pessoa para alguém receber "nada novo" tendo
     // leads sem resposta.
+    // A ação aparece UMA VEZ por regra, não uma por linha.
+    //
+    // Era uma por linha, e só não incomodava porque nenhuma regra costumava trazer vários itens
+    // da mesma pessoa. Com a regra da qualificação isso mudou: o Denilson recebeu a mesma frase
+    // de 240 caracteres repetida 5 vezes seguidas (28/09/2026). Repetição é exatamente o que
+    // transforma alerta em papel de parede — o problema que este arquivo inteiro existe para
+    // evitar. A instrução tem mais força dita uma vez.
+    const acaoJaDita = new Set<string>();
     meus.slice(0, MAX_NO_TEXTO).forEach(({ regra, item }, i) => {
       linhas.push(
         `${i + 1}. ${regra.emoji} <b>${esc(item.contato)}</b> — ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`,
       );
       // A ação é o que separa "alerta" de "tarefa": sem ela a pessoa entende o
       // problema e ainda tem que adivinhar qual gesto encerra o item.
-      if (regra.acao) linhas.push(`    ↳ ${esc(regra.acao)}`);
+      if (regra.acao && !acaoJaDita.has(regra.id)) {
+        acaoJaDita.add(regra.id);
+        linhas.push(`    ↳ ${esc(regra.acao)}`);
+      }
     });
     if (meus.length > MAX_NO_TEXTO) {
       linhas.push('', `<i>… e mais ${meus.length - MAX_NO_TEXTO} que entraram desde ontem.</i>`);
