@@ -146,8 +146,18 @@ export const queryClient = new QueryClient({
       retry: 3,
       // Retry delay with exponential backoff
       retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 30000),
-      // Realtime covers main entities — window focus refetch is redundant
-      refetchOnWindowFocus: false,
+      /**
+       * ⚠️ ERA `false`, com o comentário "Realtime covers main entities — window focus refetch is
+       * redundant". Essa frase só vale enquanto o realtime está vivo — e ele cai o tempo todo:
+       * notebook que dorme, aba em segundo plano que o browser estrangula, wi-fi que oscila,
+       * token que expira. Quando caía, NADA mais atualizava a tela: o realtime era a única fonte
+       * de frescor e não tinha rede embaixo.
+       *
+       * O resultado é o que os consultores relatam desde sempre — abrir o CRM e ver mensagem
+       * velha, sem nenhum sinal de que está velha, e ter que dar F5 para descobrir. Voltar pra
+       * aba agora revalida o que está obsoleto (28/09/2026).
+       */
+      refetchOnWindowFocus: true,
       // Don't refetch on mount if data is fresh
       refetchOnMount: true,
       // Refetch on reconnect

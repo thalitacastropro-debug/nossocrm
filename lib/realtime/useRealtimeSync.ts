@@ -8,7 +8,7 @@
  *   useRealtimeSync('deals');  // Subscribe to deals table changes
  *   useRealtimeSync(['deals', 'activities']);  // Multiple tables
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
@@ -115,11 +115,56 @@ export function useRealtimeSync(
   const pendingBoardStagesInsertCountRef = useRef(0);
   const flushScheduledRef = useRef(false);
   const onchangeRef = useRef(onchange);
-  
+  /**
+   * Estado de verdade da conexão (o ref acima não re-renderiza ninguém).
+   * Existe para a tela poder AVISAR que está desatualizada em vez de mentir em silêncio.
+   */
+  const [conectado, setConectado] = useState(false);
+  /** Tick que força recriar o canal — ver o efeito de auto-recuperação logo abaixo. */
+  const [tentativaReconexao, setTentativaReconexao] = useState(0);
+
   // Keep callback ref up to date without causing re-renders
   useEffect(() => {
     onchangeRef.current = onchange;
   }, [onchange]);
+
+  /**
+   * AUTO-RECUPERAÇÃO — o canal precisa voltar sozinho (28/09/2026).
+   *
+   * O WebSocket morre o tempo todo por motivos banais: o notebook dorme, o browser estrangula a
+   * aba em segundo plano, o wi-fi oscila, o token expira. Quando morria, este hook só registrava
+   * `CHANNEL_ERROR ... (will auto-retry)` no console e ficava por isso mesmo — a tela continuava
+   * com dado velho, sem nenhum sinal, até alguém dar F5. Era a queixa dos consultores: "toda hora
+   * preciso dar F5 pra saber se chegou mensagem".
+   *
+   * Aqui, ao voltar pra aba ou à rede, conferimos o estado REAL do canal (`channel.state`, não a
+   * nossa flag) e recriamos quando ele não está `joined`. O `refetchOnWindowFocus` do React Query
+   * (lib/query/index.tsx) cuida do outro lado: os eventos perdidos enquanto estava fora não
+   * voltam, então o dado precisa ser buscado de novo.
+   */
+  useEffect(() => {
+    if (!enabled || typeof window === 'undefined') return;
+
+    const retomar = () => {
+      if (document.visibilityState !== 'visible') return;
+      // `joining` também conta como vivo: já está tentando, recriar atrapalharia.
+      const estado = channelRef.current?.state;
+      if (estado === 'joined' || estado === 'joining') return;
+      if (DEBUG_REALTIME) {
+        console.log('[Realtime] Canal fora do ar (%s) — recriando', estado ?? 'sem canal');
+      }
+      setTentativaReconexao((n) => n + 1);
+    };
+
+    document.addEventListener('visibilitychange', retomar);
+    window.addEventListener('online', retomar);
+    window.addEventListener('focus', retomar);
+    return () => {
+      document.removeEventListener('visibilitychange', retomar);
+      window.removeEventListener('online', retomar);
+      window.removeEventListener('focus', retomar);
+    };
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -629,6 +674,20 @@ export function useRealtimeSync(
               }
               // #endregion
 
+              /**
+               * O card acabou de ficar VISÍVEL para esta pessoa? Então não está no cache, e o
+               * payload do realtime não basta para montá-lo (ver o comentário no `!currentDeal`
+               * mais abaixo). Busca do servidor, que devolve o card inteiro.
+               *
+               * É o caminho do repasse de dono — e era por ele que o novo responsável precisava
+               * dar F5 para ver os leads que recebeu.
+               */
+              const cacheDeals = queryClient.getQueryData<DealView[]>(DEALS_VIEW_KEY);
+              if (Array.isArray(cacheDeals) && !cacheDeals.some((d) => d.id === dealId)) {
+                queryClient.invalidateQueries({ queryKey: DEALS_VIEW_KEY });
+                queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.stats });
+              }
+
               // Apply update directly to DEALS_VIEW_KEY (única fonte de verdade)
               // This avoids race condition where invalidation refetches stale data
               // IMPORTANT: Only apply if the incoming status is different from current cache status
@@ -663,15 +722,29 @@ export function useRealtimeSync(
                   }
                   // #endregion
                   
-                  // If deal not found in cache, apply the update (it might be a new deal or from another tab)
+                  /**
+                   * CARD QUE NÃO ESTÁ NO CACHE: NÃO DÁ PARA INVENTAR A LINHA (28/09/2026).
+                   *
+                   * Isto empurrava `newData` cru — a linha do Postgres, em snake_case. A
+                   * normalização que existe logo abaixo (`stage_id` → `status`, `updated_at` →
+                   * `updatedAt`) só roda para card que JÁ estava no cache. Então o card entrava
+                   * sem `status`, e o Kanban agrupa as colunas justamente por `status`: ele ficava
+                   * no cache e em coluna nenhuma. Além disso vinha oco — sem nome do contato, sem
+                   * empresa, sem dono, que a tela busca enriquecidos do servidor.
+                   *
+                   * Isso é o caminho do REPASSE: quando um card muda de dono, ele chega ao novo
+                   * responsável como UPDATE de uma linha que ele nunca teve. Foi o que aconteceu
+                   * com o Pedro ao receber 12 leads e enxergar 4.
+                   *
+                   * O certo é buscar de novo — o servidor devolve o card inteiro e visível pela
+                   * RLS. A invalidação fica FORA do updater (abaixo, antes do setQueryData);
+                   * aqui só não estragamos o cache.
+                   */
                   if (!currentDeal) {
-                    // #region agent log
-                    if (process.env.NODE_ENV !== 'production') {
-                      console.log(`[Realtime] ✅ Deal not in cache - adding it`, { dealId: dealId.slice(0, 8), incomingStatus: incomingStatus?.slice(0, 8) || '' });
+                    if (DEBUG_REALTIME) {
+                      console.log(`[Realtime] Card fora do cache — refetch em vez de forjar`, { dealId: dealId.slice(0, 8) });
                     }
-                    // #endregion
-                    // Add the deal to cache (this can happen if deal was created in another tab)
-                    return [...old, newData as any];
+                    return old;
                   }
                   
                   // Guard: Skip update if incoming status matches current status (no-op)
@@ -934,9 +1007,19 @@ export function useRealtimeSync(
         }
 
         isConnectedRef.current = status === 'SUBSCRIBED';
+        setConectado(status === 'SUBSCRIBED');
 
         if (status === 'SUBSCRIBED') {
           console.log(`[Realtime] ✅ Connected to ${tableList.join(', ')}`);
+          // Reconectou depois de uma queda: o que mudou enquanto estávamos fora não chega por
+          // evento — aqueles eventos já passaram. Busca de novo, senão a tela fica com o buraco.
+          if (tentativaReconexao > 0) {
+            tableList.forEach((table) => {
+              getTableQueryKeys(table).forEach((queryKey) => {
+                queryClient.invalidateQueries({ queryKey });
+              });
+            });
+          }
         } else if (status === 'CHANNEL_ERROR') {
           console.warn(`[Realtime] Channel error for ${channelName} (will auto-retry)`);
         } else if (status === 'TIMED_OUT') {
@@ -966,7 +1049,8 @@ export function useRealtimeSync(
     };
     // Only re-run if enabled, tables, or debounceMs change
     // queryClient is stable, onchange is handled via ref
-  }, [enabled, JSON.stringify(tables), debounceMs]);
+    // `tentativaReconexao`: o efeito de auto-recuperação incrementa para recriar o canal caído.
+  }, [enabled, JSON.stringify(tables), debounceMs, tentativaReconexao]);
 
   return {
     /** Manually trigger a sync */
@@ -979,8 +1063,11 @@ export function useRealtimeSync(
         });
       });
     },
-    /** Check if channel is connected */
-    isConnected: isConnectedRef.current,
+    /**
+     * O canal está no ar AGORA. Vem de state, não de ref: quem consome re-renderiza quando cai,
+     * e pode dizer à pessoa que a tela pode estar atrasada em vez de fingir que está tudo certo.
+     */
+    isConnected: conectado,
   };
 }
 
