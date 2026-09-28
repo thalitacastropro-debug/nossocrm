@@ -26,6 +26,8 @@ import { loadBusyIntervals } from '@/lib/ai/scheduling/busy';
 import { getAvailableSlots } from '@/lib/ai/scheduling/availability';
 import { getBoardAIConfig } from '@/lib/ai/messaging/board-config';
 import { buildRescueMessage } from '@/lib/ai/scheduling/no-show-message';
+import { donoDaAgenda } from '@/lib/ai/scheduling/dono-da-agenda';
+import { emCicloDeResgate } from '@/lib/ai/scheduling/no-show-ciclo';
 import type { Slot } from '@/lib/ai/scheduling/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -59,13 +61,29 @@ function primeiroNome(nome?: string | null): string | null {
  */
 const RESGATE_BUFFER_MIN = 20;
 
-async function computeRescueSlots(admin: SupabaseClient, organizationId: string, now: Date): Promise<Slot[]> {
+async function computeRescueSlots(
+  admin: SupabaseClient,
+  organizationId: string,
+  /** Dono do CARD. É a agenda dele que abre os horários — não a do consultor da board. */
+  dealOwnerId: string | null,
+  now: Date,
+): Promise<Slot[]> {
   try {
+    // O board fica cravado no da SDR de propósito: o card está indo PARA lá neste mesmo request,
+    // então é a config da Ana (hora candidata, slot de 40min, antecedência) que vale.
     const cfg = getSchedulingConfig(ANA_SDR_BOARD_ID);
     if (!cfg) return [];
     const boardCfg = await getBoardAIConfig(admin, ANA_SDR_BOARD_ID);
-    const consultantUserId = boardCfg?.consultant_user_id;
-    if (!consultantUserId) return [];
+    // Dono do card, com o consultor da board como rede de segurança. NUNCA `user.id`: quem clica
+    // em "Marcar no-show" não é necessariamente o dono — um admin opera card dos outros, e o
+    // resgate passaria a ler a agenda (vazia) de quem clicou.
+    const consultantUserId = donoDaAgenda({ owner_id: dealOwnerId }, boardCfg?.consultant_user_id);
+    if (!consultantUserId) {
+      // Sem este aviso, a mensagem sai sem horário e não há como descobrir depois de qual agenda
+      // ela tentou ler — nem se tentou. Era o caminho mudo mais provável desta rota.
+      console.warn('[no-show] card sem dono e board sem consultor — resgate vai sem horários');
+      return [];
+    }
     const offerNow = new Date(now.getTime() + RESGATE_BUFFER_MIN * 60_000);
     const busy = await loadBusyIntervals({
       supabase: admin,
@@ -74,7 +92,16 @@ async function computeRescueSlots(admin: SupabaseClient, organizationId: string,
       now: offerNow,
       config: cfg.availability,
     });
-    return getAvailableSlots({ now: offerNow, busy, config: cfg.availability }).slice(0, 2);
+    const slots = getAvailableSlots({ now: offerNow, busy, config: cfg.availability }).slice(0, 2);
+    // Qual agenda foi lida e o que sobrou dela: é o que permite conferir, depois do deploy, que a
+    // ligação foi oferecida na agenda de quem de fato atende.
+    console.log(
+      '[no-show] resgate: agenda=%s ocupados=%d oferecidos=%d',
+      consultantUserId,
+      busy.length,
+      slots.length,
+    );
+    return slots;
   } catch (err) {
     console.error('[no-show] falha ao calcular horários de resgate (usando texto genérico):', err instanceof Error ? err.message : err);
     return [];
@@ -114,7 +141,7 @@ export async function POST(
     // 2. Fetch do deal — a RLS é o gate de autorização (só vê o que pode agir).
     const { data: deal, error: dealError } = await supabase
       .from('deals')
-      .select('id, board_id, contact_id, organization_id, custom_fields')
+      .select('id, board_id, contact_id, organization_id, owner_id, custom_fields')
       .eq('id', dealId)
       .single();
 
@@ -124,8 +151,11 @@ export async function POST(
 
     const existingCf = (deal.custom_fields as Record<string, unknown> | null) ?? {};
 
-    // Idempotência: já marcado → não move nem envia de novo.
-    if (existingCf.no_show === true) {
+    // Idempotência: só enquanto ESTE resgate está aberto. `no_show` nunca é limpo (o painel
+    // conta no-show por período e zerar apagaria o histórico), então a flag flat bloquearia para
+    // sempre o 2º no-show de um lead que remarcou e sumiu de novo — caminho que passou a ser
+    // alcançável agora que o card volta mesmo pro funil do consultor.
+    if (emCicloDeResgate(existingCf)) {
       return NextResponse.json({ dealId, already_marked: true }, { status: 200 });
     }
 
@@ -133,6 +163,20 @@ export async function POST(
 
     // 3. Move de volta pro board da Ana + grava no_show.
     //    custom_fields é REPLACE total no banco → spread do existente é obrigatório.
+    //
+    //    Os carimbos `handoff_consultor` e `escalated_consultor` FICAM. Apagá-los aqui era
+    //    tentador: eles são o guard de idempotência do `handoffToNextBoard`, todo card que leva
+    //    no-show já passou por ali (foi assim que chegou no funil do Consultor), e com o carimbo
+    //    de pé o lead que remarcasse pelo resgate ficaria preso em "Resgate No-show" — agenda
+    //    certa, card perdido.
+    //
+    //    Mas `handoff_consultor` tem um SEGUNDO leitor: a extração o usa como trava do `is_lost`
+    //    (`domain-extraction.service.ts` → `loss-guard.ts`, guard de 24/07). Sem ele, a extração
+    //    marcaria como PERDIDO justamente o card em resgate — exatamente quando o lead está
+    //    calado e o motivo de perda é mais fácil de inferir errado.
+    //
+    //    Quem reabre a porta do handoff é o `no_show_at` gravado logo abaixo: o guard de lá
+    //    compara as datas em vez de olhar a presença da flag (ver `no-show-ciclo.ts`).
     const noShowCf = {
       ...existingCf,
       no_show: true,
@@ -241,7 +285,12 @@ export async function POST(
 
       // Horários livres reais pra oferecer no resgate (best-effort; [] → texto genérico).
       const slots = deal.organization_id
-        ? await computeRescueSlots(admin, deal.organization_id as string, new Date())
+        ? await computeRescueSlots(
+            admin,
+            deal.organization_id as string,
+            (deal.owner_id as string | null) ?? null,
+            new Date(),
+          )
         : [];
 
       try {

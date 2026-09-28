@@ -127,6 +127,65 @@ describe('handoffToNextBoard (MOVE)', () => {
     expect(state.updatePatch).toBeNull();
   });
 
+  /**
+   * O NO-SHOW REABRE A PORTA (21/09/2026, card da Camila Santos).
+   *
+   * Todo card que leva no-show já passou por aqui uma vez — foi assim que chegou no funil do
+   * Consultor — e o botão de no-show o devolve à Ana DE PROPÓSITO, pra ela resgatar e entregar de
+   * novo. Com o guard olhando só a presença do carimbo, o lead que remarcasse pelo resgate ficava
+   * preso em "Resgate No-show": a reunião existia, o card não voltava, ninguém era avisado.
+   *
+   * O carimbo não pode ser apagado (a extração o usa como trava do `is_lost`), então o guard
+   * compara as datas.
+   */
+  it('no-show DEPOIS do carimbo => move de novo (senão o card remarcado fica preso na Ana)', async () => {
+    const { client, state } = makeSupabase({
+      srcDeal: {
+        board_id: 'board-ana',
+        custom_fields: {
+          handoff_consultor: { board_id: 'board-consultor', at: '2026-09-20T13:48:39.742Z' },
+          no_show: true,
+          no_show_at: '2026-09-21T18:47:00.000Z',
+        },
+      },
+    });
+    const r = await handoffToNextBoard({ supabase: client, ...base });
+    expect(r.handedOff).toBe(true);
+    expect(state.updatePatch.board_id).toBe('board-consultor');
+    // `no_show` continua no card: o painel conta no-show por período, zerar apagaria o histórico.
+    expect(state.updatePatch.custom_fields.no_show).toBe(true);
+  });
+
+  it('carimbo MAIS NOVO que o no-show => no-op: o card já voltou pro consultor', async () => {
+    const { client, state } = makeSupabase({
+      srcDeal: {
+        board_id: 'board-ana',
+        custom_fields: {
+          no_show: true,
+          no_show_at: '2026-09-21T18:47:00.000Z',
+          handoff_consultor: { board_id: 'board-consultor', at: '2026-09-23T10:00:00.000Z' },
+        },
+      },
+    });
+    const r = await handoffToNextBoard({ supabase: client, ...base });
+    expect(r.reason).toBe('already_done');
+    expect(state.updatePatch).toBeNull();
+  });
+
+  it('escalado e depois no-show => move de novo', async () => {
+    const { client, state } = makeSupabase({
+      srcDeal: {
+        board_id: 'board-ana',
+        custom_fields: {
+          escalated_consultor: { board_id: 'board-consultor', at: '2026-09-20T13:48:39.742Z' },
+          no_show_at: '2026-09-21T18:47:00.000Z',
+        },
+      },
+    });
+    const r = await handoffToNextBoard({ supabase: client, ...base });
+    expect(r.handedOff).toBe(true);
+  });
+
   // Regressão do caso Paulo Rodrigues de Freitas (09/09/2026): a escalação move SDR → Consultor e
   // o `handleHandoff` chamado logo depois relê o board_id JÁ movido, então chega aqui com
   // sourceBoardId == board atual. O guard de board acima compara Consultor com Consultor e PASSA —

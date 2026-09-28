@@ -18,6 +18,7 @@ import { getChannelRouter } from '@/lib/messaging/channel-router.service';
 import { extractAndUpdateBANT } from '../extraction/extraction.service';
 import { runDomainExtraction } from '../extraction/domain-extraction.service';
 import { runScheduling } from '../scheduling/scheduling.service';
+import { donoDaAgenda } from '../scheduling/dono-da-agenda';
 import { pracaSemComercializacao } from '@/lib/config/pracas-sem-comercializacao';
 import { qualificacaoParaAgendar } from '../scheduling/qualificacao-gate';
 import { handoffToNextBoard } from '../scheduling/handoff';
@@ -425,7 +426,8 @@ async function processIncomingMessageInner(
   // 2. Buscar deal e stage
   const { data: deal } = await supabase
     .from('deals')
-    .select('id, stage_id, board_id')
+    // owner_id: de quem e a agenda em que a Ana marca a ligacao (ver dono-da-agenda.ts).
+    .select('id, stage_id, board_id, owner_id')
     .eq('id', dealId)
     .single();
 
@@ -816,7 +818,11 @@ async function processIncomingMessageInner(
         reuniaoAgendada: context.reuniao_agendada ?? null,
         aiConfig: { provider: aiConfig.provider, apiKey: aiConfig.apiKey, model: aiConfig.model, structuredApiKey: aiConfig.structuredApiKey, structuredModel: aiConfig.structuredModel },
         dryRun: isDryRun,
-        consultantUserId: boardAIConfig?.consultant_user_id ?? null,
+        // A agenda e do DONO DO CARD, com o consultor da board como rede de seguranca.
+        // Tem que ser a MESMA conta que a rota de no-show usa para OFERECER os horarios do
+        // resgate: oferecer da agenda de um e marcar na de outro faz a Ana recusar o horario
+        // que ela mesma prometeu — e calada (scheduling.service.ts, validateDetectedSlot).
+        consultantUserId: donoDaAgenda(deal, boardAIConfig?.consultant_user_id),
         now: new Date(),
         offeredBefore: context.stats.ai_messages_count >= 1 && context.stage.name !== 'Novo Lead',
       });

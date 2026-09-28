@@ -21,6 +21,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { slotLabelFromIso } from './availability';
+import { emCicloDeResgate } from './no-show-ciclo';
 
 /**
  * Por que o lead está sendo entregue. Molda a etapa de destino, a activity e o alerta.
@@ -158,7 +159,19 @@ export async function handoffToNextBoard(params: HandoffToNextBoardParams): Prom
     .maybeSingle();
   if (!srcDeal) return { handedOff: false, reason: 'source_missing' };
   const srcCustom = (srcDeal.custom_fields as Record<string, unknown>) || {};
-  if (srcCustom.handoff_consultor) return { handedOff: false, reason: 'already_done' };
+
+  // O no-show REABRE a porta. O carimbo sozinho não basta mais: todo card que leva no-show já
+  // passou por aqui uma vez — foi assim que chegou no funil do Consultor — e o botão de no-show o
+  // devolve à Ana DE PROPÓSITO, para ela resgatar e entregar de novo. Com o guard olhando só a
+  // presença da flag, o lead que remarcasse pelo resgate ficava preso em "Resgate No-show": a
+  // reunião existia, o card não voltava, ninguém era avisado no Telegram (21/09/2026, card da
+  // Camila Santos, que tinha `handoff_consultor` de 20/09).
+  //
+  // Comparar datas em vez de apagar o carimbo: `handoff_consultor` também é a trava do `is_lost`
+  // na extração, e `no_show` nunca é limpo porque o painel conta por período. Mesma lição já
+  // escrita em `lib/ai/followup/meeting-reminder.ts`.
+  const reaberto = emCicloDeResgate(srcCustom);
+  if (srcCustom.handoff_consultor && !reaberto) return { handedOff: false, reason: 'already_done' };
   // Sair do funil da Ana é porta de MÃO ÚNICA, e a escalação já é uma saída: ela entrega o lead ao
   // consultor por conta própria (`escalateToConsultor`). Um handoff DEPOIS dela sempre erra o alvo,
   // porque o destino é `next_board_id` do board ATUAL — que já é o do Consultor. O card é então
@@ -171,7 +184,11 @@ export async function handoffToNextBoard(params: HandoffToNextBoardParams): Prom
   // `escalateToConsultor` → `handleHandoff` do agent.service (~:1128), em que o segundo relê o
   // `board_id` JÁ movido: por isso o guard de board abaixo não pega (compara Comercial com
   // Comercial). Este guard olha o CARIMBO, que não mente sobre o passado do card.
-  if (srcCustom.escalated_consultor) return { handedOff: false, reason: 'already_escalated' };
+  //
+  // O `reaberto` não afrouxa isso: no caso do Paulo não havia no-show nenhum, e a corrida era
+  // dentro do MESMO turno da Ana. O que ele libera é o card que um humano devolveu pra fila dela
+  // horas depois, clicando em "Marcar no-show".
+  if (srcCustom.escalated_consultor && !reaberto) return { handedOff: false, reason: 'already_escalated' };
   if (srcDeal.board_id && srcDeal.board_id !== sourceBoardId) return { handedOff: false, reason: 'already_done' };
 
   // 3. Etapa de destino.
