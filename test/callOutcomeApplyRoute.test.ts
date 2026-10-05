@@ -253,15 +253,45 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     expect((cf.qualificacao as Record<string, unknown>).valor_pago_exato).toBe(2100);
   });
 
-  it('fechou → move pra Implantação/aguardando-doc com is_won + closed_at', async () => {
+  // REGRA (Thalita, 05/10/2026): "cada funil tem o seu ganho. Enquanto o cliente não pagar o
+  // primeiro boleto, a implantação não é dada como ganha."
+  //
+  // Este teste afirmava o CONTRÁRIO (is_won = true ao chegar na Implantação), e foi esse
+  // comportamento que escondeu a venda da Flavia Almeida em 05/10: o kanban nasce filtrando
+  // "Em Aberto", então o card fechado some do funil de destino — e já tinha saído do de
+  // origem. Vender é o ganho do Comercial; implantar é o ganho da Implantação.
+  //
+  // A venda NÃO se perde: vive em `custom_fields.venda`, que é de onde a receita é medida
+  // (ver reference_crm_venda_mora_no_carimbo).
+  it('fechou → move pra Implantação/aguardando-doc EM ABERTO (ganho do Comercial ≠ ganho da Implantação)', async () => {
     await callPost(baseBody());
     const arg = dealUpdateSpy.mock.calls[0][0] as Record<string, unknown>;
     expect(arg.board_id).toBe('851c641a-ac99-404e-83d7-9712425b5fdf');
     expect(arg.stage_id).toBe('53589d9d-d0a5-4f62-8cda-20c89828a2b3');
-    expect(arg.is_won).toBe(true);
+    expect(arg.is_won).toBe(false);
     expect(arg.is_lost).toBe(false);
-    expect(arg.closed_at).toBeTruthy();
+    expect(arg.closed_at).toBeNull();
     expect(arg.last_stage_change_date).toBeTruthy();
+    // o ganho do Comercial não sumiu — mudou de lugar
+    expect((arg.custom_fields as Record<string, unknown>).venda).toBeTruthy();
+  });
+
+  // A reunião realizada tem de ser carimbada ANTES do update que move/fecha o deal:
+  // `zz_cancela_compromisso_vencido_trg` dispara em `after update of is_won, is_lost` e
+  // cancela compromisso vencido e não concluído — que é exatamente a reunião que acabou de
+  // acontecer. Na ordem inversa ela sumiria da timeline e da taxa de comparecimento.
+  it('conclui a CALL agendada ANTES de atualizar o deal (fora do alcance do trigger de limpeza)', async () => {
+    dealRow = {
+      ...dealRow,
+      custom_fields: {
+        ...(dealRow.custom_fields as object),
+        reuniao_agendada: { activity_id: 'e5f6a7b8-c9d0-4e1f-8a2b-c3d4e5f6a7b8' },
+      },
+    };
+    await callPost(baseBody());
+    expect(activityUpdateSpy).toHaveBeenCalled();
+    expect(activityUpdateSpy.mock.invocationCallOrder[0])
+      .toBeLessThan(dealUpdateSpy.mock.invocationCallOrder[0]);
   });
 
   it('perdeu → move pra Nutrição/recontato com is_lost + TASK de reabordagem', async () => {

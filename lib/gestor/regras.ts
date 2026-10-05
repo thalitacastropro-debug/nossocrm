@@ -248,6 +248,9 @@ export async function montarDiario(deps: DepsGestor): Promise<Diario> {
   // porque foi o buraco que nenhuma das outras alcançava: 23 cards parados até 34 dias, nunca
   // relatados (28/09/2026).
   regras.push(await regraQualificacaoParada(supabase, now, perfis));
+  // Logo depois das de etapa parada porque é o complemento delas: quem marcou o próximo passo
+  // sai de lá (não está abandonado) e cai aqui, com a cobrança certa (05/10/2026).
+  regras.push(await regraPassoVencido(supabase, now, perfis));
   regras.push(await regraReuniaoVencida(supabase, now, ontem, perfis));
   regras.push(await regraContradicao(supabase, now, ontem, perfis));
   regras.push(await regraEnvioFalhou(supabase, now, ontem));
@@ -476,7 +479,12 @@ async function regraNegociacaoParada(
     }
     if (a.completed === false && a.date) {
       const quando = new Date(a.date).getTime();
-      if (quando > now.getTime() && quando <= tetoMs) temProximoPasso.add(a.deal_id);
+      // Plano VIVO (marcado para os próximos DIAS_PARADO) ou plano VENCIDO: nos dois casos o
+      // consultor marcou o que vem a seguir, então este card não é "abandonado" e não pode ser
+      // cobrado como tal (pedido da Thalita, 05/10/2026). O vencido não sai impune — ele é
+      // cobrado por `regraPassoVencido`, ou pela regra 2 se for reunião, com a frase certa.
+      // O teto continua valendo só para o FUTURO: tarefa marcada para 2027 é escudo, não plano.
+      if (quando <= tetoMs) temProximoPasso.add(a.deal_id);
     }
   }
 
@@ -743,7 +751,12 @@ async function regraQualificacaoParada(
     }
     if (a.completed === false && a.date) {
       const quando = new Date(a.date).getTime();
-      if (quando > now.getTime() && quando <= tetoMs) temProximoPasso.add(a.deal_id);
+      // Plano VIVO (marcado para os próximos DIAS_PARADO) ou plano VENCIDO: nos dois casos o
+      // consultor marcou o que vem a seguir, então este card não é "abandonado" e não pode ser
+      // cobrado como tal (pedido da Thalita, 05/10/2026). O vencido não sai impune — ele é
+      // cobrado por `regraPassoVencido`, ou pela regra 2 se for reunião, com a frase certa.
+      // O teto continua valendo só para o FUTURO: tarefa marcada para 2027 é escudo, não plano.
+      if (quando <= tetoMs) temProximoPasso.add(a.deal_id);
     }
   }
 
@@ -788,6 +801,86 @@ async function regraQualificacaoParada(
 
   const doMaisFresco = [...todos].sort((a, b) => a.idadeHoras - b.idadeHoras).slice(0, MAX_GUARDADOS);
   return { ...vazia, novos: doMaisFresco, estoque: todos.length, estoquePorDono: contarPorDono(todos), estoqueItens: doMaisFresco };
+}
+
+/**
+ * 1d. O PASSO QUE O CONSULTOR MARCOU VENCEU.
+ *
+ * Pedido da Thalita em 05/10/2026: *"se o consultor programa o próximo passo, a Stella não
+ * deve ficar enviando que o lead está sem follow-up"*. A isenção já existia nas duas regras
+ * de etapa parada — mas só valia para tarefa no FUTURO (`quando > now`). Tarefa que venceu e
+ * ninguém deu baixa voltava a cair em "Lead parado esperando follow-up seu", que é falso: o
+ * consultor fez a parte dele, quem venceu foi o prazo.
+ *
+ * Não isentamos o vencido, e isso é deliberado — a própria Thalita confirmou: *"a tarefa não
+ * realizada ainda precisa ser cobrada"*. Isentar transformaria marcar qualquer tarefa num
+ * escudo permanente; dos 3 casos de 05/10, o mais velho era um retorno marcado para 02/09,
+ * vencido havia 33 dias. O que muda é a FRASE, não a cobrança: sai "abandonou o lead", entra
+ * "seu plano venceu — faça, remarque ou dê baixa".
+ *
+ * Só pega o que NÃO é CALL: reunião vencida já tem a regra 2, e o mesmo card em duas listas
+ * ensina a ignorar o relatório.
+ */
+async function regraPassoVencido(
+  supabase: SupabaseClient, now: Date, perfis: Map<string, unknown>,
+): Promise<Regra> {
+  const vazia: Regra = {
+    id: 'passo-vencido',
+    titulo: 'O passo que você marcou venceu',
+    emoji: '⏰',
+    acao: 'Fazer, remarcar para uma data real ou dar baixa — do jeito que está, o lead não anda.',
+    novos: [],
+    estoque: 0,
+  };
+
+  const { data: ativRaw } = await supabase
+    .from('activities')
+    .select('deal_id, owner_id, title, date, type')
+    .eq('completed', false)
+    .is('deleted_at', null)
+    .lte('date', now.toISOString())
+    .order('date', { ascending: false });
+
+  const linhas = (ativRaw ?? []) as Array<{
+    deal_id: string | null; owner_id: string | null; title: string | null; date: string; type: string;
+  }>;
+  const dealIds = [...new Set(linhas.map((l) => l.deal_id).filter(Boolean))] as string[];
+  if (dealIds.length === 0) return vazia;
+
+  // Card fechado não tem passo pendente — o desfecho foi o fechamento (mesma guarda da regra 2).
+  const [nomes, fechados, donos] = await Promise.all([
+    nomesDosCards(supabase, dealIds),
+    cardsFechados(supabase, dealIds),
+    donosDosCards(supabase, dealIds),
+  ]);
+
+  // Um card com três tarefas vencidas é UM problema, não três. Fica a mais antiga,
+  // que é a que mede o tamanho do atraso.
+  const porCard = new Map<string, (typeof linhas)[number]>();
+  for (const l of linhas) {
+    if (!l.deal_id || fechados.has(l.deal_id)) continue;
+    // CALL fica com a regra 2 ("Reunião de ontem sem desfecho"): o mesmo card em duas listas
+    // ensina a ignorar o relatório. Filtrado aqui, e não no `.neq` da query, porque o volume de
+    // pendência vencida é pequeno e não vale fazer 4 mocks de teste aprenderem um operador novo.
+    if (l.type === 'CALL') continue;
+    const atual = porCard.get(l.deal_id);
+    if (!atual || new Date(l.date).getTime() < new Date(atual.date).getTime()) porCard.set(l.deal_id, l);
+  }
+
+  const todos: ItemAlerta[] = [...porCard.entries()].map(([dealId, l]) => {
+    const donoId = l.owner_id ?? donos.get(dealId) ?? null;
+    return {
+      donoId,
+      donoNome: nomeDe(perfis.get(donoId ?? '') as Parameters<typeof nomeDe>[0]),
+      contato: nomes.get(dealId) ?? 'Card sem nome',
+      detalhe: `"${(l.title ?? 'passo sem título').slice(0, 48)}" venceu`,
+      idadeHoras: (now.getTime() - new Date(l.date).getTime()) / 36e5,
+      dealId,
+    };
+  });
+
+  // O mais atrasado primeiro: aqui a idade é a própria gravidade.
+  return { ...vazia, novos: ordenar(todos), estoque: todos.length, estoquePorDono: contarPorDono(todos) };
 }
 
 /**
@@ -1378,6 +1471,22 @@ async function cardsFechados(supabase: SupabaseClient, dealIds: string[]): Promi
     .is('deleted_at', null);
   const linhas = (data ?? []) as Array<{ id: string; is_won: boolean | null; is_lost: boolean | null }>;
   return new Set(linhas.filter((l) => l.is_won === true || l.is_lost === true).map((l) => l.id));
+}
+
+/**
+ * Dono de cada card — fallback para quando a ATIVIDADE nasceu sem `owner_id`.
+ *
+ * `activities.owner_id` é nulo numa fatia grande das linhas (todo o registro de timeline, e
+ * também tarefas criadas por caminhos que esqueceram o campo — a mesma família de 09/09 e
+ * 16/09). Quando isso acontece, `nomeDe(perfis.get(null))` devolve "Sem dono", e a cobrança
+ * chega sem endereço justamente no item marcado na mão, que é o que mais precisa de nome.
+ * O card quase sempre sabe de quem é.
+ */
+async function donosDosCards(supabase: SupabaseClient, dealIds: string[]): Promise<Map<string, string>> {
+  if (dealIds.length === 0) return new Map();
+  const { data } = await supabase.from('deals').select('id, owner_id').in('id', dealIds);
+  const linhas = (data ?? []) as Array<{ id: string; owner_id: string | null }>;
+  return new Map(linhas.filter((l) => l.owner_id).map((l) => [l.id, l.owner_id as string]));
 }
 
 async function nomesDosCards(supabase: SupabaseClient, dealIds: string[]): Promise<Map<string, string>> {
