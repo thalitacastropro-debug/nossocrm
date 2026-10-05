@@ -904,23 +904,30 @@ async function regraReuniaoVencida(
 
   const linhas = (data ?? []) as Array<{ id: string; deal_id: string | null; owner_id: string | null; title: string | null; date: string }>;
   const dealIds = [...new Set(linhas.map((l) => l.deal_id).filter(Boolean))] as string[];
-  const [nomes, fechados] = await Promise.all([
+  const [nomes, fechados, donos] = await Promise.all([
     nomesDosCards(supabase, dealIds),
     // Reunião num card que virou perdido/ganho não é desfecho pendente — o desfecho foi o
     // fechamento. Sem isto, o relatório cobrava reuniões de 51 e 63 dias atrás de cards encerrados.
     cardsFechados(supabase, dealIds),
+    // Sem isto a cobrança sai "Sem dono" justamente na reunião marcada NA MÃO e esquecida —
+    // a que mais precisa de nome. `activities.owner_id` é nulo numa fatia grande das linhas;
+    // o CARD sabe de quem é. (Conserto do feature 22c3b79, que entregava a lista sem endereço.)
+    donosDosCards(supabase, dealIds),
   ]);
 
   const todos: ItemAlerta[] = linhas
     .filter((l) => !(l.deal_id && fechados.has(l.deal_id)))
-    .map((l) => ({
-      donoId: l.owner_id,
-      donoNome: nomeDe(perfis.get(l.owner_id ?? '') as Parameters<typeof nomeDe>[0]),
-      contato: nomes.get(l.deal_id ?? '') ?? l.title ?? 'Card sem nome',
-      detalhe: 'aconteceu? deu no-show? ninguém marcou',
-      idadeHoras: horasEntre(now, new Date(l.date)),
-      dealId: l.deal_id ?? undefined,
-    }));
+    .map((l) => {
+      const donoId = l.owner_id ?? (l.deal_id ? donos.get(l.deal_id) ?? null : null);
+      return {
+        donoId,
+        donoNome: nomeDe(perfis.get(donoId ?? '') as Parameters<typeof nomeDe>[0]),
+        contato: nomes.get(l.deal_id ?? '') ?? l.title ?? 'Card sem nome',
+        detalhe: 'aconteceu? deu no-show? ninguém marcou',
+        idadeHoras: horasEntre(now, new Date(l.date)),
+        dealId: l.deal_id ?? undefined,
+      };
+    });
 
   const novos = todos.filter((i) => i.idadeHoras <= horasEntre(now, ontem));
 

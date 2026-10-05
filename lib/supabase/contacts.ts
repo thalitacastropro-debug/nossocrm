@@ -91,6 +91,12 @@ export interface DbContact {
   owner_id: string | null;
   /** Quando true, o agente de IA não responde a este contato. */
   ai_paused: boolean;
+  /**
+   * Quando a pausa começou — é o que permite ela EXPIRAR (`agent.service`).
+   * `null` com `ai_paused = true` é "pausa legada", que não expira nunca: existe só para o
+   * passivo de 14/08/2026 (takeovers humanos reais). Pausa nova sempre carimba.
+   */
+  ai_paused_at?: string | null;
 }
 
 /**
@@ -190,7 +196,26 @@ const transformContactToDb = (contact: Partial<Contact>): Partial<DbContact> => 
   if (contact.lastInteraction !== undefined) db.last_interaction = contact.lastInteraction || null;
   if (contact.lastPurchaseDate !== undefined) db.last_purchase_date = contact.lastPurchaseDate || null;
   if (contact.totalValue !== undefined) db.total_value = contact.totalValue;
-  if (contact.aiPaused !== undefined) db.ai_paused = contact.aiPaused;
+  // PAUSAR A ANA PELA TELA TEM DE CARIMBAR A HORA — senão a pausa nunca expira.
+  //
+  // `ai_paused_at` nulo significa "pausa legada", e pausa legada NÃO expira: é
+  // retrocompatibilidade deliberada da migration 20260814120000, escrita para proteger os
+  // takeovers humanos REAIS que já existiam naquele dia (Mavie, Graci, Josiane, Silvia) —
+  // expirar tudo de uma vez faria a Ana falar por cima do consultor, e no caso da Mavie
+  // atender uma CLIENTE com script de qualificação (o P0 do caso Isabella, filha dela).
+  //
+  // O que não era deliberado é esta tela continuar FABRICANDO pausas legadas novas. O webhook
+  // da UAZAPI carimba (`ai_paused: true, ai_paused_at: now`); o app Next não carimbava em
+  // lugar nenhum, então toda pausa feita pelo CRM nascia imortal e silenciosa. Em 05/10 eram
+  // 13 de 16 contatos pausados sem carimbo — leads fora do alcance da Ana para sempre, sem
+  // nada na tela dizendo isso. A retrocompatibilidade de agosto virou um vazamento contínuo.
+  //
+  // Despausar limpa o carimbo, igual ao `agent.service` faz, para o contato voltar ao estado
+  // neutro em vez de guardar uma data de pausa que não vale mais.
+  if (contact.aiPaused !== undefined) {
+    db.ai_paused = contact.aiPaused;
+    db.ai_paused_at = contact.aiPaused ? new Date().toISOString() : null;
+  }
 
   return db;
 };
