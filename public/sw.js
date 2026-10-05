@@ -15,7 +15,11 @@
 // resolveu. Dava para ver no log do Supabase: o código novo faz uma busca antes de gravar a
 // empresa e duas chamadas de autenticação ao criar o contato, e as requisições dele não tinham
 // nenhuma das duas.
-const CACHE_NAME = 'nossocrm-shell-v3';
+// 05/10/2026 (v3 → v4): o conserto da pausa da Ana (`contacts.ts` passa a gravar `ai_paused_at`)
+// roda NO NAVEGADOR — é a tela que chama. Sem subir esta versão, quem já tem o app instalado
+// continuaria criando pausa sem carimbo, ou seja, pausa que nunca expira, até o navegador resolver
+// buscar o bundle novo por conta própria.
+const CACHE_NAME = 'nossocrm-shell-v4';
 const SHELL_URLS = [
   '/',
   '/login',
