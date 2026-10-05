@@ -361,7 +361,13 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     expect(tasks).toHaveLength(0);
   });
 
-  it('vai_pensar → move só de etapa (Negociação), sem mudar board nem flags', async () => {
+  // O board passou a ser ESCRITO (antes ficava undefined = "mesmo board"). A etapa Negociação é
+  // do Comercial: se o card estiver em outro funil, board antigo + etapa do Comercial é card
+  // órfão, e o trigger `zz_stage_pertence_ao_board` derruba o desfecho inteiro. Escrever os dois
+  // juntos é o que o próprio trigger pede ("Ao mover de funil, atualize board_id e stage_id
+  // juntos"). Como aqui o card já está no Comercial, não há mudança de funil e as flags de
+  // ganho/perda continuam intocadas.
+  it('vai_pensar → Negociação com board explícito, sem mexer nas flags', async () => {
     await callPost(baseBody({
       desfecho: {
         ...(baseBody().desfecho as Record<string, unknown>),
@@ -371,7 +377,7 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     }));
     const arg = dealUpdateSpy.mock.calls[0][0] as Record<string, unknown>;
     expect(arg.stage_id).toBe('86179ae9-1d6f-40ca-aaab-9ed7f320a3cc');
-    expect(arg.board_id).toBeUndefined();
+    expect(arg.board_id).toBe('efbaa84e-cf4b-4465-8b50-41afd612088e');
     expect(arg.is_won).toBeUndefined();
     expect(arg.is_lost).toBeUndefined();
   });

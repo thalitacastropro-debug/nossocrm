@@ -4,6 +4,7 @@ import { MOTIVO_TAGS } from '@/lib/ai/taxonomy/motivos';
 import {
   IMPLANTACAO_ADM_BOARD_ID, IMPLANTACAO_AGUARDANDO_DOC_STAGE_ID,
   NUTRICAO_REATIVACAO_BOARD_ID, NUTRICAO_RECONTATO_STAGE_ID, NEGOCIACAO_STAGE_ID,
+  CONSULTOR_BOARD_ID,
 } from '@/lib/config/boards';
 
 describe('routeForDesfecho', () => {
@@ -15,10 +16,14 @@ describe('routeForDesfecho', () => {
     const r = routeForDesfecho('perdeu');
     expect(r).toMatchObject({ boardId: NUTRICAO_REATIVACAO_BOARD_ID, stageId: NUTRICAO_RECONTATO_STAGE_ID, mark: 'lost', reabordagem: true });
   });
-  it('vai_pensar → Negociação (mesmo board), sem mark', () => {
+  // `boardId` deixou de ser undefined em 05/10. NEGOCIACAO_STAGE_ID pertence ao Comercial, e
+  // "mesmo board" só funcionava enquanto o card já estivesse lá: vindo de outro funil, ele
+  // ficava com board antigo + etapa do Comercial — a incoerência do caso Richard Gois, que o
+  // trigger `zz_stage_pertence_ao_board` barra com check_violation, derrubando o desfecho num
+  // 500 genérico e levando o áudio do consultor junto.
+  it('vai_pensar → Negociação do Comercial, com board explícito e sem mark', () => {
     const r = routeForDesfecho('vai_pensar');
-    expect(r).toMatchObject({ stageId: NEGOCIACAO_STAGE_ID, mark: null });
-    expect(r.boardId).toBeUndefined();
+    expect(r).toMatchObject({ boardId: CONSULTOR_BOARD_ID, stageId: NEGOCIACAO_STAGE_ID, mark: null });
   });
   it('remarcar / nao_atendeu não movem', () => {
     expect(routeForDesfecho('remarcar').stageId).toBeUndefined();

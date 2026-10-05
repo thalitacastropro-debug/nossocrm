@@ -115,7 +115,7 @@ describe('diário — lead largado na etapa de qualificação', () => {
     const d = await rodar({
       deals: [card('d1', 'Sara Teles', 10)],
       contacts: [contatoDe('d1', 'Sara Teles')],
-      activities: [{ deal_id: 'd1', created_at: diasAtras(10), date: diasAFrente(2), completed: false, deleted_at: null }],
+      activities: [{ deal_id: 'd1', type: 'TASK', created_at: diasAtras(10), date: diasAFrente(2), completed: false, deleted_at: null }],
     });
     expect(regra(d).estoque).toBe(0);
   });
@@ -125,7 +125,7 @@ describe('diário — lead largado na etapa de qualificação', () => {
     const d = await rodar({
       deals: [card('d1', 'Card eterno', 10)],
       contacts: [contatoDe('d1', 'Card eterno')],
-      activities: [{ deal_id: 'd1', created_at: diasAtras(10), date: diasAFrente(400), completed: false, deleted_at: null }],
+      activities: [{ deal_id: 'd1', type: 'TASK', created_at: diasAtras(10), date: diasAFrente(400), completed: false, deleted_at: null }],
     });
     expect(regra(d).estoque).toBe(1);
   });

@@ -196,22 +196,47 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // alcança (ele só toca `completed = false`) e continua limpando o que de fato ficou órfão.
   const admin = createStaticAdminClient();
 
-  if (marcaRealizada) {
-    const agendada = existingCf.reuniao_agendada as { activity_id?: string } | undefined;
-    if (agendada?.activity_id) {
-      // .eq('deal_id') e obrigatorio: activity_id sai de custom_fields, campo do usuario.
-      await admin
-        .from('activities')
-        .update({ completed: true })
-        .eq('id', agendada.activity_id)
-        .eq('deal_id', dealId);
-    }
+  const callAgendada = marcaRealizada
+    ? (existingCf.reuniao_agendada as { activity_id?: string } | undefined)?.activity_id ?? null
+    : null;
+
+  if (callAgendada) {
+    // .eq('deal_id') e obrigatorio: activity_id sai de custom_fields, campo do usuario.
+    await admin
+      .from('activities')
+      .update({ completed: true })
+      .eq('id', callAgendada)
+      .eq('deal_id', dealId);
   }
 
   const { error: updErr } = await supabase.from('deals').update(dealUpdate).eq('id', dealId);
   if (updErr) {
+    // DESFAZER O CARIMBO — senão esta rota produz o defeito que a `regraContradicao` denuncia.
+    //
+    // A ordem nova (CALL antes do deal) protege a reunião do trigger de limpeza, mas abriu uma
+    // escrita parcial: se o UPDATE do deal falha, a rota devolve erro e NADA mais é gravado —
+    // nem a nota de desfecho, nem as tarefas, nem o carimbo da venda. Sobraria só a reunião
+    // marcada como REALIZADA, de um desfecho que foi jogado fora. É exatamente o que a regra
+    // "Marcou realizada, não escreveu desfecho" procura — e ela é `sigiloso: true`, ou seja,
+    // acusaria o consultor no relatório privado da Thalita por um erro do servidor.
+    if (callAgendada) {
+      await admin
+        .from('activities')
+        .update({ completed: false })
+        .eq('id', callAgendada)
+        .eq('deal_id', dealId);
+    }
     if ((updErr as { code?: string }).code === '23505') {
       return NextResponse.json({ error: 'Deal duplicado na etapa de destino.' }, { status: 409 });
+    }
+    // 23514 = check_violation, levantado por `zz_stage_pertence_ao_board` quando a etapa de
+    // destino não pertence ao funil do card. Vale uma mensagem própria: no 500 genérico o
+    // consultor perde o áudio sem saber por quê.
+    if ((updErr as { code?: string }).code === '23514') {
+      return NextResponse.json(
+        { error: 'Etapa de destino não pertence ao funil deste card. Mova o card antes de aplicar o desfecho.' },
+        { status: 409 },
+      );
     }
     console.error('[call-outcome/apply] deal update failed:', updErr.message);
     return NextResponse.json({ error: 'Failed to apply outcome' }, { status: 500 });

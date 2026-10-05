@@ -6,6 +6,7 @@ import type { MotivoTag } from '@/lib/ai/taxonomy/motivos';
 import {
   IMPLANTACAO_ADM_BOARD_ID, IMPLANTACAO_AGUARDANDO_DOC_STAGE_ID,
   NUTRICAO_REATIVACAO_BOARD_ID, NUTRICAO_RECONTATO_STAGE_ID, NEGOCIACAO_STAGE_ID,
+  CONSULTOR_BOARD_ID,
 } from '@/lib/config/boards';
 
 export interface Route {
@@ -22,7 +23,13 @@ export function routeForDesfecho(desfecho: Desfecho['desfecho']): Route {
     case 'perdeu':
       return { boardId: NUTRICAO_REATIVACAO_BOARD_ID, stageId: NUTRICAO_RECONTATO_STAGE_ID, mark: 'lost', reabordagem: true };
     case 'vai_pensar':
-      return { stageId: NEGOCIACAO_STAGE_ID, mark: null, reabordagem: false };
+      // `boardId` EXPLÍCITO, e não `undefined` ("mesmo board"): NEGOCIACAO_STAGE_ID pertence ao
+      // Comercial — Consultor, então um card que esteja em QUALQUER outro funil receberia a etapa
+      // do Comercial mantendo o board antigo. É exatamente a incoerência do caso Richard Gois
+      // (card invisível no kanban), hoje barrada pelo trigger `zz_stage_pertence_ao_board` com
+      // `check_violation` — o desfecho morria num 500 genérico e o áudio do consultor ia junto.
+      // Dizendo o funil, o move fica coerente venha de onde vier.
+      return { boardId: CONSULTOR_BOARD_ID, stageId: NEGOCIACAO_STAGE_ID, mark: null, reabordagem: false };
     default: // remarcar, nao_atendeu
       return { mark: null, reabordagem: false };
   }

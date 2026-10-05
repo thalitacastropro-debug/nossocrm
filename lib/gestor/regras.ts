@@ -452,7 +452,7 @@ async function regraNegociacaoParada(
   }
 
   const { data: ativRaw } = await supabase
-    .from('activities').select('deal_id, created_at, date, completed')
+    .from('activities').select('deal_id, created_at, date, completed, type')
     .in('deal_id', negocios.map((d) => d.id))
     .is('deleted_at', null);
 
@@ -470,15 +470,19 @@ async function regraNegociacaoParada(
   const tetoMs = now.getTime() + DIAS_PARADO * 24 * 36e5;
 
   for (const a of ((ativRaw ?? []) as Array<{
-    deal_id: string | null; created_at: string | null; date: string | null; completed: boolean | null;
+    deal_id: string | null; created_at: string | null; date: string | null; completed: boolean | null; type: string | null;
   }>)) {
     if (!a.deal_id) continue;
     if (a.created_at) {
       const t = new Date(a.created_at).getTime();
       ultimaNota.set(a.deal_id, Math.max(ultimaNota.get(a.deal_id) ?? 0, t));
     }
-    if (a.completed === false && a.date) {
+    if (a.completed === false && a.date && (a.type === 'TASK' || a.type === 'MEETING' || a.type === 'CALL')) {
       const quando = new Date(a.date).getTime();
+      // Só COMPROMISSO isenta — TASK, MEETING ou CALL. Uma NOTE de timeline com `completed`
+      // falso não é plano de ninguém e não pode virar escudo: sem este recorte, escrever uma
+      // nota no card tiraria o lead da cobrança de etapa parada de graça.
+      //
       // Plano VIVO (marcado para os próximos DIAS_PARADO) ou plano VENCIDO: nos dois casos o
       // consultor marcou o que vem a seguir, então este card não é "abandonado" e não pode ser
       // cobrado como tal (pedido da Thalita, 05/10/2026). O vencido não sai impune — ele é
@@ -732,7 +736,7 @@ async function regraQualificacaoParada(
   }
 
   const { data: ativRaw } = await supabase
-    .from('activities').select('deal_id, created_at, date, completed')
+    .from('activities').select('deal_id, created_at, date, completed, type')
     .in('deal_id', cards.map((d) => d.id))
     .is('deleted_at', null);
 
@@ -742,15 +746,19 @@ async function regraQualificacaoParada(
   const temProximoPasso = new Set<string>();
   const tetoMs = now.getTime() + DIAS_PARADO * 24 * 36e5;
   for (const a of ((ativRaw ?? []) as Array<{
-    deal_id: string | null; created_at: string | null; date: string | null; completed: boolean | null;
+    deal_id: string | null; created_at: string | null; date: string | null; completed: boolean | null; type: string | null;
   }>)) {
     if (!a.deal_id) continue;
     if (a.created_at) {
       const t = new Date(a.created_at).getTime();
       ultimaNota.set(a.deal_id, Math.max(ultimaNota.get(a.deal_id) ?? 0, t));
     }
-    if (a.completed === false && a.date) {
+    if (a.completed === false && a.date && (a.type === 'TASK' || a.type === 'MEETING' || a.type === 'CALL')) {
       const quando = new Date(a.date).getTime();
+      // Só COMPROMISSO isenta — TASK, MEETING ou CALL. Uma NOTE de timeline com `completed`
+      // falso não é plano de ninguém e não pode virar escudo: sem este recorte, escrever uma
+      // nota no card tiraria o lead da cobrança de etapa parada de graça.
+      //
       // Plano VIVO (marcado para os próximos DIAS_PARADO) ou plano VENCIDO: nos dois casos o
       // consultor marcou o que vem a seguir, então este card não é "abandonado" e não pode ser
       // cobrado como tal (pedido da Thalita, 05/10/2026). O vencido não sai impune — ele é
@@ -859,10 +867,16 @@ async function regraPassoVencido(
   const porCard = new Map<string, (typeof linhas)[number]>();
   for (const l of linhas) {
     if (!l.deal_id || fechados.has(l.deal_id)) continue;
-    // CALL fica com a regra 2 ("Reunião de ontem sem desfecho"): o mesmo card em duas listas
-    // ensina a ignorar o relatório. Filtrado aqui, e não no `.neq` da query, porque o volume de
-    // pendência vencida é pequeno e não vale fazer 4 mocks de teste aprenderem um operador novo.
-    if (l.type === 'CALL') continue;
+    // ALLOWLIST, nunca denylist. `activities` guarda a TIMELINE junto com as tarefas (203
+    // STATUS_CHANGE e 144 NOTE hoje), e nota de timeline não é passo marcado por ninguém.
+    // Com a denylist antiga (que só excluía CALL), a NOTE "Nota Adicionada" do card da Patricia
+    // do Nascimento Costa — `completed = false`, de 22/09 — entrava como PRIORIDADE NOMEADA do
+    // dia do Pedro: «⏰ Patricia — "Nota Adicionada" venceu (há 13 dias)». Cobrar alguém por uma
+    // nota que ele mesmo escreveu é o jeito mais rápido de ensinar o time a ignorar o relatório.
+    //
+    // CALL é compromisso de verdade, mas fica com a regra 2 ("Reunião de ontem sem desfecho"):
+    // o mesmo card em duas listas tem o mesmo efeito de desgaste.
+    if (l.type !== 'TASK' && l.type !== 'MEETING') continue;
     const atual = porCard.get(l.deal_id);
     if (!atual || new Date(l.date).getTime() < new Date(atual.date).getTime()) porCard.set(l.deal_id, l);
   }
