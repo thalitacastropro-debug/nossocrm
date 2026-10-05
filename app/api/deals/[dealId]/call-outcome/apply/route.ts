@@ -150,15 +150,62 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     dealUpdate.last_stage_change_date = enviadoEm;
     if (route.boardId) dealUpdate.board_id = route.boardId;
   }
+  // GANHO DE UM FUNIL NÃO É GANHO DO FUNIL SEGUINTE (regra da Thalita, 05/10/2026).
+  //
+  // "Cada funil tem o seu ganho. Enquanto o cliente não pagar o primeiro boleto, a
+  // implantação não é dada como ganha." Vender é o ganho do Comercial; implantar é o ganho
+  // da Implantação. O card chega no destino com trabalho POR FAZER, então entra EM ABERTO.
+  //
+  // O caso que revelou isto: a venda da Flavia Almeida (05/10, R$ 1.188,39) foi para a
+  // Implantação com is_won = true. O kanban nasce com o filtro de status em "Em Aberto"
+  // (useBoardsController: `!isWon && !isLost`), que descarta card fechado — e esse filtro,
+  // ao contrário do funil ativo, NÃO é persistido. O Pedro reabria sempre no Comercial, de
+  // onde o card tinha saido, com o filtro que esconde onde ele estava: invisivel nos dois
+  // lados, e refresh nao resolvia. A venda sumiu para quem a fechou.
+  //
+  // É a mesma decisão que `/api/deals/[dealId]/proximo-funil` (:527-540) já tomava para o
+  // move pelo kanban — "Entra num funil novo → reabre. O ganho não se perde: fica no carimbo
+  // `venda`". O desfecho por áudio era o único caminho que movia E fechava na mesma escrita.
+  // A receita segue medida pelo carimbo `custom_fields.venda`, nunca por `is_won`
+  // (ver reference_crm_venda_mora_no_carimbo).
+  //
+  // `perdeu` NÃO entra nesta regra por ora: zerar `is_lost` ao mandar para a Nutrição
+  // RELIGA a Ana no lead (o cron de follow-up filtra `.eq('is_lost', false)`), e isso é uma
+  // decisão de operação, não de layout. Deixado explícito para não ser "consertado" sem querer.
+  const mudaDeFunil = Boolean(route.boardId) && route.boardId !== deal.board_id;
+
   if (route.mark === 'won') {
-    dealUpdate.is_won = true;
+    dealUpdate.is_won = !mudaDeFunil;
     dealUpdate.is_lost = false;
-    dealUpdate.closed_at = enviadoEm;
+    dealUpdate.closed_at = mudaDeFunil ? null : enviadoEm;
   }
   if (route.mark === 'lost') {
     dealUpdate.is_lost = true;
     dealUpdate.is_won = false;
     dealUpdate.closed_at = enviadoEm;
+  }
+
+  // A CALL agendada é concluída ANTES de fechar o deal — a ordem importa.
+  //
+  // `zz_cancela_compromisso_vencido_trg` (migration 20260928170000) dispara em
+  // `after update of is_won, is_lost` e cancela todo compromisso VENCIDO e não concluído do
+  // card. É o mesmo UPDATE deste desfecho, e a reunião que acabou de acontecer é, por
+  // definição, um compromisso vencido e ainda não carimbado. Com a ordem antiga, o trigger
+  // cancelava a reunião REALIZADA e só depois este bloco tentava marcá-la como realizada:
+  // ela sairia da timeline e da taxa de comparecimento. Concluindo antes, o trigger não a
+  // alcança (ele só toca `completed = false`) e continua limpando o que de fato ficou órfão.
+  const admin = createStaticAdminClient();
+
+  if (marcaRealizada) {
+    const agendada = existingCf.reuniao_agendada as { activity_id?: string } | undefined;
+    if (agendada?.activity_id) {
+      // .eq('deal_id') e obrigatorio: activity_id sai de custom_fields, campo do usuario.
+      await admin
+        .from('activities')
+        .update({ completed: true })
+        .eq('id', agendada.activity_id)
+        .eq('deal_id', dealId);
+    }
   }
 
   const { error: updErr } = await supabase.from('deals').update(dealUpdate).eq('id', dealId);
@@ -171,20 +218,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   // --- Side effects (best-effort; o desfecho já valeu no deal) ----------------
-  const admin = createStaticAdminClient();
-
-  // 0. Reunião realizada → completa a CALL agendada da Ana (alimenta a métrica).
-  if (marcaRealizada) {
-    const agendada = existingCf.reuniao_agendada as { activity_id?: string } | undefined;
-    if (agendada?.activity_id) {
-      // .eq('deal_id') e obrigatorio: activity_id sai de custom_fields, campo do usuario.
-      await admin
-        .from('activities')
-        .update({ completed: true })
-        .eq('id', agendada.activity_id)
-        .eq('deal_id', dealId);
-    }
-  }
+  // (a conclusão da CALL agendada subiu para ANTES do update — ver comentário do trigger)
 
   // 1. Nota-resumo → activity NOTE completed.
   await admin.from('activities').insert({
