@@ -107,6 +107,42 @@ const NARRACAO_INTERNA: Array<[RegExp, string]> = [
   // forma em que foi medido.
   [/^\s*(aqui\s+est[áa]|segue\s+(o|a))\b[^:\n]{0,40}:/iu, 'narracao:rotulo_de_saida'],
   [/^\s*(resposta|mensagem|sa[íi]da)\s*:/iu, 'narracao:rotulo_seco'],
+
+  // ---------------------------------------------------------------------------------------
+  // Acrescentados em 07/10/2026, DEPOIS de medir — a régua que a nota logo abaixo exige.
+  //
+  // Os cinco padrões acima NÃO pegaram o pior vazamento real que já tivemos: em 29/09 às 8h a
+  // lead Regina Balbino (4 vidas, Hapvida, CNPJ em SP, R$ 3.400/mês) RECEBEU E LEU cinco bolhas
+  // em que a Ana conversava com o operador SOBRE ela — "Qual é a situação exata?", "- Regina viu
+  // a mensagem mas não respondeu?", "Você quer que eu escreva como se ESSA mensagem acima ainda
+  // não tivesse sido mandada?". Ela nunca mais respondeu. Adelino Miguel levou outra em 06/10,
+  // e Brooksfield Jr em 21/09.
+  //
+  // MEDIÇÃO (2.319 mensagens outbound, o histórico inteiro): os padrões abaixo capturam 8
+  // mensagens e as 8 são vazamento. ZERO falso positivo. Cada um foi medido isolado.
+  //
+  // O que NÃO entrou, pela mesma régua: `você tem razão` (1 captura, mas é concordância que a
+  // Ana diz legitimamente ao lead — e a frase real já cai em `a conversa parou`) e `você quer
+  // que eu` (ela pode perguntar isso de verdade; a frase real já cai em `essa mensagem acima`).
+  // Padrão que não aumenta captura e aumenta falso positivo continua sendo prejuízo líquido.
+
+  // Jargão de operação: palavra que existe no nosso processo e nunca na conversa com o cliente.
+  [/\bfollow[- ]?up\b/iu, 'narracao:jargao_followup'],
+  [/\breengaj/iu, 'narracao:jargao_reengajamento'],
+  [/\b(o|esse|este|pr[óo]ximo|um)\s+toque\b/iu, 'narracao:jargao_toque'],
+
+  // Meta-referência: ela comenta a conversa em vez de conversar.
+  [/\ba\s+(última|ultima|anterior)\s+mensagem\b/iu, 'narracao:comenta_a_conversa'],
+  [/\b(essa|esta)\s+mensagem\s+acima\b/iu, 'narracao:comenta_a_conversa'],
+  [/\ba\s+conversa\s+parou\b/iu, 'narracao:comenta_a_conversa'],
+  [/n[ãa]o\s+foi\s+descriptografada/iu, 'narracao:comenta_a_conversa'],
+  [/\bviu\s+a\s+mensagem\b/iu, 'narracao:comenta_a_conversa'],
+
+  // Pergunta de instrução: pedindo ordem a um operador, não falando com a pessoa.
+  [/qual\s+[ée]\s+a\s+situa[çc][ãa]o\s+exata/iu, 'narracao:pede_instrucao'],
+
+  // Bullet: a Ana escreve em bolhas curtas, nunca em lista de opções para alguém escolher.
+  [/^\s*-\s+/mu, 'narracao:lista_de_opcoes'],
 ];
 
 /*

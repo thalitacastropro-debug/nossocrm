@@ -7,6 +7,7 @@ import { generateText } from 'ai';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getModel } from '@/lib/ai/config';
 import { getOrgAIConfig } from '@/lib/ai/agent/agent.service';
+import { validateAIOutput } from '@/lib/ai/agent/output-validator';
 
 function warmTask(touchIndex: number): string {
   const foco =
@@ -83,6 +84,35 @@ export async function generateWarmFollowupBubbles(opts: {
     // Guard anti-alucinação: se a IA vazou placeholder em colchetes, descarta o toque
     // (o chamador usa o fallback fixo) em vez de mandar "[estado/cidade]" pro lead.
     if (bubbles.some((b) => /[[\]]/.test(b))) return null;
+
+    // O MESMO VALIDADOR DA RESPOSTA, AGORA TAMBÉM AQUI (05-07/10/2026).
+    //
+    // `ae7eb47` (28/09, 15:42) criou `validateAIOutput` para impedir que a Ana pensasse em voz
+    // alta na bolha do lead — mas plugou só no `agent.service`, o caminho de RESPONDER. O
+    // follow-up gera texto por conta própria e mandava direto, então a trava nunca o cobriu.
+    //
+    // O custo disso, medido em produção: a lead Regina Balbino (4 vidas, Hapvida, CNPJ em SP,
+    // paga R$ 3.400 — lead ouro) RECEBEU E LEU, em 29/09 às 8h, cinco bolhas de raciocínio
+    // interno, entre elas "Qual é a situação exata?", "- Regina viu a mensagem mas não
+    // respondeu?" e "Você quer que eu escreva como se ESSA mensagem acima ainda não tivesse
+    // sido mandada?". A Ana tratou a cliente como se fosse o operador. Ela nunca mais
+    // respondeu. E não foi caso único: Adelino Miguel levou outra em 06/10, 15:30.
+    //
+    // Falha macia, igual à do agent.service: toque suspeito é DESCARTADO (retorna null) e o
+    // chamador cai no fallback fixo de `copy.ts`. Entre mandar uma bolha estranha e mandar a
+    // frase padrão, a frase padrão ganha sempre — o lead não vê a diferença, e nós não
+    // queimamos a conversa.
+    // Contexto vazio de propósito: aqui interessam os checks que NÃO dependem dele — narração
+    // interna, vazamento de prompt/identidade de IA e tamanho. O check de PII compara a saída
+    // com e-mail/telefone do contato, dado que este caminho não carrega; com o contexto vazio
+    // ele simplesmente não acusa nada, em vez de acusar errado.
+    const semContexto = { contact: null, deal: null, stage: null, messages: [] } as unknown as Parameters<typeof validateAIOutput>[1];
+    const veredito = validateAIOutput(bubbles.join('\n'), semContexto, {
+      org_id: opts.organizationId,
+      conversation_id: opts.conversationId,
+    });
+    if (!veredito.safe) return null;
+
     return bubbles.length >= 1 ? bubbles : null;
   } catch {
     return null;
