@@ -172,12 +172,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // `perdeu` NÃO entra nesta regra por ora: zerar `is_lost` ao mandar para a Nutrição
   // RELIGA a Ana no lead (o cron de follow-up filtra `.eq('is_lost', false)`), e isso é uma
   // decisão de operação, não de layout. Deixado explícito para não ser "consertado" sem querer.
-  const mudaDeFunil = Boolean(route.boardId) && route.boardId !== deal.board_id;
+  //
+  // ⚠️ CORREÇÃO DE 07/10 — a primeira versão disto perguntava se o card MUDA de funil
+  // (`route.boardId !== deal.board_id`) e só então segurava o `is_won`. Buraco: quando o card
+  // JÁ ESTÁ no funil de destino, não há mudança, e o ganho era marcado do mesmo jeito.
+  //
+  // Foi o que sumiu com o card do ROBSON CARLOS ALVES: ele já estava na Implantação, o Pedro
+  // mandou um plano novo e gravou o desfecho ali mesmo em 06/10 15:58. `mudaDeFunil` deu
+  // false, `is_won` virou true e o card saiu do filtro "Em Aberto" — o mesmo desaparecimento
+  // da Flavia por um caminho que o conserto dela não cobria. Um dia depois do conserto subir.
+  //
+  // A pergunta certa não é "mudou de funil?", é ONDE O CARD TERMINA. Se o desfecho define um
+  // funil de destino (`route.boardId`), o card acaba NELE, e o ganho que o desfecho carrega é
+  // o do funil de ORIGEM da venda — nunca o do destino. Fechar uma venda não implanta nada;
+  // a implantação só é ganha quando o cliente paga o primeiro boleto.
+  const terminaEmFunilDeDestino = Boolean(route.boardId);
 
   if (route.mark === 'won') {
-    dealUpdate.is_won = !mudaDeFunil;
+    dealUpdate.is_won = !terminaEmFunilDeDestino;
     dealUpdate.is_lost = false;
-    dealUpdate.closed_at = mudaDeFunil ? null : enviadoEm;
+    dealUpdate.closed_at = terminaEmFunilDeDestino ? null : enviadoEm;
   }
   if (route.mark === 'lost') {
     dealUpdate.is_lost = true;

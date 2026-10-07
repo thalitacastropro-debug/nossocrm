@@ -276,6 +276,19 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     expect((arg.custom_fields as Record<string, unknown>).venda).toBeTruthy();
   });
 
+  // O BURACO DA PRIMEIRA VERSÃO (07/10): a regra perguntava se o card MUDA de funil. Quando ele
+  // JÁ ESTAVA no destino não havia mudança, e o ganho era marcado do mesmo jeito — o card do
+  // ROBSON CARLOS ALVES sumiu assim em 06/10, um dia depois do conserto da Flavia subir: ele já
+  // estava na Implantação, o Pedro mandou plano novo e gravou o desfecho ali mesmo.
+  // A pergunta certa é ONDE O CARD TERMINA, não se ele se move.
+  it('fechou com o card JÁ na Implantação → continua em aberto (não marca ganho de novo)', async () => {
+    dealRow = { ...dealRow, board_id: '851c641a-ac99-404e-83d7-9712425b5fdf' };
+    await callPost(baseBody());
+    const arg = dealUpdateSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.is_won).toBe(false);
+    expect(arg.closed_at).toBeNull();
+  });
+
   // A reunião realizada tem de ser carimbada ANTES do update que move/fecha o deal:
   // `zz_cancela_compromisso_vencido_trg` dispara em `after update of is_won, is_lost` e
   // cancela compromisso vencido e não concluído — que é exatamente a reunião que acabou de
