@@ -41,24 +41,19 @@ vi.mock('@supabase/ssr', () => mocks.supabaseSsrMock)
 import { updateSession } from '../lib/supabase/middleware'
 
 type MockRequest = {
-  nextUrl: {
-    pathname: string
-    clone(): { pathname: string }
-  }
+  nextUrl: URL & { clone(): URL }
   cookies: {
     getAll(): unknown[]
     set: ReturnType<typeof vi.fn>
   }
 }
 
-function makeRequest(pathname: string) {
+// URL de verdade (com search/searchParams): o guard agora carrega o destino em `?next=`.
+function makeRequest(pathAndQuery: string) {
+  const base = new URL(pathAndQuery, 'http://localhost')
+  const nextUrl = Object.assign(new URL(base), { clone: () => new URL(base) })
   const req: MockRequest = {
-    nextUrl: {
-      pathname,
-      clone() {
-        return { pathname }
-      },
-    },
+    nextUrl,
     cookies: {
       getAll() {
         return []
@@ -162,7 +157,7 @@ describe('updateSession (Proxy/Supabase)', () => {
 
     expect(mocks.nextResponseMock.redirect).toHaveBeenCalledTimes(1)
     const [urlArg] = mocks.nextResponseMock.redirect.mock.calls[0]
-    expect(urlArg).toMatchObject({ pathname: '/login' })
+    expect((urlArg as URL).pathname).toBe('/login')
     expect(res).toMatchObject({ kind: 'redirect' })
   })
 
@@ -174,7 +169,41 @@ describe('updateSession (Proxy/Supabase)', () => {
 
     expect(mocks.nextResponseMock.redirect).toHaveBeenCalledTimes(1)
     const [urlArg] = mocks.nextResponseMock.redirect.mock.calls[0]
-    expect(urlArg).toMatchObject({ pathname: '/dashboard' })
+    expect((urlArg as URL).pathname).toBe('/dashboard')
     expect(res).toMatchObject({ kind: 'redirect' })
+  })
+
+  // O link "Abrir o card" do Telegram (/boards?deal=...) tem que sobreviver ao login.
+  it('sem sessão, leva o destino junto para o login em ?next=', async () => {
+    const req = makeRequest('/boards?deal=5cc7084e-34af-43d6-a5a9-baae776af409')
+
+    await updateSession(req)
+
+    const [urlArg] = mocks.nextResponseMock.redirect.mock.calls[0]
+    expect((urlArg as URL).pathname).toBe('/login')
+    expect((urlArg as URL).searchParams.get('next')).toBe('/boards?deal=5cc7084e-34af-43d6-a5a9-baae776af409')
+    expect((urlArg as URL).searchParams.get('deal')).toBeNull()
+  })
+
+  it('com sessão, /login?next= devolve para o card', async () => {
+    mocks.state.currentUser = { id: 'user-1' }
+    const req = makeRequest('/login?next=' + encodeURIComponent('/boards?deal=abc'))
+
+    await updateSession(req)
+
+    const [urlArg] = mocks.nextResponseMock.redirect.mock.calls[0]
+    expect((urlArg as URL).pathname).toBe('/boards')
+    expect((urlArg as URL).search).toBe('?deal=abc')
+  })
+
+  it('com sessão, next para OUTRO site cai no /dashboard', async () => {
+    mocks.state.currentUser = { id: 'user-1' }
+    const req = makeRequest('/login?next=' + encodeURIComponent('//golpe.com/x'))
+
+    await updateSession(req)
+
+    const [urlArg] = mocks.nextResponseMock.redirect.mock.calls[0]
+    expect((urlArg as URL).host).toBe('localhost')
+    expect((urlArg as URL).pathname).toBe('/dashboard')
   })
 })

@@ -1,5 +1,9 @@
 const TELEGRAM_API = 'https://api.telegram.org';
 
+// LINK "ABRIR NO CRM" = `/boards?deal=<id>` (corrigido em 09/10/2026). Todos os avisos daqui
+// apontavam para `/deals/<id>`, rota que NUNCA existiu (só há `/deals/<id>/cockpit`): o botão de
+// todo handoff caía numa página quebrada. `/boards?deal=` abre o card em qualquer funil e status.
+
 export interface TelegramBotInfo {
   id: number;
   username: string;
@@ -108,7 +112,7 @@ export function formatHandoffMessage({
   ];
   if (appUrl && dealId) {
     lines.push(``);
-    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+    lines.push(`🔗 <a href="${appUrl}/boards?deal=${dealId}">Abrir no CRM</a>`);
   }
   return lines.join('\n');
 }
@@ -195,7 +199,7 @@ export function formatEntregaConsultorMessage({
 
   if (appUrl && dealId) {
     lines.push(``);
-    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+    lines.push(`🔗 <a href="${appUrl}/boards?deal=${dealId}">Abrir no CRM</a>`);
   }
   return lines.join('\n');
 }
@@ -239,7 +243,7 @@ export function formatHandoffEscalationMessage({
   ];
   if (appUrl && dealId) {
     lines.push(``);
-    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+    lines.push(`🔗 <a href="${appUrl}/boards?deal=${dealId}">Abrir no CRM</a>`);
   }
   return lines.join('\n');
 }
@@ -272,7 +276,7 @@ export function formatMeetingHandoffMessage({
   ];
   if (appUrl && dealId) {
     lines.push(``);
-    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+    lines.push(`🔗 <a href="${appUrl}/boards?deal=${dealId}">Abrir no CRM</a>`);
   }
   return lines.join('\n');
 }
@@ -330,7 +334,7 @@ export function formatRespostaBloqueadaMessage({
 
   if (appUrl && dealId) {
     lines.push(``);
-    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+    lines.push(`🔗 <a href="${appUrl}/boards?deal=${dealId}">Abrir no CRM</a>`);
   }
   return lines.join('\n');
 }
@@ -366,7 +370,7 @@ export function formatFollowupFalhasMessage({
   ];
   if (appUrl && dealId) {
     lines.push(``);
-    lines.push(`🔗 <a href="${appUrl}/deals/${dealId}">Abrir no CRM</a>`);
+    lines.push(`🔗 <a href="${appUrl}/boards?deal=${dealId}">Abrir no CRM</a>`);
   }
   return lines.join('\n');
 }

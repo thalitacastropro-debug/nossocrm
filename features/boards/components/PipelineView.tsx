@@ -5,6 +5,7 @@ import { CreateBoardModal } from './Modals/CreateBoardModal';
 import { BoardCreationWizard } from './BoardCreationWizard';
 import { KanbanHeader } from './Kanban/KanbanHeader';
 import { BoardStrategyHeader } from './Kanban/BoardStrategyHeader';
+import { PerdidosQueVoltaramBar } from './Kanban/PerdidosQueVoltaramBar';
 import { KanbanBoard } from './Kanban/KanbanBoard';
 import { KanbanList } from './Kanban/KanbanList';
 import { DeleteBoardModal } from './Modals/DeleteBoardModal';
@@ -356,6 +357,10 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             filteredDeals={filteredDeals}
             ownerFilter={ownerFilter}
           />
+
+          {/* Perdido que voltou a falar: o card dele não aparece em "Em Aberto" (e o perdido pelo
+              áudio nem está neste funil). A faixa vale para qualquer funil e abre o card direto. */}
+          <PerdidosQueVoltaramBar onAbrir={setSelectedDealId} />
 
           <div className="flex-1 overflow-hidden">
             {viewMode === 'kanban' ? (

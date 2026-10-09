@@ -21,7 +21,7 @@ describe('formatMeetingHandoffMessage', () => {
       appUrl: 'https://crm.example.com',
       dealId: 'deal-42',
     });
-    expect(msg).toContain('https://crm.example.com/deals/deal-42');
+    expect(msg).toContain('https://crm.example.com/boards?deal=deal-42');
     expect(msg).toContain('Abrir no CRM');
   });
 
@@ -60,7 +60,7 @@ describe('formatRespostaBloqueadaMessage', () => {
       appUrl: 'https://crm.example.com',
       dealId: 'deal-7',
     });
-    expect(msg).toContain('https://crm.example.com/deals/deal-7');
+    expect(msg).toContain('https://crm.example.com/boards?deal=deal-7');
   });
 
   it('escapa HTML do nome e da mensagem do lead (anti-injeção no parse_mode HTML)', () => {
@@ -91,13 +91,13 @@ describe('formatFollowupFalhasMessage', () => {
     expect(msg).toContain('Maria Silva');
     expect(msg).toContain('5');
     expect(msg).toMatch(/WhatsApp/i);
-    expect(msg).toContain('https://crm.nivaconsultoria.com.br/deals/d1');
+    expect(msg).toContain('https://crm.nivaconsultoria.com.br/boards?deal=d1');
   });
 
   it('sem nome de contato não quebra', () => {
     const msg = formatFollowupFalhasMessage({ contactName: null, falhas: 5 });
     expect(msg).toMatch(/sem nome/i);
-    expect(msg).not.toContain('/deals/');
+    expect(msg).not.toContain('boards?deal=');
   });
 
   it('escapa HTML do nome', () => {

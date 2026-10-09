@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { canAccessRoute, homeRouteFor, isRole, ROLE_VALUES } from '@/lib/rbac'
+import { destinoPosLogin } from '@/lib/auth/destinoPosLogin'
 
 /**
  * Função pública `updateSession` do projeto.
@@ -108,15 +109,23 @@ export async function updateSession(request: NextRequest) {
         pathname === '/' || pathname.startsWith('/join') || isSetupRoute || isInstallRoute || isPasswordRoute
 
     if (!user && !isAuthRoute && !isPublicRoute) {
+        // Carrega o destino em `?next=` — senão o link "Abrir o card" do Telegram, aberto sem
+        // sessão, terminava no painel inicial depois do login (ver lib/auth/destinoPosLogin.ts).
         const url = request.nextUrl.clone()
         url.pathname = '/login'
+        url.search = ''
+        url.searchParams.set('next', `${pathname}${request.nextUrl.search}`)
         return NextResponse.redirect(url)
     }
 
-    // Redirect authenticated users away from login
+    // Redirect authenticated users away from login — para onde iam, se o destino for seguro.
+    // (O guard de RBAC abaixo continua valendo no destino: é outra requisição.)
     if (user && isAuthRoute) {
         const url = request.nextUrl.clone()
-        url.pathname = '/dashboard'
+        const destino = destinoPosLogin(request.nextUrl.searchParams.get('next'))
+        const i = destino.indexOf('?')
+        url.pathname = i === -1 ? destino : destino.slice(0, i)
+        url.search = i === -1 ? '' : destino.slice(i)
         return NextResponse.redirect(url)
     }
 

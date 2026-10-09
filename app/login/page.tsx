@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { getErrorMessage } from '@/lib/utils/errorUtils'
+import { destinoPosLogin } from '@/lib/auth/destinoPosLogin'
 import { Loader2, Mail, Lock, ArrowRight } from 'lucide-react'
 
 /**
@@ -35,7 +36,8 @@ export default function LoginPage() {
             })
 
             if (error) throw error
-            router.push('/dashboard')
+            // Volta para onde o link levava (ex.: "Abrir o card" do Telegram) — ver destinoPosLogin.
+            router.push(destinoPosLogin(new URLSearchParams(window.location.search).get('next')))
         } catch (err) {
             setError(getErrorMessage(err))
         } finally {

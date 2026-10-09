@@ -192,10 +192,15 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
     router.push(`/contacts?id=${contactId}`);
   }, [router]);
 
-  // View deals for contact
+  // Abre o CARD do contato. Era `/boards?contact=<id>` — parâmetro que o funil nunca leu: o botão
+  // caía no funil em "Em Aberto" e, para um lead perdido, não levava a lugar nenhum (dúvida do
+  // Pedro, 09/10). `/boards?deal=<id>` abre o card em qualquer status e qualquer funil.
+  // Card aberto primeiro; sem aberto, o mais recente (`allDeals` vem do mais novo para o mais velho).
   const handleViewDeals = useCallback((contactId: string) => {
-    router.push(`/boards?contact=${contactId}`);
-  }, [router]);
+    const doContato = (allDeals ?? []).filter((d) => d.contactId === contactId);
+    const alvo = doContato.find((d) => !d.isWon && !d.isLost) ?? doContato[0];
+    router.push(alvo ? `/boards?deal=${alvo.id}` : '/boards');
+  }, [router, allDeals]);
 
   return (
     <div className="h-[calc(100vh-4rem)] flex">
