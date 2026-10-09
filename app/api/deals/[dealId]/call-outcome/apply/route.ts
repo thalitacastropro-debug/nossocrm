@@ -17,6 +17,11 @@ import { DesfechoSchema } from '@/lib/ai/call-outcome/schemas';
 import { MOTIVO_LABELS } from '@/lib/ai/taxonomy/motivos';
 import { routeForDesfecho, reabordarEmFallback, deveCriarLembrete } from '@/lib/ai/call-outcome/routing';
 import { montarCarimboVenda } from '@/lib/deals/carimboVenda';
+import {
+  pathDeGravacaoDoDeal,
+  resolverGravacao,
+  substituirTentativasAnteriores,
+} from '@/lib/supabase/dealFilesServer';
 
 export const maxDuration = 60;
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -79,6 +84,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     Date.now() - new Date(ultimoAplicadoEm as string).getTime() < 2 * 60 * 1000;
 
   if (mesmaGravacao || cliqueDuploNoManual) {
+    // Re-marca por garantia: se a 1ª aplicação gravou o card mas não a linha do arquivo, a
+    // gravação ficaria aparecendo como pendente de algo que já foi aplicado.
+    if (mesmaGravacao && pathDeGravacaoDoDeal(dealId, body.audioFilePath)) {
+      await resolverGravacao(dealId, body.audioFilePath, 'aplicado');
+    }
     return NextResponse.json({ dealId, applied: true, already_applied: true }, { status: 200 });
   }
 
@@ -290,6 +300,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   // --- Side effects (best-effort; o desfecho já valeu no deal) ----------------
   // (a conclusão da CALL agendada subiu para ANTES do update — ver comentário do trigger)
+
+  // 0. A gravação sai da lista de pendentes do card, e as tentativas que ela substituiu também
+  //    (ver substituirTentativasAnteriores). É o par do `pendente` que o upload carimba.
+  if (pathDeGravacaoDoDeal(dealId, body.audioFilePath)) {
+    await resolverGravacao(dealId, body.audioFilePath, 'aplicado', enviadoEm);
+    await substituirTentativasAnteriores(dealId, body.audioFilePath, enviadoEm);
+  }
 
   // 1. Nota-resumo → activity NOTE completed.
   await admin.from('activities').insert({

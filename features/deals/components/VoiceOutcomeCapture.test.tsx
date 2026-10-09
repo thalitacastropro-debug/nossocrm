@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { VoiceOutcomeCapture } from './VoiceOutcomeCapture';
@@ -10,6 +10,22 @@ function wrap(ui: React.ReactElement) {
 }
 
 const DEAL_ID = 'c3d4e5f6-a7b8-4c9d-8e0f-a1b2c3d4e5f6';
+
+/**
+ * O componente agora pergunta ao servidor pelas gravações pendentes do card. Sem este dublê o
+ * jsdom tenta falar com localhost:3000. Padrão: nenhuma pendente — cada teste troca quando precisa.
+ */
+let pendentesDoServidor: unknown[] = [];
+const fetchPadrao = async (url: string, init?: RequestInit) => {
+  if (url.endsWith('/call-outcome') && (!init || !init.method || init.method === 'GET')) {
+    return new Response(JSON.stringify({ pendentes: pendentesDoServidor }), { status: 200 });
+  }
+  return new Response(JSON.stringify({}), { status: 200 });
+};
+const fetchMock = vi.fn(fetchPadrao);
+// mockImplementation de um teste não vaza para o seguinte.
+beforeEach(() => { pendentesDoServidor = []; fetchMock.mockReset(); fetchMock.mockImplementation(fetchPadrao); vi.stubGlobal('fetch', fetchMock); });
+afterEach(() => { vi.unstubAllGlobals(); });
 
 const review = {
   transcricao: 'fechei com a Valéria, 3 vidas, Amil',
@@ -116,5 +132,83 @@ describe('VoiceOutcomeCapture — o valor tem dois significados', () => {
     wrap(<VoiceOutcomeCapture dealId={DEAL_ID} __testInitialReview={pensando} />);
     expect(screen.getByText(/Valor que paga hoje/i)).toBeInTheDocument();
     expect(screen.queryByText(/Prêmio/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * GRAVAÇÃO QUE NÃO VIROU DESFECHO (caso Alan Ferreira, 08/10/2026).
+ *
+ * O Pedro gravou, nada aplicou, e a única pista era uma linha vermelha de 12px. A gravação agora
+ * fica no card até alguém retomar ou descartar — e o horário é o de Brasília, o relógio de quem lê.
+ */
+describe('VoiceOutcomeCapture — gravações pendentes', () => {
+  const PATH = `${DEAL_ID}/voice/alan.mp3`;
+  const alan = {
+    audioFilePath: PATH,
+    criadoEm: '2026-10-08T20:59:46.709Z', // 17:59 em Brasília
+    erro: 'Transcrição falhou: timeout',
+    erroEm: '2026-10-08T21:00:46Z',
+    temTranscricao: false,
+    audioUrl: null,
+  };
+
+  it('mostra a gravação pendente com o horário de Brasília e o motivo da falha', async () => {
+    pendentesDoServidor = [alan];
+    wrap(<VoiceOutcomeCapture dealId={DEAL_ID} />);
+    expect(await screen.findByText(/Gravação de 08\/10 às 17:59 ainda sem desfecho/)).toBeInTheDocument();
+    expect(screen.getByText(/Falhou: Transcrição falhou: timeout/)).toBeInTheDocument();
+  });
+
+  it('Retomar transcreve o arquivo JÁ SALVO (sem regravar) e abre a revisão', async () => {
+    pendentesDoServidor = [alan];
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST' && url.endsWith('/call-outcome')) {
+        expect(JSON.parse(init.body as string)).toEqual({ audioFilePath: PATH });
+        return new Response(JSON.stringify({ ...review, audioFilePath: PATH }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ pendentes: pendentesDoServidor }), { status: 200 });
+    });
+    const user = userEvent.setup();
+    wrap(<VoiceOutcomeCapture dealId={DEAL_ID} />);
+    await user.click(await screen.findByRole('button', { name: /retomar/i }));
+    expect(await screen.findByRole('button', { name: /confirmar/i })).toBeInTheDocument();
+    expect(screen.getByText(/fechei com a Valéria/)).toBeInTheDocument();
+  });
+
+  it('Descartar a pendente avisa o servidor', async () => {
+    pendentesDoServidor = [alan];
+    const user = userEvent.setup();
+    wrap(<VoiceOutcomeCapture dealId={DEAL_ID} />);
+    await user.click(await screen.findByRole('button', { name: /descartar/i }));
+    await waitFor(() => {
+      const chamada = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/call-outcome/discard'));
+      expect(chamada).toBeTruthy();
+      expect(JSON.parse((chamada![1] as RequestInit).body as string)).toEqual({ audioFilePath: PATH });
+    });
+  });
+
+  it('Descartar na revisão de uma gravação também avisa o servidor (senão ela volta como pendente)', async () => {
+    const user = userEvent.setup();
+    wrap(<VoiceOutcomeCapture dealId={DEAL_ID} __testInitialReview={review} />);
+    await user.click(screen.getByRole('button', { name: /descartar/i }));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/call-outcome/discard'))).toBe(true);
+    });
+  });
+
+  it('Confirmar que deu certo NÃO descarta a gravação — ela foi aplicada, não jogada fora', async () => {
+    const user = userEvent.setup();
+    wrap(<VoiceOutcomeCapture dealId={DEAL_ID} __testInitialReview={review} />);
+    await user.click(screen.getByRole('button', { name: /confirmar/i }));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/call-outcome/apply'))).toBe(true);
+    });
+    expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/call-outcome/discard'))).toBe(false);
+  });
+
+  it('sem pendentes, nada aparece além do gravador', async () => {
+    wrap(<VoiceOutcomeCapture dealId={DEAL_ID} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(screen.queryByText(/ainda sem desfecho/)).not.toBeInTheDocument();
   });
 });

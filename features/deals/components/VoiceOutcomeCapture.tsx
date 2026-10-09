@@ -1,9 +1,17 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Mic, Square, Trash2, Loader2, Check, PencilLine } from 'lucide-react';
+import { Mic, Square, Trash2, Loader2, Check, PencilLine, AlertTriangle, RotateCcw } from 'lucide-react';
 import AudioPlayer from '@/components/ui/AudioPlayer';
-import { useTranscribeCallOutcome, useApplyCallOutcome, type TranscribeResult } from '@/lib/query/hooks/useCallOutcome';
+import {
+  useTranscribeCallOutcome,
+  useApplyCallOutcome,
+  useGravacoesPendentes,
+  useDescartarGravacao,
+  TranscribeError,
+  type TranscribeResult,
+  type GravacaoPendente,
+} from '@/lib/query/hooks/useCallOutcome';
 import type { Desfecho } from '@/lib/ai/call-outcome/schemas';
 import { MOTIVO_LABELS, MOTIVO_TAGS, type MotivoTag } from '@/lib/ai/taxonomy/motivos';
 import { convertAudioToMp3 } from '@/lib/utils/audioToMp3';
@@ -39,6 +47,14 @@ const DESFECHO_EM_BRANCO: Desfecho = {
   confidence: 1,
 };
 
+/** Horário de Brasília sempre — o relógio de quem lê, não o UTC do banco. */
+function quandoFoi(iso: string): string {
+  const d = new Date(iso);
+  const dia = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' });
+  const hora = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+  return `${dia} às ${hora}`;
+}
+
 export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcomeCaptureProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -47,13 +63,22 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
   const [modoManual, setModoManual] = useState(false);
   const [edited, setEdited] = useState<Desfecho | null>(__testInitialReview?.desfecho ?? null);
   const [localAudioUrl, setLocalAudioUrl] = useState<string | null>(null);
+  /** Link do áudio já salvo, quando a revisão veio de "Retomar" (não há blob local). */
+  const [audioUrlRetomado, setAudioUrlRetomado] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /**
+   * A última gravação, guardada no navegador até chegar ao servidor. Se o upload falhar, ela é a
+   * ÚNICA cópia — sem isto, "Enviar de novo" seria "grave a reunião inteira de novo".
+   */
+  const ultimoBlobRef = useRef<Blob | null>(null);
 
   const transcribe = useTranscribeCallOutcome();
   const apply = useApplyCallOutcome();
+  const descartarGravacao = useDescartarGravacao();
+  const { data: pendentes = [] } = useGravacoesPendentes(dealId);
 
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -94,22 +119,64 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
       if (type !== 'audio/ogg') {
         try { blob = await convertAudioToMp3(blob); } catch { /* usa o original */ }
       }
+      ultimoBlobRef.current = blob;
       try {
         const result = await transcribe.mutateAsync({ dealId, audio: blob });
+        ultimoBlobRef.current = null; // está no servidor; a cópia local não é mais a única
         setReview(result);
         if (result.desfecho) setEdited(result.desfecho);
-      } catch { /* erro exposto via transcribe.isError */ }
+      } catch (err) {
+        // O servidor salvou o áudio (só a IA falhou): a gravação aparece em "Retomar".
+        if (err instanceof TranscribeError && err.audioFilePath) ultimoBlobRef.current = null;
+      }
     };
     recorder.stop();
   }, [dealId, transcribe]);
 
-  const discard = useCallback(() => {
+  /** Reenvia a gravação que não chegou ao servidor. */
+  const reenviar = useCallback(async () => {
+    const blob = ultimoBlobRef.current;
+    if (!blob) return;
+    try {
+      const result = await transcribe.mutateAsync({ dealId, audio: blob });
+      ultimoBlobRef.current = null;
+      setReview(result);
+      if (result.desfecho) setEdited(result.desfecho);
+    } catch (err) {
+      if (err instanceof TranscribeError && err.audioFilePath) ultimoBlobRef.current = null;
+    }
+  }, [dealId, transcribe]);
+
+  /** Retoma uma gravação já salva: transcreve de novo o arquivo do card, sem regravar. */
+  const retomar = useCallback(async (g: GravacaoPendente) => {
+    try {
+      const result = await transcribe.mutateAsync({ dealId, audioFilePath: g.audioFilePath });
+      setAudioUrlRetomado(g.audioUrl);
+      setReview(result);
+      if (result.desfecho) setEdited(result.desfecho);
+    } catch { /* o motivo volta gravado na própria gravação pendente */ }
+  }, [dealId, transcribe]);
+
+  /** Limpa a tela. NÃO mexe no servidor — é o que roda depois do Confirmar dar certo. */
+  const limpar = useCallback(() => {
     setReview(null);
     setEdited(null);
     setModoManual(false);
+    setAudioUrlRetomado(null);
     if (localAudioUrl) { URL.revokeObjectURL(localAudioUrl); setLocalAudioUrl(null); }
     setDuration(0);
   }, [localAudioUrl]);
+
+  /**
+   * O botão Descartar: a pessoa disse que não quer ESTA gravação. Sem avisar o servidor, ela
+   * continuaria pendente e voltaria a aparecer no card como trabalho perdido.
+   */
+  const discard = useCallback(() => {
+    if (review?.audioFilePath) {
+      descartarGravacao.mutate({ dealId, audioFilePath: review.audioFilePath });
+    }
+    limpar();
+  }, [review, dealId, descartarGravacao, limpar]);
 
   const abrirManual = useCallback(() => {
     setModoManual(true);
@@ -127,7 +194,9 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
         <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
           {review ? 'Desfecho da call (revisão)' : 'Desfecho da call'}
         </h4>
-        {localAudioUrl && <AudioPlayer src={localAudioUrl} variant="preview" />}
+        {(localAudioUrl ?? audioUrlRetomado) && (
+          <AudioPlayer src={(localAudioUrl ?? audioUrlRetomado) as string} variant="preview" />
+        )}
         {review && (
           <p className="text-[11px] text-slate-400 whitespace-pre-wrap border-l-2 border-slate-200 dark:border-white/10 pl-2">{review.transcricao}</p>
         )}
@@ -249,7 +318,8 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
                 transcricao: review?.transcricao,
                 desfecho: edited as unknown as Record<string, unknown>,
               },
-              { onSuccess: discard },
+              // `limpar`, não `discard`: aplicada, a gravação já saiu da lista no servidor.
+              { onSuccess: limpar },
             )}
             // Sem desfecho escolhido não há o que aplicar: é ele que move o card, marca a venda e
             // dispara o lembrete.
@@ -307,8 +377,65 @@ export function VoiceOutcomeCapture({ dealId, __testInitialReview }: VoiceOutcom
           </div>
         </div>
       )}
-      {transcribe.isError && (
-        <p className="mt-2 text-xs text-red-500">{transcribe.error.message}</p>
+      {/* O erro era uma linha vermelha de 12px no pé do painel — fácil de não ver, e quem não via
+          achava que o desfecho tinha ido (caso Alan Ferreira, 08/10). Agora é uma caixa, e diz o
+          que fazer: se o áudio ficou salvo, ele está na lista abaixo; se não ficou, reenviar. */}
+      {transcribe.isError && !transcribe.isPending && (
+        <div role="alert" className="mt-3 rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 p-3 text-xs">
+          <p className="font-bold text-red-700 dark:text-red-300 flex items-center gap-1.5">
+            <AlertTriangle size={14} /> {transcribe.error.message}
+          </p>
+          {transcribe.error instanceof TranscribeError && transcribe.error.audioFilePath ? (
+            <p className="mt-1 text-red-700/80 dark:text-red-300/80">O áudio está guardado no card. Use “Retomar” abaixo.</p>
+          ) : ultimoBlobRef.current ? (
+            <button
+              type="button"
+              onClick={reenviar}
+              className="mt-2 font-bold text-red-700 dark:text-red-300 hover:underline flex items-center gap-1.5"
+            >
+              <RotateCcw size={13} /> Enviar a gravação de novo
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      {/* GRAVAÇÕES QUE NÃO VIRARAM DESFECHO. O áudio sobe antes da transcrição; se qualquer coisa
+          falha depois (IA, limite de tempo, modal fechado, aba recarregada), a gravação fica aqui
+          até alguém retomar ou descartar — em vez de sumir calada. */}
+      {pendentes.length > 0 && !isRecording && !transcribe.isPending && (
+        <div className="mt-3 space-y-2">
+          {pendentes.map((g) => (
+            <div
+              key={g.audioFilePath}
+              className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs"
+            >
+              <p className="font-bold text-amber-800 dark:text-amber-200">
+                Gravação de {quandoFoi(g.criadoEm)} ainda sem desfecho
+              </p>
+              <p className="mt-0.5 text-amber-800/80 dark:text-amber-200/80">
+                {g.erro ? `Falhou: ${g.erro}` : 'O áudio está salvo. Retome para revisar e confirmar.'}
+              </p>
+              {g.audioUrl && <div className="mt-2"><AudioPlayer src={g.audioUrl} variant="preview" /></div>}
+              <div className="mt-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => retomar(g)}
+                  className="font-bold text-primary-600 hover:text-primary-500 flex items-center gap-1.5"
+                >
+                  <RotateCcw size={13} /> Retomar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => descartarGravacao.mutate({ dealId, audioFilePath: g.audioFilePath })}
+                  disabled={descartarGravacao.isPending}
+                  className="font-bold text-slate-500 hover:text-red-500 flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Trash2 size={13} /> Descartar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

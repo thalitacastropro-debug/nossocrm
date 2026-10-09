@@ -30,8 +30,17 @@ let adminMock: Record<string, unknown>;
 
 vi.mock('@/lib/supabase/server', () => ({ createClient: vi.fn(async () => supabaseClientMock) }));
 vi.mock('@/lib/supabase/staticAdminClient', () => ({ createStaticAdminClient: vi.fn(() => adminMock) }));
+vi.mock('@/lib/supabase/dealFilesServer', async () => {
+  const real = await vi.importActual<typeof import('@/lib/supabase/dealFilesServer')>('@/lib/supabase/dealFilesServer');
+  return {
+    pathDeGravacaoDoDeal: real.pathDeGravacaoDoDeal,
+    resolverGravacao: vi.fn(async () => ({ error: null })),
+    substituirTentativasAnteriores: vi.fn(async () => undefined),
+  };
+});
 
 import { POST } from '@/app/api/deals/[dealId]/call-outcome/apply/route';
+import * as files from '@/lib/supabase/dealFilesServer';
 
 function auth(userId: string | null = USER_ID) {
   return { auth: { getUser: vi.fn(async () => ({ data: { user: userId ? { id: userId } : null }, error: null })) } };
@@ -448,6 +457,38 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     expect(res.status).toBe(200);
     expect(activityInsertSpy).not.toHaveBeenCalled();
     expect(dealUpdateSpy).not.toHaveBeenCalled();
+    // ...mas a linha do arquivo é re-marcada: se a 1ª aplicação gravou o card e não a linha, a
+    // gravação ficaria pendurada no card como "sem desfecho" de algo que já foi aplicado.
+    expect(files.resolverGravacao).toHaveBeenCalledWith(DEAL_ID, `${DEAL_ID}/voice/a.webm`, 'aplicado');
+  });
+
+  // Par do `pendente` que o upload carimba (caso Alan Ferreira, 08/10): sem isto, toda gravação
+  // aplicada continuaria aparecendo no card como trabalho perdido.
+  it('aplicou com áudio → a gravação sai das pendentes, e as tentativas anteriores também', async () => {
+    const res = await callPost(baseBody());
+    expect(res.status).toBe(200);
+    const path = `${DEAL_ID}/voice/a.webm`;
+    expect(files.resolverGravacao).toHaveBeenCalledWith(DEAL_ID, path, 'aplicado', expect.any(String));
+    expect(files.substituirTentativasAnteriores).toHaveBeenCalledWith(DEAL_ID, path, expect.any(String));
+  });
+
+  it('o update do deal falhou → a gravação CONTINUA pendente (dá para retomar)', async () => {
+    dealUpdateSpy.mockReturnValue({ eq: vi.fn(async () => ({ error: { code: 'XX000', message: 'boom' } })) });
+    expect((await callPost(baseBody())).status).toBe(500);
+    expect(files.resolverGravacao).not.toHaveBeenCalled();
+  });
+
+  it('desfecho manual (sem áudio) não mexe em gravação nenhuma', async () => {
+    const { audioFilePath: _semAudio, transcricao: _semTexto, ...manual } = baseBody();
+    expect((await callPost(manual)).status).toBe(200);
+    expect(files.resolverGravacao).not.toHaveBeenCalled();
+    expect(files.substituirTentativasAnteriores).not.toHaveBeenCalled();
+  });
+
+  it('path de OUTRO card no body não marca gravação nenhuma', async () => {
+    const outro = 'd4e5f6a7-b8c9-4d0e-8f1a-b2c3d4e5f6a7';
+    expect((await callPost(baseBody({ audioFilePath: `${outro}/voice/z.mp3` }))).status).toBe(200);
+    expect(files.resolverGravacao).not.toHaveBeenCalled();
   });
 
   it('SEGUNDA REUNIÃO: card com desfecho antigo aceita gravação nova', async () => {
