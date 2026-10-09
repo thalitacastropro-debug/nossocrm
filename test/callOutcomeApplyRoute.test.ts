@@ -431,12 +431,61 @@ describe('POST /api/deals/[dealId]/call-outcome/apply', () => {
     expect(activityUpdateSpy).not.toHaveBeenCalled();
   });
 
-  it('idempotente: já aplicado → 200 sem regravar', async () => {
-    dealRow = { ...dealRow, custom_fields: { ...(dealRow.custom_fields as object), call_outcome_applied_at: '2026-07-12T00:00:00Z' } };
+  // A idempotência é por GRAVAÇÃO, não por card. Este teste afirmava o contrário — bastava
+  // existir um desfecho anterior para a rota recusar — e foi essa regra que engoliu, em
+  // silêncio, as duas gravações do Pedro na reunião com a Marilin Oliveira em 09/10 (o card
+  // tinha desfecho do dia anterior). Eram 23 cards nesse estado, 20 deles abertos.
+  it('duplo clique: MESMA gravação já aplicada → 200 sem regravar', async () => {
+    dealRow = {
+      ...dealRow,
+      custom_fields: {
+        ...(dealRow.custom_fields as object),
+        call_outcome_applied_at: '2026-07-12T00:00:00Z',
+        call_outcome_last_audio: `${DEAL_ID}/voice/a.webm`,
+      },
+    };
     const res = await callPost(baseBody());
     expect(res.status).toBe(200);
     expect(activityInsertSpy).not.toHaveBeenCalled();
     expect(dealUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it('SEGUNDA REUNIÃO: card com desfecho antigo aceita gravação nova', async () => {
+    dealRow = {
+      ...dealRow,
+      custom_fields: {
+        ...(dealRow.custom_fields as object),
+        call_outcome_applied_at: '2026-10-08T19:46:07Z',
+        call_outcome_last_audio: `${DEAL_ID}/voice/ONTEM.webm`,
+      },
+    };
+    const res = await callPost(baseBody({ audioFilePath: `${DEAL_ID}/voice/HOJE.webm` }));
+    expect(res.status).toBe(200);
+    expect(dealUpdateSpy).toHaveBeenCalled();
+    // e o carimbo passa a apontar para a gravação de hoje
+    const cf = (dealUpdateSpy.mock.calls[0][0] as { custom_fields: Record<string, unknown> }).custom_fields;
+    expect(cf.call_outcome_last_audio).toBe(`${DEAL_ID}/voice/HOJE.webm`);
+  });
+
+  it('desfecho MANUAL (sem áudio): recusa só dentro da janela de 2 min', async () => {
+    const agoraMenos30s = new Date(Date.now() - 30 * 1000).toISOString();
+    dealRow = {
+      ...dealRow,
+      custom_fields: { ...(dealRow.custom_fields as object), call_outcome_applied_at: agoraMenos30s },
+    };
+    const res = await callPost(baseBody({ audioFilePath: undefined }));
+    expect(res.status).toBe(200);
+    expect(dealUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it('desfecho MANUAL antigo: passado o prazo, aceita de novo', async () => {
+    const ontem = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    dealRow = {
+      ...dealRow,
+      custom_fields: { ...(dealRow.custom_fields as object), call_outcome_applied_at: ontem },
+    };
+    await callPost(baseBody({ audioFilePath: undefined }));
+    expect(dealUpdateSpy).toHaveBeenCalled();
   });
 
   it('23505 no update → 409', async () => {

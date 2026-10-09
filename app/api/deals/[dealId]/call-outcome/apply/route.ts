@@ -49,7 +49,36 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (dealErr || !deal) return NextResponse.json({ error: 'Deal not found' }, { status: 404 });
 
   const existingCf = (deal.custom_fields as Record<string, unknown> | null) ?? {};
-  if (existingCf.call_outcome_applied_at) {
+
+  // IDEMPOTÊNCIA É POR GRAVAÇÃO, NÃO POR CARD (consertado em 09/10/2026).
+  //
+  // Antes bastava existir `call_outcome_applied_at` para a rota devolver 200 e não fazer nada.
+  // Isso travava o card PARA SEMPRE no primeiro desfecho: a segunda reunião do mesmo lead —
+  // que é o caso NORMAL de uma negociação — era engolida. E em silêncio, porque o 200 com
+  // `applied: true` faz a tela achar que deu certo: o `onSuccess` descarta a gravação, nenhum
+  // erro aparece, e o áudio some.
+  //
+  // Caso real: o Pedro teve reunião com a Marilin Oliveira em 09/10, gravou DUAS vezes, e as
+  // duas sumiram — o card tinha desfecho de 08/10 16:46. Ele também perdeu o do Alan Ferreira.
+  // Quando ele avisou, 23 cards estavam nesse estado, 20 deles abertos em negociação ou
+  // qualificação: todos mudos para qualquer desfecho novo.
+  //
+  // A trava existia por um motivo legítimo — duplo clique no botão Confirmar reenviando a MESMA
+  // gravação. Mas a condição descrevia o exemplo (já houve desfecho), não o problema (esta
+  // gravação já foi aplicada). Agora:
+  //   • com áudio  → recusa só se for o MESMO arquivo (duplo clique de verdade);
+  //   • sem áudio (desfecho manual, que não tem path) → janela curta de 2 minutos.
+  // Duas reuniões no mesmo card passam; o mesmo clique duas vezes, não.
+  const ultimoAplicadoEm = existingCf.call_outcome_applied_at as string | undefined;
+  const ultimoAudio = existingCf.call_outcome_last_audio as string | undefined;
+
+  const mesmaGravacao = Boolean(body.audioFilePath) && body.audioFilePath === ultimoAudio;
+  const cliqueDuploNoManual =
+    !body.audioFilePath &&
+    Boolean(ultimoAplicadoEm) &&
+    Date.now() - new Date(ultimoAplicadoEm as string).getTime() < 2 * 60 * 1000;
+
+  if (mesmaGravacao || cliqueDuploNoManual) {
     return NextResponse.json({ dealId, applied: true, already_applied: true }, { status: 200 });
   }
 
@@ -84,6 +113,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     qualificacao: qual,
     objecoes: [...prevObjecoes, ...newObjecoes],
     call_outcome_applied_at: enviadoEm,
+    // Guarda QUAL gravação foi aplicada — é contra ela que o duplo clique é comparado.
+    // Sem isto a trava acima não teria com o que comparar e voltaria a travar por card.
+    ...(body.audioFilePath ? { call_outcome_last_audio: body.audioFilePath } : {}),
   };
   if (d.desfecho === 'perdeu' && d.motivo_perda) {
     nextCf.motivo_perda = { categoria: d.motivo_perda, detalhe: d.motivo_perda_detalhe ?? null };
