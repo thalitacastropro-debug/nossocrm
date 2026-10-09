@@ -25,8 +25,11 @@ import { runHandoffSla } from '@/lib/ai/followup/handoff-sla-run';
 import {
   formatHandoffEscalationMessage,
   formatFollowupFalhasMessage,
+  formatPrimeiroToqueDesistiuMessage,
   sendTelegramMessage,
 } from '@/lib/notifications/telegram';
+import { retentarPrimeirosToques } from '@/lib/ai/lead-intake/retentar-primeiro-toque';
+import { montarBolhasDoPrimeiroToque, sendGreetingBubbles } from '@/lib/ai/lead-intake/envio-primeiro-toque';
 
 export const maxDuration = 60;
 
@@ -110,6 +113,31 @@ export async function GET(req: Request): Promise<Response> {
     );
   };
 
+  // 1º TOQUE QUE FALHOU: tenta de novo ANTES da cadência (09/10/2026). Antes, a apresentação que
+  // falhava na entrada do lead nunca mais era tentada — giani e Flávia Muniz, WhatsApp fora de 06
+  // a 08/10. Roda antes do follow-up porque quem nunca recebeu o "oi" vem primeiro, e porque a
+  // cadência só começa para ele depois que a apresentação sai.
+  const primeiroToque = await retentarPrimeirosToques({
+    supabase,
+    now,
+    montarBolhas: (args) => montarBolhasDoPrimeiroToque({ supabase, ...args }),
+    enviar: (args) => sendGreetingBubbles(args),
+    avisar: ({ dealId, contactName, motivo }) =>
+      avisarNoTelegram(
+        formatPrimeiroToqueDesistiuMessage({
+          contactName,
+          motivo,
+          appUrl: process.env.NEXT_PUBLIC_APP_URL,
+          dealId,
+        }),
+        'primeiro-toque'
+      ),
+  }).catch((err: unknown) => {
+    // Falha aqui não pode derrubar o follow-up de todo mundo.
+    console.error('[Cron:lead-followup] retentativa do 1º toque falhou (não-fatal):', err);
+    return null;
+  });
+
   const followup = await runLeadFollowup({
     supabase,
     now,
@@ -171,6 +199,6 @@ export async function GET(req: Request): Promise<Response> {
       ),
   });
 
-  console.log('[Cron:lead-followup]', JSON.stringify({ followup, reminder, handoffSla }));
-  return json({ followup, reminder, handoffSla });
+  console.log('[Cron:lead-followup]', JSON.stringify({ primeiroToque, followup, reminder, handoffSla }));
+  return json({ primeiroToque, followup, reminder, handoffSla });
 }

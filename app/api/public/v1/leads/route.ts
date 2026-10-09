@@ -5,9 +5,12 @@ import { createStaticAdminClient } from '@/lib/supabase/server';
 import { normalizeEmail, normalizePhone, normalizeText } from '@/lib/public-api/sanitize';
 import { resolveBoardIdFromKey, resolveFirstStageId } from '@/lib/public-api/resolve';
 import { sanitizeUUID } from '@/lib/supabase/utils';
-import { getChannelRouter } from '@/lib/messaging/channel-router.service';
-import { generateFirstTouchBubbles } from '@/lib/ai/lead-intake/first-touch';
-import { stripDashTells } from '@/lib/ai/text/dashes';
+import {
+  montarBolhasDoPrimeiroToque,
+  sendGreetingBubbles,
+  mergeDealFirstTouch,
+  jaHouveContato,
+} from '@/lib/ai/lead-intake/envio-primeiro-toque';
 import { seedTierFromLeadForm } from '@/lib/ai/extraction/domain/niva-health';
 import { brPhoneVariants } from '@/lib/phone';
 
@@ -41,23 +44,6 @@ export const maxDuration = 30;
 // Horário comercial (seg–sex 08:00–17:30, timezone da org) — usado SÓ como informação
 // (`within_business_hours` na resposta/registro do toque). NÃO é gate: a Ana engaja 24/7.
 const BUSINESS_HOURS = { start: '08:00', end: '17:30', daysOfWeek: [1, 2, 3, 4, 5] };
-
-// Saudação inicial (aprovada pela Niva) — enviada em BOLHAS curtas, estilo WhatsApp
-// (uma ideia por bolha; a última bolha é sempre a pergunta), NUNCA um bloco único.
-// A Ana engaja 24/7 (é IA): o MESMO opener imediato a qualquer hora e qualquer dia —
-// quem respeita horário comercial é só o AGENDAMENTO (o motor de agenda só oferece slot
-// real do consultor, seg–sex). O chamador pode sobrescrever via `greeting` (string, UMA
-// bolha por linha). Cada bolha suporta {nome} (primeiro nome). Regras de voz: SEM emojis;
-// sem diminutivo; conduz (não pede permissão); reforça o consultor.
-const DEFAULT_GREETING: string[] = [
-  'Oi {nome}, tudo bem? Aqui é a Ana, da Niva.',
-  'Vi que você tem interesse em otimizar seu plano de saúde pra você e sua família.',
-  // Sem travessão: é a marca registrada de texto de IA, e humano não usa no
-  // WhatsApp. O `stripDashTells` limpa o que o modelo escorrega, mas texto
-  // FIXO nosso não pode precisar de faxina.
-  'Quem vai cuidar disso com você é um dos nossos consultores, eu já vou adiantando por aqui pra ele chegar preparado.',
-  'Me conta: você já tem plano hoje ou seria o primeiro?',
-];
 
 // Campos de controle/roteamento — NÃO fazem parte dos "campos do formulário".
 const CONTROL_KEYS = new Set([
@@ -122,36 +108,6 @@ function isWithinBusinessHours(timezone: string): boolean {
   } catch {
     return true; // em caso de erro de timezone, não bloqueia o atendimento
   }
-}
-
-/** Interpola {nome} (primeiro nome), limpando pontuação órfã quando não há nome. */
-function renderGreeting(template: string, vars: { nome: string | null }): string {
-  const firstName = (vars.nome ?? '').trim().split(/\s+/)[0] ?? '';
-  return template
-    .replaceAll('{nome}', firstName)
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\s+([,!?.])/g, '$1')
-    .trim();
-}
-
-/** Sleep simples (stagger entre bolhas). */
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-/** Pausa antes da próxima bolha, proporcional ao tamanho dela (ritmo de digitação). */
-function bubbleGapMs(nextBubble: string): number {
-  return Math.min(Math.max(nextBubble.length * 35, 900), 2500);
-}
-
-/**
- * Resolve a saudação em BOLHAS. Default = array aprovado; override do body (Make) =
- * string com UMA bolha por linha. Vazio/whitespace → cai no fallback.
- */
-function resolveGreetingBubbles(override: string | undefined, fallback: string[]): string[] {
-  if (override && override.trim()) {
-    const parts = override.split('\n').map((s) => s.trim()).filter(Boolean);
-    if (parts.length) return parts;
-  }
-  return fallback;
 }
 
 /** Upsert de contato por email/telefone (mesma estratégia da rota /deals). */
@@ -352,7 +308,12 @@ export async function POST(request: Request) {
     dealId = existingDeal.id;
     const prevCustom = (existingDeal.custom_fields as Record<string, unknown>) || {};
     const prevLeadForm = (prevCustom.lead_form as Record<string, unknown>) || {};
-    alreadyTouched = Boolean(prevLeadForm.first_touch);
+    // Só conta como tocado o 1º toque que SAIU (ou que outro contato já superou). Era
+    // `Boolean(prevLeadForm.first_touch)`: a CHAVE existir bastava, inclusive com status
+    // 'failed' — e o lead cujo 1º toque falhou ficava "tocado" para sempre (giani e Flávia
+    // Muniz, WhatsApp fora de 06 a 08/10). Ver lib/ai/lead-intake/envio-primeiro-toque.ts.
+    const statusAnterior = (prevLeadForm.first_touch as { status?: string } | undefined)?.status;
+    alreadyTouched = statusAnterior === 'greeted' || statusAnterior === 'superado';
     await sb
       .from('deals')
       .update({
@@ -411,7 +372,9 @@ export async function POST(request: Request) {
         .update({ metadata: { ...prevMeta, deal_id: dealId, lead_source: source }, contact_id: contactId })
         .eq('id', conversationId);
     }
-    if ((existingConv.message_count ?? 0) > 0) alreadyTouched = true;
+    // Contato DE VERDADE, não `message_count > 0`: a tentativa falhada também grava mensagem, e
+    // contá-la era a segunda metade do mesmo buraco.
+    if (await jaHouveContato(sb, conversationId)) alreadyTouched = true;
   } else {
     const { data: newConv, error: convErr } = await sb
       .from('messaging_conversations')
@@ -454,28 +417,16 @@ export async function POST(request: Request) {
   const timezone = await getOrgTimezone(sb, auth.organizationId);
   const withinHours = isWithinBusinessHours(timezone);
 
-  let bubbles: string[];
-  if (body.greeting && body.greeting.trim()) {
-    bubbles = resolveGreetingBubbles(body.greeting, DEFAULT_GREETING)
-      .map((t) => renderGreeting(t, { nome: name }))
-      .filter(Boolean);
-  } else {
-    const aiBubbles = await generateFirstTouchBubbles({
-      supabase: sb,
-      organizationId: auth.organizationId,
-      boardId,
-      firstName: name,
-      leadForm: leadFormBase,
-    });
-    bubbles = (aiBubbles && aiBubbles.length)
-      ? aiBubbles
-      : DEFAULT_GREETING.map((t) => renderGreeting(t, { nome: name })).filter(Boolean);
-  }
-  // Rede final contra o travessão, nos TRÊS caminhos (override do body, IA e
-  // fallback fixo). As respostas do agente já passavam por aqui; o opener não —
-  // e foi por essa fresta que saiu "paga mais de R$ 3.500 hoje — vamos ver..."
-  // para o lead Pablo em 31/08/2026.
-  bubbles = bubbles.map(stripDashTells).filter(Boolean);
+  // Montagem e envio moram em lib/ai/lead-intake/envio-primeiro-toque.ts — o MESMO código que o
+  // cron usa para tentar de novo um 1º toque que falhou.
+  const bubbles = await montarBolhasDoPrimeiroToque({
+    supabase: sb,
+    organizationId: auth.organizationId,
+    boardId,
+    firstName: name,
+    leadForm: leadFormBase,
+    greeting: body.greeting,
+  });
   const touchStatus = 'greeted';
 
   // 9. Enviar a saudação em BOLHAS (várias mensagens curtas, estilo WhatsApp)
@@ -486,13 +437,16 @@ export async function POST(request: Request) {
     bubbles,
   });
 
-  // 10. Registrar o resultado do toque no deal (para o cron de follow-up de manhã)
+  // 10. Registrar o resultado do toque no deal. 'failed' NÃO é o fim: o cron de follow-up
+  //     (a cada 15 min, dentro da janela da Ana) tenta de novo — ver retentarPrimeirosToques.
   await mergeDealFirstTouch(sb, dealId, {
     status: send.success ? touchStatus : 'failed',
     within_business_hours: withinHours,
     message_id: send.messageId ?? null,
     sent_at: send.success ? new Date().toISOString() : null,
     error: send.error?.message ?? null,
+    tentativas: 1,
+    ultima_tentativa_em: new Date().toISOString(),
   });
 
   return NextResponse.json(
@@ -527,142 +481,4 @@ async function getOrgTimezone(
     .eq('organization_id', organizationId)
     .maybeSingle();
   return data?.timezone || 'America/Sao_Paulo';
-}
-
-/** Mescla o resultado do 1º toque em custom_fields.lead_form.first_touch (sem sobrescrever o resto). */
-async function mergeDealFirstTouch(
-  sb: ReturnType<typeof createStaticAdminClient>,
-  dealId: string,
-  firstTouch: Record<string, unknown>,
-): Promise<void> {
-  const { data } = await sb.from('deals').select('custom_fields').eq('id', dealId).maybeSingle();
-  const custom = (data?.custom_fields as Record<string, unknown>) || {};
-  const leadForm = (custom.lead_form as Record<string, unknown>) || {};
-  await sb
-    .from('deals')
-    .update({
-      custom_fields: { ...custom, lead_form: { ...leadForm, first_touch: firstTouch } },
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', dealId);
-}
-
-interface SendResult {
-  success: boolean;
-  messageId?: string;
-  error?: { code: string; message: string };
-}
-
-/**
- * Envia a saudação em BOLHAS (várias mensagens curtas, estilo WhatsApp), com uma pausa
- * entre elas proporcional ao tamanho da próxima (ritmo de digitação). Para no 1º erro
- * pra não deixar a conversa pela metade. O `success` reflete a 1ª bolha (saudação crítica);
- * o `messageId` retornado é o da 1ª bolha (referência do 1º toque).
- */
-async function sendGreetingBubbles(params: {
-  conversationId: string;
-  channelId: string;
-  to: string;
-  bubbles: string[];
-}): Promise<SendResult & { sentCount: number }> {
-  const { conversationId, channelId, to, bubbles } = params;
-  let firstMessageId: string | undefined = undefined;
-  let firstError: SendResult['error'] = undefined;
-  let firstOk = false;
-  let sentCount = 0;
-
-  for (let i = 0; i < bubbles.length; i++) {
-    const res = await sendOneMessage({ conversationId, channelId, to, text: bubbles[i], index: i });
-    if (i === 0) {
-      firstOk = res.success;
-      firstMessageId = res.messageId;
-      firstError = res.error;
-    }
-    if (!res.success) break; // não envia as bolhas seguintes pra não deixar a conversa pela metade
-    sentCount++;
-    if (i < bubbles.length - 1) await sleep(bubbleGapMs(bubbles[i + 1]));
-  }
-
-  return { success: firstOk, messageId: firstMessageId, error: firstError, sentCount };
-}
-
-/**
- * Insere UMA mensagem outbound e a envia pelo ChannelRouter — mesmo fluxo de
- * `sendAIResponse` (lib/ai/agent/agent.service.ts). sender_type 'ai' + sent_by_ai:true
- * faz a Ana enxergar a própria saudação (não re-cumprimenta) no histórico.
- * `index` = posição da bolha (0 = 1ª, marca o first_touch).
- */
-async function sendOneMessage(params: {
-  conversationId: string;
-  channelId: string;
-  to: string;
-  text: string;
-  index: number;
-}): Promise<SendResult> {
-  const { conversationId, channelId, to, text, index } = params;
-  const sb = createStaticAdminClient();
-
-  const { data: message, error: insertError } = await sb
-    .from('messaging_messages')
-    .insert({
-      conversation_id: conversationId,
-      direction: 'outbound',
-      content_type: 'text',
-      content: { type: 'text', text },
-      status: 'pending',
-      sender_type: 'ai',
-      metadata: { sent_by_ai: true, source: 'lead_intake', first_touch: index === 0, bubble_index: index },
-    })
-    .select('id')
-    .single();
-  if (insertError) {
-    return { success: false, error: { code: 'INSERT_FAILED', message: insertError.message } };
-  }
-
-  try {
-    const router = getChannelRouter();
-    const result = await router.sendMessage(channelId, {
-      conversationId,
-      to,
-      content: { type: 'text', text },
-    });
-
-    if (result.success) {
-      await sb
-        .from('messaging_messages')
-        .update({ external_id: result.externalMessageId, status: 'sent', sent_at: new Date().toISOString() })
-        .eq('id', message.id);
-      return { success: true, messageId: message.id };
-    }
-
-    await sb
-      .from('messaging_messages')
-      .update({
-        status: 'failed',
-        error_code: result.error?.code || 'SEND_FAILED',
-        error_message: result.error?.message || 'Unknown error',
-        failed_at: new Date().toISOString(),
-      })
-      .eq('id', message.id);
-    return {
-      success: false,
-      messageId: message.id,
-      error: { code: result.error?.code || 'SEND_FAILED', message: result.error?.message || 'Falha ao enviar' },
-    };
-  } catch (error) {
-    await sb
-      .from('messaging_messages')
-      .update({
-        status: 'failed',
-        error_code: 'PROVIDER_ERROR',
-        error_message: error instanceof Error ? error.message : 'Unknown error',
-        failed_at: new Date().toISOString(),
-      })
-      .eq('id', message.id);
-    return {
-      success: false,
-      messageId: message.id,
-      error: { code: 'PROVIDER_ERROR', message: error instanceof Error ? error.message : 'Erro ao enviar' },
-    };
-  }
 }

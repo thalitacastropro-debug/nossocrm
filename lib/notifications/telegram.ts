@@ -374,3 +374,39 @@ export function formatFollowupFalhasMessage({
   }
   return lines.join('\n');
 }
+
+interface PrimeiroToqueDesistiuParams {
+  contactName: string | null;
+  /** Por que parou de tentar: "o número não tem WhatsApp" / "o envio falhou 8 vezes". */
+  motivo: string;
+  appUrl?: string;
+  dealId?: string;
+}
+
+/**
+ * A APRESENTAÇÃO DA ANA NÃO VAI SAIR (09/10/2026). O cron tentou de novo o 1º toque e desistiu —
+ * número sem WhatsApp, ou o canal ficou fora tempo demais. Este lead nunca recebeu NENHUMA
+ * mensagem nossa: a única saída é uma pessoa ligar. Antes não havia aviso nenhum — giani e Flávia
+ * Muniz (WhatsApp fora, 06–08/10) só foram achadas olhando o banco.
+ */
+export function formatPrimeiroToqueDesistiuMessage({
+  contactName,
+  motivo,
+  appUrl,
+  dealId,
+}: PrimeiroToqueDesistiuParams): string {
+  const nome = contactName ? escapeHtml(contactName) : '(lead sem nome)';
+  const lines = [
+    `📵 <b>A apresentação da Ana não saiu</b>`,
+    ``,
+    `👤 <b>Contato:</b> ${nome}`,
+    `⚠️ Parou de tentar porque ${escapeHtml(motivo)}.`,
+    ``,
+    `Este lead preencheu o formulário e <b>nunca recebeu mensagem nossa</b>. Precisa de LIGAÇÃO.`,
+  ];
+  if (appUrl && dealId) {
+    lines.push(``);
+    lines.push(`🔗 <a href="${appUrl}/boards?deal=${dealId}">Abrir no CRM</a>`);
+  }
+  return lines.join('\n');
+}

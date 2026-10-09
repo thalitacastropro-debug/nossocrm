@@ -44,6 +44,52 @@ const MAX_NO_ESTOQUE = 3;
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /**
+ * ALERTAS DO SISTEMA — não são pendência de uma pessoa, são o chão em que todos pisam.
+ *
+ * 🔴 O CASO (WhatsApp fora de 06 a 08/10/2026): a `regraCanalCaido` detectou a queda nos dois
+ * dias e o aviso NÃO SAIU EM RELATÓRIO NENHUM — a Thalita só soube dois dias depois, lendo
+ * "falha no follow-up". Conferido em `gestor_envios`: nenhum dos 8 envios de 06 a 09/10 tinha o
+ * alerta. Dois buracos, um em cada formato:
+ *   - no relatório da PESSOA, só entra item com `donoId === quem lê` — e alerta de sistema nasce
+ *     com `donoId: null`. Ninguém era dono, então ninguém recebia;
+ *   - no da DONA, ele virava um "colaborador" chamado "WhatsApp", ordenado por nome DEPOIS do
+ *     Denilson e do Pedro — o fim de um texto de ~3.800 caracteres, onde o corte do limite do
+ *     Telegram (3.900) passa.
+ * O comentário da regra dizia a intenção certa ("com o WhatsApp fora, nada mais no relatório
+ * importa") e o formato fazia o contrário.
+ *
+ * Agora: um bloco "Antes de tudo" no TOPO, fora do corte de `MAX_NO_TEXTO` de cada pessoa.
+ * WhatsApp fora vai para TODO MUNDO (a mensagem do Pedro também não sai); orçamento da IA e
+ * envio que não chegou vão para quem gerencia e para a dona — o vendedor não tem gesto para eles.
+ */
+const REGRAS_DO_SISTEMA = new Set(['canal-caido', 'orcamento-ia', 'envio-falhou']);
+const PARA_O_TIME_TODO = new Set(['canal-caido']);
+
+const ehDoSistema = (regra: Regra, item: ItemAlerta) => REGRAS_DO_SISTEMA.has(regra.id) && !item.donoId;
+
+function blocoDoSistema(regras: Regra[], quem: 'dona' | 'gestor' | 'colaborador'): string[] {
+  // Canal caído primeiro: com ele fora, as outras cobranças não são executáveis.
+  const ordenadas = [...regras].sort(
+    (a, b) => Number(b.id === 'canal-caido') - Number(a.id === 'canal-caido'),
+  );
+  const linhas: string[] = [];
+  for (const regra of ordenadas) {
+    if (!REGRAS_DO_SISTEMA.has(regra.id)) continue;
+    if (quem === 'colaborador' && !PARA_O_TIME_TODO.has(regra.id)) continue;
+    const itens = regra.novos.filter((i) => ehDoSistema(regra, i));
+    if (itens.length === 0) continue;
+    for (const item of itens.slice(0, MAX_NO_TEXTO)) {
+      linhas.push(
+        `${regra.emoji} <b>${esc(regra.titulo)}</b> — ${esc(item.contato)}: ${esc(item.detalhe)} (${idadeLegivel(item.idadeHoras)})`,
+      );
+    }
+    if (itens.length > MAX_NO_TEXTO) linhas.push(`    <i>… e mais ${itens.length - MAX_NO_TEXTO}</i>`);
+    if (regra.acao) linhas.push(`    ↳ ${esc(regra.acao)}`);
+  }
+  return linhas.length ? ['<b>🚨 Antes de tudo</b>', ...linhas] : [];
+}
+
+/**
  * Corta o texto no limite do Telegram SEM partir marcação no meio.
  *
  * Cortar em qualquer posição é o que a versão antiga fazia, e é uma bomba de
@@ -87,9 +133,13 @@ export function formatarDiario(diario: Diario, paraDona: boolean): string {
     `${p.reunioesMarcadas} ${p.reunioesMarcadas === 1 ? 'reunião marcada' : 'reuniões marcadas'}`,
   );
 
+  // --- alerta do sistema: no TOPO, antes de qualquer pessoa (ver REGRAS_DO_SISTEMA)
+  const sistema = blocoDoSistema(regras, 'dona');
+  if (sistema.length) linhas.push('', ...sistema);
+
   // --- por colaborador (é assim que ela faz a daily)
   const porPessoa = agruparPorPessoa(regras);
-  const temAlgo = porPessoa.size > 0;
+  const temAlgo = porPessoa.size > 0 || sistema.length > 0;
 
   for (const [nome, itens] of porPessoa) {
     linhas.push('', `<b>${esc(nome)}</b>`);
@@ -215,10 +265,13 @@ export function formatarParaColaborador(
   }
 
   const equipe = opts.ehGestor ? blocoDaEquipe(diario, donoId) : [];
+  // Alerta sem dono: antes deste bloco, nenhum colaborador recebia — o filtro acima é por dono.
+  const sistema = blocoDoSistema(visiveis, opts.ehGestor ? 'gestor' : 'colaborador');
 
-  if (meus.length === 0 && meuEstoque.length === 0 && equipe.length === 0) return null;
+  if (meus.length === 0 && meuEstoque.length === 0 && equipe.length === 0 && sistema.length === 0) return null;
 
   const linhas = [`<b>Seu dia — ${esc(diario.data)}</b>`, ''];
+  if (sistema.length) linhas.push(...sistema, '');
 
   if (meus.length) {
     linhas.push('<b>Suas prioridades de hoje, nesta ordem:</b>', '');
@@ -362,6 +415,8 @@ function agruparPorPessoa(regras: Regra[]): Map<string, Array<{ regra: Regra; it
   const mapa = new Map<string, Array<{ regra: Regra; item: ItemAlerta }>>();
   for (const regra of regras) {
     for (const item of regra.novos) {
+      // Alerta do sistema já saiu no topo — aqui ele virava um "colaborador" chamado "WhatsApp".
+      if (ehDoSistema(regra, item)) continue;
       const chave = item.donoNome;
       if (!mapa.has(chave)) mapa.set(chave, []);
       mapa.get(chave)!.push({ regra, item });

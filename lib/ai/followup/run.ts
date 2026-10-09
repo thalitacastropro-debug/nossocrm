@@ -137,6 +137,17 @@ export async function runLeadFollowup(deps: FollowupDeps): Promise<FollowupResul
 
     const cf = (deal.custom_fields as CF | null) ?? {};
 
+    // A APRESENTAÇÃO NÃO SAIU: sem cadência. Com o 1º toque `failed` (o cron tenta de novo, ver
+    // lib/ai/lead-intake/retentar-primeiro-toque.ts) ou `desistiu` (número sem WhatsApp / time
+    // avisado para ligar), um "ainda por aí?" chegaria a quem nunca recebeu o "oi" — foi o que a
+    // cadência tentou com giani e Flávia Muniz em 07–08/10, e só não saiu porque o canal estava
+    // fora. Pula sem gravar estado: quando a apresentação sair, a cadência nasce ancorada nela.
+    const statusPrimeiroToque = ((cf.lead_form as CF | null)?.first_touch as CF | null)?.status;
+    if (statusPrimeiroToque === 'failed' || statusPrimeiroToque === 'desistiu') {
+      res.skipped++;
+      continue;
+    }
+
     // Praça sem comercialização: ENCERRA a cadência, não só pula.
     //
     // O gate do agent.service impede a Ana de oferecer horário — mas a cadência é outro caminho
